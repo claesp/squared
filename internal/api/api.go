@@ -46,6 +46,7 @@ func (s *Server) Routes(mux *http.ServeMux) {
 	h("POST "+p+"/tenants", s.createTenant)
 	h("GET "+p+"/tenants/{tenant}", s.getTenant)
 	h("PUT "+p+"/tenants/{tenant}", s.updateTenant)
+	h("DELETE "+p+"/tenants/{tenant}", s.deleteTenant)
 	h("POST "+p+"/tenants/{tenant}/sync", s.syncTenant)
 	h("GET "+p+"/tenants/{tenant}/audit", s.listAudit)
 

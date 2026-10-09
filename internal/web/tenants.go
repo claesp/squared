@@ -153,6 +153,23 @@ func (s *Server) updateTenant(w http.ResponseWriter, r *http.Request) error {
 	return s.redirect(w, r, tenantURL(slug), "The settings are saved.")
 }
 
+func (s *Server) deleteTenant(w http.ResponseWriter, r *http.Request) error {
+	u := userFrom(r)
+	slug := r.PathValue("tenant")
+	if err := s.svc.DeleteTenant(r.Context(), u, slug, strings.TrimSpace(r.PostFormValue("confirm"))); err != nil {
+		a, aerr := s.svc.Tenant(r.Context(), u, slug)
+		if aerr != nil {
+			return aerr
+		}
+		form := map[string]string{
+			"name": a.Tenant.Name, "quota_cpu": a.Tenant.Quota.CPU, "quota_memory": a.Tenant.Quota.Memory,
+			"quota_pods": strconv.Itoa(a.Tenant.Quota.Pods),
+		}
+		return s.invalid(w, r, err, "tenant_settings", page{Title: "Settings", Nav: "tenants", Access: &a, Tab: "settings", Form: form})
+	}
+	return s.redirect(w, r, "/", "The tenant is being removed.")
+}
+
 func (s *Server) membersPage(w http.ResponseWriter, r *http.Request) error {
 	return s.showMembers(w, r, nil)
 }

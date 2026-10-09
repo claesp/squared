@@ -26,6 +26,7 @@ import (
 
 	"squared/internal/auth"
 	"squared/internal/domain"
+	"squared/internal/metrics"
 )
 
 // Names of the RabbitMQ objects.
@@ -209,14 +210,17 @@ type ConsumerConfig struct {
 	BaseDelay   time.Duration // Delay before the first retry. Each retry doubles it.
 	MaxDelay    time.Duration
 	TaskTimeout time.Duration
+	Metrics     *metrics.Registry // Optional.
 }
 
 // Consumer receives tasks and gives them to a Handler.
 type Consumer struct {
-	cfg     ConsumerConfig
-	handler Handler
-	log     *slog.Logger
-	pub     *Publisher
+	cfg       ConsumerConfig
+	handler   Handler
+	log       *slog.Logger
+	pub       *Publisher
+	results   *metrics.Counter
+	durations *metrics.Summary
 }
 
 // NewConsumer returns a Consumer.
@@ -236,7 +240,14 @@ func NewConsumer(cfg ConsumerConfig, h Handler, log *slog.Logger) *Consumer {
 	if cfg.TaskTimeout <= 0 {
 		cfg.TaskTimeout = 2 * time.Minute
 	}
-	return &Consumer{cfg: cfg, handler: h, log: log, pub: NewPublisher(cfg.URL, log)}
+	c := &Consumer{cfg: cfg, handler: h, log: log, pub: NewPublisher(cfg.URL, log)}
+	reg := cfg.Metrics
+	if reg == nil {
+		reg = &metrics.Registry{} // Not served.
+	}
+	c.results = reg.NewCounter("squared_tasks_total", "Processed tasks by kind and result (done, retry, dead).", "kind", "result")
+	c.durations = reg.NewSummary("squared_task_seconds", "Duration of task handlers by kind.", "kind")
+	return c
 }
 
 // Run receives tasks until ctx is done. It connects again after failures.
@@ -319,9 +330,12 @@ func (c *Consumer) process(ctx context.Context, d amqp.Delivery) {
 	log := c.log.With("kind", task.Kind, "tenant_id", task.TenantID, "deployment_id", task.DeploymentID, "attempt", attempt)
 
 	taskCtx, cancel := context.WithTimeout(ctx, c.cfg.TaskTimeout)
+	start := time.Now()
 	err := c.handle(taskCtx, task, attempt)
 	cancel()
+	c.durations.Observe(time.Since(start).Seconds(), string(task.Kind))
 	if err == nil {
+		c.results.Inc(string(task.Kind), "done")
 		log.Info("task done")
 		c.ack(d, log)
 		return
@@ -332,12 +346,14 @@ func (c *Consumer) process(ctx context.Context, d amqp.Delivery) {
 		return
 	}
 	if IsPermanent(err) || attempt >= c.cfg.MaxAttempts {
+		c.results.Inc(string(task.Kind), "dead")
 		log.Error("task failed; no more retries", "error", err)
 		c.handler.GiveUp(ctx, task, err)
 		c.toDead(ctx, d, attempt)
 		return
 	}
 	delay := c.delay(attempt)
+	c.results.Inc(string(task.Kind), "retry")
 	log.Warn("task failed; retry later", "error", err, "delay", delay)
 	msg := message(d.Body, attempt+1)
 	msg.MessageId = d.MessageId

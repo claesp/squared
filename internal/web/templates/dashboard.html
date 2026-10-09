@@ -18,6 +18,10 @@
   </tbody>
 </table>
 {{- else}}
+{{- if .User.Admin}}
+<p class="empty">There are no tenants yet. Select <a href="/admin/tenants/new">New tenant</a> to add the first tenant.</p>
+{{- else}}
 <p class="empty">You are not a member of a tenant. Ask an administrator or a tenant owner to add you.</p>
+{{- end}}
 {{- end}}
 {{end}}

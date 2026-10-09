@@ -15,6 +15,7 @@ import (
 	"squared/internal/harbor"
 	"squared/internal/httpx"
 	"squared/internal/kube"
+	"squared/internal/metrics"
 	"squared/internal/queue"
 	"squared/internal/rest"
 	"squared/internal/worker"
@@ -30,7 +31,10 @@ func runWorker(ctx context.Context, log *slog.Logger) error {
 	harborPassword := env.Secret("SQUARED_HARBOR_PASSWORD", true)
 	healthListen := env.String("SQUARED_HEALTH_LISTEN", ":8081")
 	statusInterval := env.Duration("SQUARED_STATUS_INTERVAL", 10*time.Second)
+	reconcileInterval := env.Duration("SQUARED_RECONCILE_INTERVAL", 30*time.Minute)
+	reg := &metrics.Registry{}
 	consumerCfg := queue.ConsumerConfig{
+		Metrics:     reg,
 		URL:         amqpURL,
 		Concurrency: env.Int("SQUARED_WORKER_CONCURRENCY", 4),
 		MaxAttempts: env.Int("SQUARED_WORKER_MAX_ATTEMPTS", 15),
@@ -93,6 +97,7 @@ func runWorker(ctx context.Context, log *slog.Logger) error {
 	mux.HandleFunc("GET /healthz", func(rw http.ResponseWriter, r *http.Request) {
 		_, _ = rw.Write([]byte("ok\n"))
 	})
+	mux.Handle("GET /metrics", reg.Handler())
 	mux.HandleFunc("GET /readyz", func(rw http.ResponseWriter, r *http.Request) {
 		if err := st.Ping(r.Context()); err != nil {
 			http.Error(rw, "database: "+err.Error(), http.StatusServiceUnavailable)
@@ -110,8 +115,9 @@ func runWorker(ctx context.Context, log *slog.Logger) error {
 		}
 	})
 	wg.Go(func() { w.WatchStatus(ctx, statusInterval) })
+	wg.Go(func() { w.Reconcile(ctx, reconcileInterval) })
 
-	srv := httpx.NewServer(healthListen, httpx.Log(log, mux))
+	srv := httpx.NewServer(healthListen, httpx.Log(log, nil, mux))
 	if err := httpx.Serve(ctx, srv, log); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		return err
 	}

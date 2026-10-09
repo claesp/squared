@@ -145,6 +145,22 @@ func (s *Server) updateTenant(w http.ResponseWriter, r *http.Request, u *domain.
 	return s.getTenant(w, r, u)
 }
 
+type deleteTenantRequest struct {
+	Confirm string `json:"confirm"`
+}
+
+func (s *Server) deleteTenant(w http.ResponseWriter, r *http.Request, u *domain.User) error {
+	var in deleteTenantRequest
+	if err := decode(r, &in); err != nil {
+		return err
+	}
+	if err := s.svc.DeleteTenant(r.Context(), u, r.PathValue("tenant"), in.Confirm); err != nil {
+		return err
+	}
+	w.WriteHeader(http.StatusAccepted)
+	return nil
+}
+
 func (s *Server) syncTenant(w http.ResponseWriter, r *http.Request, u *domain.User) error {
 	if err := s.svc.SyncTenant(r.Context(), u, r.PathValue("tenant")); err != nil {
 		return err

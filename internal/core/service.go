@@ -96,6 +96,9 @@ func (s *Service) access(ctx context.Context, actor *domain.User, slug string, m
 	if err != nil {
 		return Access{}, err
 	}
+	if t.Status == domain.StatusDeleting && min != domain.RoleViewer {
+		return Access{}, fmt.Errorf("%w: the tenant is being removed", domain.ErrConflict)
+	}
 	if actor.Admin {
 		return Access{Tenant: t, Role: domain.RoleOwner}, nil
 	}

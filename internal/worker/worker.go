@@ -62,6 +62,11 @@ func (w *Worker) Prepare(ctx context.Context) error {
 	if err := w.forgejo.EnsureRepo(ctx, g.Org, g.PlatformRepo, "Squared platform state. Only Squared writes here."); err != nil {
 		return fmt.Errorf("prepare platform repository: %w", err)
 	}
+	readme := map[string][]byte{"tenants/README.md": []byte(platformReadme)}
+	only := func(p string) bool { return p == "tenants/README.md" }
+	if _, _, err := w.forgejo.Sync(ctx, g.Org, g.PlatformRepo, g.Branch, only, readme, "Add README"); err != nil {
+		return fmt.Errorf("prepare platform repository: %w", err)
+	}
 	if w.cfg.PlatformProject != "" {
 		if _, err := w.harbor.EnsureProject(ctx, w.cfg.PlatformProject, true); err != nil {
 			return fmt.Errorf("prepare platform project: %w", err)
@@ -69,6 +74,13 @@ func (w *Worker) Prepare(ctx context.Context) error {
 	}
 	return nil
 }
+
+const platformReadme = `# Tenants
+
+Argo CD applies this directory with the root application "squared-platform".
+The Squared worker writes all files. Do not change them by hand: the worker
+replaces manual changes at the next synchronization.
+`
 
 // Handle processes a task. It has the type queue.Handler.
 func (w *Worker) Handle(ctx context.Context, task domain.Task, attempt int) error {
@@ -79,6 +91,8 @@ func (w *Worker) Handle(ctx context.Context, task domain.Task, attempt int) erro
 		return w.syncDeployment(ctx, task.DeploymentID, attempt)
 	case domain.TaskDeploymentDelete:
 		return w.deleteDeployment(ctx, task.DeploymentID)
+	case domain.TaskTenantDelete:
+		return w.deleteTenant(ctx, task.TenantID)
 	}
 	return queue.Permanent(fmt.Errorf("unknown task kind %q", task.Kind))
 }
@@ -94,6 +108,8 @@ func (w *Worker) GiveUp(ctx context.Context, task domain.Task, cause error) {
 		err = w.failDeployment(ctx, task.DeploymentID, msg)
 	case domain.TaskDeploymentDelete:
 		err = w.store.SetDeploymentStatus(ctx, task.DeploymentID, domain.StatusDeleting, "Removal failed: "+msg)
+	case domain.TaskTenantDelete:
+		err = w.store.SetTenantStatus(ctx, task.TenantID, domain.StatusDeleting, "Removal failed: "+msg)
 	}
 	if err != nil && !errors.Is(err, domain.ErrNotFound) {
 		w.log.Error("record task failure", "kind", task.Kind, "error", err)
@@ -133,6 +149,9 @@ func (w *Worker) syncTenant(ctx context.Context, tenantID string) error {
 	if err != nil {
 		return err
 	}
+	if t.Status == domain.StatusDeleting {
+		return nil // The delete task owns the tenant now.
+	}
 	envs, err := w.store.ListEnvironments(ctx, t.ID)
 	if err != nil {
 		return err
@@ -140,8 +159,26 @@ func (w *Worker) syncTenant(ctx context.Context, tenantID string) error {
 	if err := w.store.SetTenantStatus(ctx, t.ID, domain.StatusProvisioning, "Preparing registry, repository and namespaces"); err != nil {
 		return err
 	}
-	g := w.cfg.GitOps
+	if err := w.syncTenantFiles(ctx, t); err != nil {
+		return err
+	}
+	for _, e := range envs {
+		if err := w.store.SetEnvironmentStatus(ctx, e.ID, domain.StatusReady, ""); err != nil {
+			return err
+		}
+	}
+	return w.store.SetTenantStatus(ctx, t.ID, domain.StatusReady, "")
+}
 
+// syncTenantFiles makes the registry project, the Git repository, the
+// platform files and the pull secrets of a tenant agree with the database.
+// It does not change the status of the tenant.
+func (w *Worker) syncTenantFiles(ctx context.Context, t *domain.Tenant) error {
+	envs, err := w.store.ListEnvironments(ctx, t.ID)
+	if err != nil {
+		return err
+	}
+	g := w.cfg.GitOps
 	project, err := w.harbor.EnsureProject(ctx, w.HarborProject(t.Slug), false)
 	if err != nil {
 		return fmt.Errorf("registry project: %w", err)
@@ -160,15 +197,7 @@ func (w *Worker) syncTenant(ctx context.Context, tenantID string) error {
 
 	// Argo CD makes the namespaces some seconds after the commit. Until
 	// then, the pull secrets cannot be written and the task is retried.
-	if err := w.ensurePullSecrets(ctx, t, project, envs); err != nil {
-		return err
-	}
-	for _, e := range envs {
-		if err := w.store.SetEnvironmentStatus(ctx, e.ID, domain.StatusReady, ""); err != nil {
-			return err
-		}
-	}
-	return w.store.SetTenantStatus(ctx, t.ID, domain.StatusReady, "")
+	return w.ensurePullSecrets(ctx, t, project, envs)
 }
 
 func envNames(envs []domain.Environment) string {
@@ -290,9 +319,16 @@ func (w *Worker) syncDeployment(ctx context.Context, deploymentID string, attemp
 	if rev.Message != "" {
 		msg += "Note: " + rev.Message + "\n"
 	}
-	commit, _, err := w.forgejo.Sync(ctx, g.Org, gitops.TenantRepo(t.Slug), g.Branch, forgejo.Prefix(dir), desired, msg)
+	commit, changedManifests, err := w.forgejo.Sync(ctx, g.Org, gitops.TenantRepo(t.Slug), g.Branch, forgejo.Prefix(dir), desired, msg)
 	if err != nil {
 		return fmt.Errorf("tenant repository: %w", err)
+	}
+	// Without a change, Sync returns the head of the branch. Commits of
+	// other deployments move the head. The files of this deployment are
+	// the same in the commit of the revision, thus keep that commit: each
+	// revision maps to exactly one commit.
+	if !changedManifests && rev.CommitSHA != "" {
+		commit = rev.CommitSHA
 	}
 
 	appPath, app, err := g.ApplicationFile(gitops.AppInput{Tenant: t, Deployment: d, Commit: commit, Revision: rev.Number})
@@ -300,10 +336,17 @@ func (w *Worker) syncDeployment(ctx context.Context, deploymentID string, attemp
 		return queue.Permanent(err)
 	}
 	only := func(p string) bool { return p == appPath }
-	if _, _, err := w.forgejo.Sync(ctx, g.Org, g.PlatformRepo, g.Branch, only, map[string][]byte{appPath: app}, msg); err != nil {
+	_, changedApp, err := w.forgejo.Sync(ctx, g.Org, g.PlatformRepo, g.Branch, only, map[string][]byte{appPath: app}, msg)
+	if err != nil {
 		return fmt.Errorf("platform repository: %w", err)
 	}
 
+	// Without a change in Git, a deployment that Argo CD already reports
+	// keeps its status. This is the normal case for a reconcile run.
+	unchanged := !changedManifests && !changedApp && rev.Status == domain.StatusCommitted && rev.CommitSHA == commit
+	if unchanged && (d.Status == domain.StatusDeployed || d.Status == domain.StatusDegraded || d.Status == domain.StatusCommitted) {
+		return nil
+	}
 	if err := w.store.SetRevisionResult(ctx, rev.ID, commit, domain.StatusCommitted, ""); err != nil {
 		return err
 	}
@@ -383,4 +426,37 @@ func (w *Worker) deleteDeployment(ctx context.Context, deploymentID string) erro
 		return errors.New("argo cd did not remove the application yet")
 	}
 	return w.store.DeleteDeployment(ctx, d.ID)
+}
+
+// deleteTenant removes the files of a tenant from the platform repository
+// and archives the tenant repository. Argo CD then removes the project,
+// the quotas and the RBAC objects. The namespaces and the Harbor project
+// stay: an administrator removes them after a check.
+func (w *Worker) deleteTenant(ctx context.Context, tenantID string) error {
+	t, err := w.store.TenantByID(ctx, tenantID)
+	if errors.Is(err, domain.ErrNotFound) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if t.Status != domain.StatusDeleting {
+		return nil
+	}
+	deps, err := w.store.ListDeployments(ctx, t.ID)
+	if err != nil {
+		return err
+	}
+	if len(deps) > 0 {
+		return queue.Permanent(fmt.Errorf("tenant %s has deployments", t.Slug))
+	}
+	g := w.cfg.GitOps
+	msg := fmt.Sprintf("Remove tenant %s", t.Slug)
+	if _, _, err := w.forgejo.Sync(ctx, g.Org, g.PlatformRepo, g.Branch, forgejo.Prefix(gitops.TenantDir(t.Slug)), nil, msg); err != nil {
+		return fmt.Errorf("platform repository: %w", err)
+	}
+	if err := w.forgejo.ArchiveRepo(ctx, g.Org, gitops.TenantRepo(t.Slug)); err != nil {
+		return fmt.Errorf("archive tenant repository: %w", err)
+	}
+	return w.store.DeleteTenant(ctx, t.ID)
 }

@@ -115,6 +115,7 @@ func (s *Server) Routes(mux *http.ServeMux) {
 	mux.Handle("POST /tenants/{tenant}/sync", s.user(s.syncTenant))
 	mux.Handle("GET /tenants/{tenant}/settings", s.user(s.tenantSettingsPage))
 	mux.Handle("POST /tenants/{tenant}/settings", s.user(s.updateTenant))
+	mux.Handle("POST /tenants/{tenant}/delete", s.user(s.deleteTenant))
 	mux.Handle("GET /tenants/{tenant}/members", s.user(s.membersPage))
 	mux.Handle("POST /tenants/{tenant}/members", s.user(s.putMember))
 	mux.Handle("POST /tenants/{tenant}/members/{user}/remove", s.user(s.removeMember))

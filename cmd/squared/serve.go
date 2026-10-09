@@ -16,6 +16,7 @@ import (
 	"squared/internal/core"
 	"squared/internal/domain"
 	"squared/internal/httpx"
+	"squared/internal/metrics"
 	"squared/internal/queue"
 	"squared/internal/render"
 	"squared/internal/store"
@@ -43,6 +44,7 @@ func migrate(ctx context.Context, log *slog.Logger) error {
 func serve(ctx context.Context, log *slog.Logger) error {
 	var env config.Reader
 	listen := env.String("SQUARED_LISTEN", ":8080")
+	metricsListen := env.String("SQUARED_METRICS_LISTEN", ":9090")
 	amqpURL := env.Secret("SQUARED_AMQP_URL", true)
 	catalogDir := env.String("SQUARED_CATALOG_DIR", "/etc/squared/catalog")
 	runMigrations := env.Bool("SQUARED_MIGRATE", true)
@@ -124,11 +126,22 @@ func serve(ctx context.Context, log *slog.Logger) error {
 	handler = cop.Handler(handler)
 	handler = httpx.LimitBody(1<<20, handler)
 	handler = httpx.SecurityHeaders(hsts, handler)
-	handler = httpx.Log(log, handler)
+	reg := &metrics.Registry{}
+	handler = httpx.Log(log, reg, handler)
 
 	var wg sync.WaitGroup
 	defer wg.Wait()
-	relay := &queue.Relay{Outbox: st, Publisher: pub, Log: log}
+	// Metrics have their own port. Thus the network policy can permit
+	// the monitoring system and block all other clients.
+	metricsMux := http.NewServeMux()
+	metricsMux.Handle("GET /metrics", reg.Handler())
+	metricsSrv := httpx.NewServer(metricsListen, metricsMux)
+	wg.Go(func() {
+		if err := httpx.Serve(ctx, metricsSrv, log); err != nil {
+			log.Error("metrics server stopped", "error", err)
+		}
+	})
+	relay := &queue.Relay{Outbox: st, Publisher: pub, Log: log, Metrics: reg}
 	wg.Go(func() { relay.Run(ctx) })
 	wg.Go(func() { cleanUp(ctx, svc, log) })
 

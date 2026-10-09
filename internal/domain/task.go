@@ -10,6 +10,7 @@ const (
 	TaskTenantSync       TaskKind = "tenant.sync"       // Prepare registry, Git and namespaces of a tenant.
 	TaskDeploymentSync   TaskKind = "deployment.sync"   // Render and commit the desired revision.
 	TaskDeploymentDelete TaskKind = "deployment.delete" // Remove a deployment.
+	TaskTenantDelete     TaskKind = "tenant.delete"     // Remove a tenant without deployments.
 )
 
 // Task is a message from the API server to the worker.

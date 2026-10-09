@@ -82,6 +82,16 @@ func (c *Client) EnsureRepo(ctx context.Context, org, name, description string) 
 	return err
 }
 
+// ArchiveRepo makes a repository read-only. It does nothing if the
+// repository does not exist.
+func (c *Client) ArchiveRepo(ctx context.Context, org, name string) error {
+	err := c.rest.Do(ctx, http.MethodPatch, repoPath(org, name), map[string]bool{"archived": true}, nil)
+	if rest.HasStatus(err, http.StatusNotFound) {
+		return nil
+	}
+	return err
+}
+
 func repoPath(org, repo string) string {
 	return "/repos/" + url.PathEscape(org) + "/" + url.PathEscape(repo)
 }

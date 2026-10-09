@@ -78,6 +78,12 @@ func (s *Store) SetTenantStatus(ctx context.Context, id string, st domain.Status
 		WHERE id = $1`, id, st, msg)
 }
 
+// DeleteTenant removes a tenant with its environments and memberships.
+// The audit events stay.
+func (s *Store) DeleteTenant(ctx context.Context, id string) error {
+	return s.execOne(ctx, "DELETE FROM tenants WHERE id = $1", id)
+}
+
 // PutMembership adds a member or changes the role of a member.
 func (s *Store) PutMembership(ctx context.Context, tenantID, userID string, role domain.Role) error {
 	_, err := s.db.Exec(ctx, `INSERT INTO memberships (tenant_id, user_id, role) VALUES ($1, $2, $3)

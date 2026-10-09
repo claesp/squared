@@ -171,6 +171,39 @@ func (s *Service) SyncTenant(ctx context.Context, actor *domain.User, slug strin
 	})
 }
 
+// DeleteTenant marks a tenant for removal. Only platform administrators
+// can remove tenants, and only tenants without deployments. The worker
+// removes the files of the tenant from the platform repository, archives
+// the tenant repository and then removes the tenant from the database.
+func (s *Service) DeleteTenant(ctx context.Context, actor *domain.User, slug, confirm string) error {
+	if err := requireAdmin(actor); err != nil {
+		return err
+	}
+	if confirm != slug {
+		return domain.Invalid("confirm", "type the slug of the tenant to confirm the removal")
+	}
+	a, err := s.access(ctx, actor, slug, domain.RoleOwner)
+	if err != nil {
+		return err
+	}
+	return s.store.InTx(ctx, func(tx *store.Store) error {
+		deps, err := tx.ListDeployments(ctx, a.Tenant.ID)
+		if err != nil {
+			return err
+		}
+		if len(deps) > 0 {
+			return domain.Invalid("confirm", "remove all deployments of the tenant first")
+		}
+		if err := tx.SetTenantStatus(ctx, a.Tenant.ID, domain.StatusDeleting, ""); err != nil {
+			return err
+		}
+		if err := tx.EnqueueTask(ctx, domain.Task{Kind: domain.TaskTenantDelete, TenantID: a.Tenant.ID}); err != nil {
+			return err
+		}
+		return s.audit(ctx, tx, actor, a.Tenant.ID, "tenant.delete", a.Tenant.Slug, "")
+	})
+}
+
 // ListMembers returns the members of a tenant.
 func (s *Service) ListMembers(ctx context.Context, actor *domain.User, slug string) ([]domain.Membership, error) {
 	a, err := s.access(ctx, actor, slug, domain.RoleViewer)

@@ -4,6 +4,8 @@ import (
 	"context"
 	"log/slog"
 	"time"
+
+	"squared/internal/metrics"
 )
 
 // Outbox is the source of the relay.
@@ -17,7 +19,8 @@ type Relay struct {
 	Outbox    Outbox
 	Publisher *Publisher
 	Log       *slog.Logger
-	Interval  time.Duration // Time between polls when the outbox is empty.
+	Interval  time.Duration     // Time between polls when the outbox is empty.
+	Metrics   *metrics.Registry // Optional.
 }
 
 // Run sends tasks until ctx is done.
@@ -26,9 +29,19 @@ func (r *Relay) Run(ctx context.Context) {
 	if interval <= 0 {
 		interval = 500 * time.Millisecond
 	}
+	reg := r.Metrics
+	if reg == nil {
+		reg = &metrics.Registry{}
+	}
+	published := reg.NewCounter("squared_outbox_published_total", "Tasks that the relay sent to RabbitMQ.")
+	errorsTotal := reg.NewCounter("squared_outbox_errors_total", "Failed relay runs.")
 	failures := 0
 	for {
 		n, err := r.Outbox.PublishOutbox(ctx, 100, r.Publisher.PublishTask)
+		published.Add(float64(n))
+		if err != nil && ctx.Err() == nil {
+			errorsTotal.Inc()
+		}
 		wait := interval
 		switch {
 		case err != nil && ctx.Err() == nil:

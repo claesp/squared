@@ -4,10 +4,13 @@ package httpx
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net"
 	"net/http"
 	"time"
+
+	"squared/internal/metrics"
 )
 
 // SecurityHeaders adds headers that protect browsers. The content
@@ -63,8 +66,14 @@ func (w *statusWriter) Write(b []byte) (int, error) {
 func (w *statusWriter) Unwrap() http.ResponseWriter { return w.ResponseWriter }
 
 // Log writes one log line for each request and changes a panic into a
-// status 500 response.
-func Log(log *slog.Logger, next http.Handler) http.Handler {
+// status 500 response. If reg is not nil, Log also counts the requests.
+func Log(log *slog.Logger, reg *metrics.Registry, next http.Handler) http.Handler {
+	var requests *metrics.Counter
+	var durations *metrics.Summary
+	if reg != nil {
+		requests = reg.NewCounter("squared_http_requests_total", "HTTP requests by route and status class.", "method", "route", "status")
+		durations = reg.NewSummary("squared_http_request_seconds", "Duration of HTTP requests by route.", "route")
+	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
 		sw := &statusWriter{ResponseWriter: w}
@@ -78,7 +87,20 @@ func Log(log *slog.Logger, next http.Handler) http.Handler {
 					http.Error(sw, "internal error", http.StatusInternalServerError)
 				}
 			}
-			if r.URL.Path == "/healthz" || r.URL.Path == "/readyz" {
+			if sw.status == 0 {
+				sw.status = http.StatusOK // The handler wrote nothing.
+			}
+			if requests != nil {
+				// The mux sets the pattern. A route has few values, a path
+				// has many. Unknown paths have no pattern.
+				route := r.Pattern
+				if route == "" {
+					route = "none"
+				}
+				requests.Inc(r.Method, route, fmt.Sprintf("%dxx", sw.status/100))
+				durations.Observe(time.Since(start).Seconds(), route)
+			}
+			if r.URL.Path == "/healthz" || r.URL.Path == "/readyz" || r.URL.Path == "/metrics" {
 				return
 			}
 			log.Info("request", "method", r.Method, "path", r.URL.Path, "status", sw.status,

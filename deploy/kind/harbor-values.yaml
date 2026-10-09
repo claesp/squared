@@ -1,0 +1,29 @@
+# Harbor for development (chart harbor/harbor). The admin password comes
+# from hack/kind-up.sh.
+expose:
+  type: nodePort
+  tls:
+    enabled: false
+  nodePort:
+    name: harbor
+    ports:
+      http:
+        port: 80
+        nodePort: 30002
+externalURL: http://localhost:30002
+persistence:
+  enabled: true
+  persistentVolumeClaim:
+    registry:
+      size: 5Gi
+    jobservice:
+      jobLog:
+        size: 1Gi
+    database:
+      size: 1Gi
+    redis:
+      size: 1Gi
+trivy:
+  enabled: false
+metrics:
+  enabled: false

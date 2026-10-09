@@ -1,0 +1,54 @@
+# Squared in the Kind development cluster. Each object names its namespace,
+# because some objects are in the namespace of Argo CD. hack/kind-up.sh makes the
+# secrets "squared-server", "squared-worker", "postgres" and "rabbitmq".
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ../base
+  - postgres.yaml
+  - rabbitmq.yaml
+images:
+  - name: squared
+    newName: localhost/squared
+    newTag: dev
+patches:
+  - target:
+      kind: Service
+      name: squared-server
+    patch: |-
+      - op: add
+        path: /spec/type
+        value: NodePort
+      - op: add
+        path: /spec/ports/0/nodePort
+        value: 30080
+  - target:
+      kind: Deployment
+      name: squared-server
+    patch: |-
+      - op: replace
+        path: /spec/replicas
+        value: 1
+configMapGenerator:
+  - name: squared-config
+    namespace: squared
+    literals:
+      - SQUARED_LOG_FORMAT=json
+      - SQUARED_DATABASE_URL_FILE=/etc/squared/secrets/database-url
+      - SQUARED_AMQP_URL_FILE=/etc/squared/secrets/amqp-url
+      - SQUARED_BOOTSTRAP_ADMIN_EMAIL=admin@squared.test
+      - SQUARED_BOOTSTRAP_ADMIN_PASSWORD_FILE=/etc/squared/secrets/admin-password
+      # The browser uses http://localhost:30080. Browsers accept Secure
+      # cookies on localhost also without TLS.
+      - SQUARED_COOKIE_SECURE=true
+      - SQUARED_REGISTRY_HOST=localhost:30002
+      - SQUARED_GIT_PUBLIC_URL=http://localhost:30300
+      - SQUARED_GIT_ORG=squared
+      - SQUARED_FORGEJO_URL=http://forgejo-http.forgejo.svc.cluster.local:3000
+      - SQUARED_FORGEJO_TOKEN_FILE=/etc/squared/secrets/forgejo-token
+      - SQUARED_ARGOCD_REPO_URL=http://forgejo-http.forgejo.svc.cluster.local:3000
+      - SQUARED_ARGOCD_NAMESPACE=argocd
+      - SQUARED_HARBOR_URL=http://harbor.harbor.svc.cluster.local
+      - SQUARED_HARBOR_USER=admin
+      - SQUARED_HARBOR_PASSWORD_FILE=/etc/squared/secrets/harbor-password
+      - SQUARED_STATUS_INTERVAL=5s

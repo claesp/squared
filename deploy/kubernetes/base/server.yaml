@@ -1,0 +1,113 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: squared-server
+  namespace: squared
+  labels:
+    app.kubernetes.io/name: squared-server
+spec:
+  replicas: 2
+  revisionHistoryLimit: 5
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: squared-server
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: squared-server
+    spec:
+      serviceAccountName: squared-server
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        # The secret files belong to this group. Only the group can read them.
+        fsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      initContainers:
+        # Apply the database migrations before the server starts. The
+        # migration uses a lock, thus two replicas can start together.
+        - name: migrate
+          image: squared
+          args: ["migrate"]
+          envFrom:
+            - configMapRef:
+                name: squared-config
+          resources:
+            requests: { cpu: 50m, memory: 64Mi }
+            limits: { memory: 128Mi }
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: secrets
+              mountPath: /etc/squared/secrets
+              readOnly: true
+      containers:
+        - name: server
+          image: squared
+          args: ["serve"]
+          env:
+            - name: SQUARED_MIGRATE
+              value: "false"
+          envFrom:
+            - configMapRef:
+                name: squared-config
+          ports:
+            - name: http
+              containerPort: 8080
+          readinessProbe:
+            httpGet: { path: /readyz, port: http }
+            periodSeconds: 5
+          livenessProbe:
+            httpGet: { path: /healthz, port: http }
+            periodSeconds: 10
+            failureThreshold: 6
+          resources:
+            requests: { cpu: 100m, memory: 128Mi }
+            limits: { memory: 256Mi }
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: secrets
+              mountPath: /etc/squared/secrets
+              readOnly: true
+      volumes:
+        - name: secrets
+          secret:
+            secretName: squared-server
+            defaultMode: 0440
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: squared-server
+  namespace: squared
+  labels:
+    app.kubernetes.io/name: squared-server
+spec:
+  selector:
+    app.kubernetes.io/name: squared-server
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: squared-server
+  namespace: squared
+spec:
+  maxUnavailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: squared-server

@@ -1,0 +1,16 @@
+# Argo CD for development (chart argo/argo-cd).
+configs:
+  params:
+    server.insecure: true
+  cm:
+    # Forgejo sends a webhook after each push. The poll interval is only a
+    # fallback.
+    timeout.reconciliation: 60s
+dex:
+  enabled: false
+notifications:
+  enabled: false
+server:
+  service:
+    type: NodePort
+    nodePortHttp: 30081

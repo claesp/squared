@@ -1,0 +1,40 @@
+# The server has no access to the Kubernetes API.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: squared-server
+  namespace: squared
+automountServiceAccountToken: false
+---
+# The worker reads Argo CD applications. Each tenant namespace has a
+# RoleBinding (from the platform repository) that lets the worker write
+# the image pull secret there. The worker has no other rights.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: squared-worker
+  namespace: squared
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: squared-worker
+  namespace: argocd
+rules:
+  - apiGroups: ["argoproj.io"]
+    resources: ["applications"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: squared-worker
+  namespace: argocd
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: squared-worker
+subjects:
+  - kind: ServiceAccount
+    name: squared-worker
+    namespace: squared

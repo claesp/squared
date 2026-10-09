@@ -1,0 +1,8 @@
+.git
+.dev
+bin
+dist
+deploy
+docs
+hack
+examples

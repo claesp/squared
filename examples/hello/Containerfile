@@ -1,0 +1,11 @@
+# Example application for Squared. Build from this directory:
+#   podman build -t hello:1.0.0 examples/hello
+FROM docker.io/library/golang:1.27.2-alpine@sha256:85dc1069ac644ea3c527b177303a406eb3358192816cd7f9e5848eb658851673 AS build
+WORKDIR /src
+COPY main.go ./
+RUN CGO_ENABLED=0 go build -trimpath -buildvcs=false -ldflags="-s -w -buildid=" -o /out/hello main.go
+
+FROM gcr.io/distroless/static-debian13:nonroot@sha256:e2e927ec666bae08560abb3c55d0659eceabb657f56b6782ab500a9fc7f555e3
+COPY --from=build /out/hello /hello
+USER 65532:65532
+ENTRYPOINT ["/hello"]

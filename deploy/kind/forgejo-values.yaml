@@ -1,0 +1,35 @@
+# Forgejo for development (chart forgejo-helm/forgejo). The admin password
+# comes from hack/kind-up.sh.
+# ROOT_URL is the address inside the cluster. Argo CD uses the same
+# address, thus the repository address in a push webhook agrees with the
+# address of the Argo CD applications. The developer machine uses the
+# NodePort at http://localhost:30300.
+service:
+  http:
+    type: NodePort
+    port: 3000
+    nodePort: 30300
+persistence:
+  size: 2Gi
+gitea:
+  admin:
+    username: forgejo-admin
+    email: forgejo-admin@squared.test
+    passwordMode: keepUpdated
+  config:
+    APP_NAME: Forgejo for Squared
+    server:
+      ROOT_URL: http://forgejo-http.forgejo.svc.cluster.local:3000/
+      DISABLE_SSH: true
+    service:
+      DISABLE_REGISTRATION: true
+      REQUIRE_SIGNIN_VIEW: true
+    database:
+      DB_TYPE: sqlite3
+    webhook:
+      # Allow the push webhook to Argo CD inside the cluster.
+      ALLOWED_HOST_LIST: "*.svc.cluster.local"
+    security:
+      INSTALL_LOCK: true
+    repository:
+      DEFAULT_PRIVATE: private

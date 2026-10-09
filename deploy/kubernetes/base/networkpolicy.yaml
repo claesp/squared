@@ -1,0 +1,25 @@
+# Only the server accepts connections, on its HTTP port. The worker
+# accepts only the health checks of the kubelet, which network policies
+# do not block.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-ingress
+  namespace: squared
+spec:
+  podSelector: {}
+  policyTypes: ["Ingress"]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: squared-server
+  namespace: squared
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: squared-server
+  policyTypes: ["Ingress"]
+  ingress:
+    - ports:
+        - port: 8080

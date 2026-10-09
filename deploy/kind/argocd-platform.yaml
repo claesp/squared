@@ -1,0 +1,60 @@
+# The root application of Squared. It applies the platform repository,
+# which only the Squared worker writes. The project limits the kinds of
+# objects to the kinds that the platform repository contains.
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: squared-platform
+  namespace: argocd
+spec:
+  description: Tenant namespaces, limits, RBAC and Argo CD objects that Squared makes
+  sourceRepos:
+    - http://forgejo-http.forgejo.svc.cluster.local:3000/squared/platform.git
+  destinations:
+    - server: https://kubernetes.default.svc
+      namespace: "*"
+  clusterResourceWhitelist:
+    - group: ""
+      kind: Namespace
+  namespaceResourceWhitelist:
+    - group: ""
+      kind: ResourceQuota
+    - group: ""
+      kind: LimitRange
+    - group: networking.k8s.io
+      kind: NetworkPolicy
+    - group: rbac.authorization.k8s.io
+      kind: Role
+    - group: rbac.authorization.k8s.io
+      kind: RoleBinding
+    - group: argoproj.io
+      kind: AppProject
+    - group: argoproj.io
+      kind: Application
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: squared-platform
+  namespace: argocd
+spec:
+  project: squared-platform
+  source:
+    repoURL: http://forgejo-http.forgejo.svc.cluster.local:3000/squared/platform.git
+    targetRevision: main
+    path: tenants
+    directory:
+      recurse: true
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: argocd
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    retry:
+      limit: -1
+      backoff:
+        duration: 10s
+        factor: 2
+        maxDuration: 2m

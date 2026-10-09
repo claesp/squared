@@ -1,0 +1,75 @@
+# Configuration
+
+Squared reads its configuration from environment variables. For a secret
+variable `NAME`, you can set `NAME_FILE` to the path of a file that
+contains the value. Use `NAME_FILE` in Kubernetes: mount the secret as a
+file. If a variable is not valid, the program stops and lists all problems.
+
+## All roles
+
+| Variable | Default | Description |
+|---|---|---|
+| `SQUARED_DATABASE_URL` (secret) | (necessary) | PostgreSQL URL, for example `postgres://user:password@host:5432/squared?sslmode=verify-full`. |
+| `SQUARED_AMQP_URL` (secret) | (necessary) | RabbitMQ URL, for example `amqps://user:password@host:5671/`. Not used by `migrate`. |
+| `SQUARED_LOG_LEVEL` | `info` | `debug`, `info`, `warn` or `error`. |
+| `SQUARED_LOG_FORMAT` | `json` | `json` or `text`. |
+
+## `squared serve`
+
+| Variable | Default | Description |
+|---|---|---|
+| `SQUARED_LISTEN` | `:8080` | Address of the HTTP server. |
+| `SQUARED_METRICS_LISTEN` | `:9090` | Address of the metrics server (`GET /metrics`). |
+| `SQUARED_CATALOG_DIR` | `/etc/squared/catalog` | Directory with the package definitions. |
+| `SQUARED_MIGRATE` | `true` | Apply database migrations at start. |
+| `SQUARED_REGISTRY_HOST` | (necessary) | Host name of Harbor, as users and nodes see it. Used in instructions. |
+| `SQUARED_PROJECT_PREFIX` | empty | Prefix of the Harbor project of a tenant. The project is `<prefix><tenant>`. Must be the same as for the worker. |
+| `SQUARED_GIT_PUBLIC_URL` | empty | Address of Forgejo for links in the web interface. No links if empty. |
+| `SQUARED_GIT_ORG` | `squared` | Forgejo organization of the repositories. |
+| `SQUARED_COOKIE_SECURE` | `true` | Set the `Secure` attribute on cookies. Browsers accept secure cookies also on `http://localhost`. |
+| `SQUARED_HSTS` | `false` | Send `Strict-Transport-Security`. Set it to `true` if all access uses HTTPS. |
+| `SQUARED_TRUST_PROXY` | `false` | Use the last address in `X-Forwarded-For` as the client address for rate limits. Set it only behind a proxy that sets the header. |
+| `SQUARED_SESSION_TTL` | `12h` | Time until a session expires. |
+| `SQUARED_DEFAULT_QUOTA_CPU` | `4` | Default CPU quota of each environment of a new tenant. |
+| `SQUARED_DEFAULT_QUOTA_MEMORY` | `8Gi` | Default memory quota. |
+| `SQUARED_DEFAULT_QUOTA_PODS` | `50` | Default pod quota. |
+| `SQUARED_BOOTSTRAP_ADMIN_EMAIL` | empty | If set and the database has no users, the server adds this platform administrator at start. |
+| `SQUARED_BOOTSTRAP_ADMIN_PASSWORD` (secret) | empty | Password of the first administrator. Necessary if the email is set. |
+
+## `squared worker`
+
+| Variable | Default | Description |
+|---|---|---|
+| `SQUARED_HEALTH_LISTEN` | `:8081` | Address for `/healthz`, `/readyz` and `/metrics`. |
+| `SQUARED_FORGEJO_URL` | (necessary) | Address of Forgejo for the API. |
+| `SQUARED_FORGEJO_TOKEN` (secret) | (necessary) | Forgejo token of an owner of the organization. Scopes: `write:organization`, `write:repository`, `read:user`. |
+| `SQUARED_GIT_ORG` | `squared` | Forgejo organization of the repositories. |
+| `SQUARED_PLATFORM_REPO` | `platform` | Name of the platform repository. |
+| `SQUARED_GIT_BRANCH` | `main` | Branch for commits. |
+| `SQUARED_ARGOCD_REPO_URL` | value of `SQUARED_FORGEJO_URL` | Address of Forgejo as Argo CD sees it. Used in Argo CD objects. |
+| `SQUARED_ARGOCD_NAMESPACE` | `argocd` | Namespace of Argo CD. |
+| `SQUARED_CLUSTER_SERVER` | `https://kubernetes.default.svc` | Destination cluster of the Argo CD applications. |
+| `SQUARED_WORKER_SERVICE_ACCOUNT` | `squared-worker` | Service account of the worker. The tenant RoleBindings refer to it. |
+| `SQUARED_WORKER_NAMESPACE` | value of `POD_NAMESPACE`, else `squared` | Namespace of the worker. |
+| `SQUARED_INGRESS_NAMESPACE` | empty | Namespace of the ingress controller. Its pods can connect to tenant pods. |
+| `SQUARED_INGRESS_CLASS` | empty | Ingress class for `web` components with a host. |
+| `SQUARED_INGRESS_TLS` | `false` | Add a TLS section to each Ingress (secret `<deployment>-<component>-tls`). |
+| `SQUARED_HARBOR_URL` | (necessary) | Address of Harbor for the API. |
+| `SQUARED_HARBOR_USER` | `admin` | Harbor user. |
+| `SQUARED_HARBOR_PASSWORD` (secret) | (necessary) | Harbor password. |
+| `SQUARED_REGISTRY_HOST` | (necessary) | Host name of Harbor in image references. The nodes must be able to pull from it. |
+| `SQUARED_PROJECT_PREFIX` | empty | Prefix of the Harbor project of a tenant. |
+| `SQUARED_PLATFORM_PROJECT` | `platform` | Public Harbor project for images that all tenants can use. Empty: none. |
+| `SQUARED_WORKER_CONCURRENCY` | `4` | Number of tasks in progress at the same time. |
+| `SQUARED_WORKER_MAX_ATTEMPTS` | `15` | Attempts before a task goes to the dead queue. |
+| `SQUARED_STATUS_INTERVAL` | `10s` | Time between two reads of the Argo CD status. |
+| `SQUARED_RECONCILE_INTERVAL` | `30m` | Time between two complete synchronizations of all tenants and deployments. They repair manual changes in Git. |
+| `SQUARED_KUBE_API_URL` | empty | Kubernetes API address outside a cluster. In a pod, the worker uses the service account. |
+| `SQUARED_KUBE_TOKEN_FILE` | | Token file, if `SQUARED_KUBE_API_URL` is set. |
+| `SQUARED_KUBE_CA_FILE` | | CA certificate file, if `SQUARED_KUBE_API_URL` is set. |
+
+## Example
+
+The Kind overlay in
+[`deploy/kubernetes/kind/kustomization.yaml`](../deploy/kubernetes/kind/kustomization.yaml)
+is a complete example.

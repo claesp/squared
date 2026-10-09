@@ -1,0 +1,168 @@
+# Development
+
+This document tells you how to build, test and run Squared on your
+computer.
+
+## Tools
+
+| Tool | Version | Use |
+|---|---|---|
+| Go | 1.27 (the `toolchain` line in `go.mod` selects the exact version) | Build and test |
+| Podman | 5 or later | Images and the Kind node |
+| Kind | 0.33 or later | Local Kubernetes cluster |
+| kubectl | same minor version as the cluster | Cluster access |
+| Helm | 3 or 4 | Argo CD, Forgejo and Harbor |
+| curl, jq, openssl | any | Scripts |
+
+The scripts use Podman as the Kind provider
+(`KIND_EXPERIMENTAL_PROVIDER=podman`). With rootless Podman, Kind needs
+delegated cgroup controllers. The scripts start Kind in a systemd scope
+with `Delegate=yes` for this. The user service of systemd must have
+`Delegate=yes` (see the
+[Kind rootless guide](https://kind.sigs.k8s.io/docs/user/rootless/)).
+
+Use about 8 GB of free memory and 20 GB of free disk for the complete
+environment.
+
+## Layout
+
+```
+cmd/squared/            main package: serve, worker, migrate, check-catalog
+internal/domain/        types, validation rules, errors
+internal/store/         PostgreSQL access and migrations
+internal/core/          business rules and permission checks
+internal/catalog/       package definitions and parameter values
+internal/render/        Kubernetes manifests from components
+internal/gitops/        files of the platform repository
+internal/web/           web interface (templates, CSS, handlers)
+internal/api/           JSON API
+internal/queue/         RabbitMQ publisher, consumer and outbox relay
+internal/worker/        task handlers and Argo CD status watcher
+internal/forgejo/       Forgejo client
+internal/harbor/        Harbor client
+internal/kube/          minimal Kubernetes client
+internal/rest/          JSON over HTTP helper
+internal/httpx/         HTTP middleware
+internal/auth/          password hashes and tokens
+internal/config/        environment variables
+catalog/                default package catalog
+deploy/kubernetes/      manifests of Squared (kustomize base and Kind overlay)
+deploy/kind/            Kind cluster and Helm values for development
+hack/                   development scripts
+examples/hello/         example application for tests
+```
+
+## Build and test
+
+```bash
+make build      # bin/squared
+make check      # gofmt, go vet, catalog check
+make test       # unit tests; tests that need PostgreSQL are skipped
+make test-all   # all tests; starts PostgreSQL in Podman on port 15433
+```
+
+The store, core and web tests need PostgreSQL. They make a new database
+for each test and remove it at the end. Set `SQUARED_TEST_DATABASE_URL` to
+use a different server. The user must be able to make databases.
+
+The renderer tests compare the output with golden files. After an intended
+change of the output, write new golden files and read the difference:
+
+```bash
+go test ./internal/render -update
+git diff internal/render/testdata
+```
+
+## Development environment in Kind
+
+```bash
+make kind-up      # cluster, Argo CD, Forgejo, Harbor, PostgreSQL, RabbitMQ, Squared
+make kind-deploy  # after a code change: build, load and restart Squared
+make e2e          # end-to-end test
+make kind-down    # remove the cluster
+```
+
+`make kind-up` takes about five minutes the first time. It is safe to run it
+again. At the end it shows the addresses and the passwords. The passwords
+are also in `.dev/` (Git ignores this directory).
+
+| Service | Address | User |
+|---|---|---|
+| Squared | http://localhost:30080 | `admin@squared.test` |
+| Forgejo | http://localhost:30300 | `forgejo-admin` |
+| Harbor | http://localhost:30002 | `admin` |
+| Argo CD | http://localhost:30081 | `admin` |
+
+Forgejo has the address of its service inside the cluster as `ROOT_URL`.
+Argo CD and the worker use the same address. This is necessary for the
+push webhook: Argo CD compares the repository address in the webhook with
+the address of the application. Do not use a `*.localhost` name inside
+the cluster: git and curl resolve such names to the loopback address
+without DNS.
+
+The Kind node pulls images from Harbor at `localhost:30002` over plain
+HTTP. The script writes a containerd `hosts.toml` file in the node for
+this. Kube-proxy runs in iptables mode, because only that mode answers on
+NodePorts at the localhost address of the node.
+
+### Push an image to the development Harbor
+
+```bash
+podman build -t localhost/hello:1.0.0 examples/hello
+cat .dev/harbor-admin-password | podman login --tls-verify=false -u admin --password-stdin localhost:30002
+podman push --tls-verify=false localhost/hello:1.0.0 localhost:30002/<tenant>/hello:1.0.0
+```
+
+The Harbor project of a tenant exists after the tenant status is `ready`.
+
+### What the end-to-end test does
+
+`hack/e2e.sh`:
+
+1. Signs in to the web interface and makes an API token on the account page.
+2. Makes a tenant through the API and waits until it is `ready`.
+3. Pushes the example image to the Harbor project of the tenant.
+4. Deploys the image and checks the answer of the service.
+5. Checks that a pod in another namespace cannot connect to the service.
+6. Changes a value (revision 2) and checks the new answer.
+7. Rolls back to revision 1 (revision 3) and checks the old answer.
+8. Removes the deployment and checks that the objects are gone.
+9. Removes the tenant and checks that its Argo CD project is gone.
+
+Set `KEEP_TENANT=1` to keep the tenant after the test, so that you can
+examine it.
+
+## Run outside the cluster
+
+You can run the server on your computer against PostgreSQL and RabbitMQ in
+Podman:
+
+```bash
+podman run -d --name squared-dev-db -e POSTGRES_USER=squared -e POSTGRES_PASSWORD=dev \
+  -e POSTGRES_DB=squared -p 127.0.0.1:15432:5432 docker.io/library/postgres:17-alpine
+podman run -d --name squared-dev-mq -p 127.0.0.1:15673:5672 docker.io/library/rabbitmq:4.1-alpine
+echo 'admin password 1' > /tmp/admin-password
+SQUARED_DATABASE_URL=postgres://squared:dev@127.0.0.1:15432/squared \
+SQUARED_AMQP_URL=amqp://guest:guest@127.0.0.1:15673/ \
+SQUARED_CATALOG_DIR=catalog SQUARED_REGISTRY_HOST=localhost:30002 \
+SQUARED_LISTEN=127.0.0.1:18080 SQUARED_LOG_FORMAT=text \
+SQUARED_BOOTSTRAP_ADMIN_EMAIL=admin@example.com \
+SQUARED_BOOTSTRAP_ADMIN_PASSWORD_FILE=/tmp/admin-password \
+go run ./cmd/squared serve
+```
+
+The worker needs Forgejo, Harbor and Kubernetes. Use the Kind environment
+for it.
+
+## Coding rules
+
+- Write Go in the style of the code around it. Run `gofmt`.
+- Use the standard library. Add an external module only for complex
+  protocols or security functions, and record the reason in
+  [architecture.md](architecture.md) (decision D9).
+- Wrap errors with context: `fmt.Errorf("make project %s: %w", name, err)`.
+- Put business rules and permission checks in `internal/core`, not in the
+  web or API handlers.
+- Task handlers must be idempotent.
+- Write all documentation and comments in Simple Technical English: short
+  sentences, active voice, simple tenses, and one word for one meaning.

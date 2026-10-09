@@ -1,0 +1,14 @@
+{{define "content"}}
+<h1>Catalog</h1>
+<p class="muted">Packages are tested sets of components. Platform administrators maintain them. Select a package when you make a deployment.</p>
+<div class="cards">
+{{- range .Data}}
+  <article class="card">
+    <h2><a href="/catalog/{{.Name}}">{{.Title}}</a></h2>
+    <p class="muted"><code>{{.Name}}</code> version {{.Version}}</p>
+    <p>{{.Description}}</p>
+    <p class="muted">Components: {{range $i, $c := .Components}}{{if $i}}, {{end}}{{$c.Name}} ({{$c.Type}}){{end}}</p>
+  </article>
+{{- end}}
+</div>
+{{end}}

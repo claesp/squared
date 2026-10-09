@@ -1,0 +1,27 @@
+{{define "content"}}
+{{- $p := index .Data 0}}
+<p class="crumb"><a href="/catalog">Catalog</a> /</p>
+<h1>{{$p.Title}}</h1>
+<p>{{$p.Description}}</p>
+<p class="muted">Name <code>{{$p.Name}}</code>. Versions: {{range $i, $v := .Data}}{{if $i}}, {{end}}{{$v.Version}}{{end}}.</p>
+<h2>Parameters of version {{$p.Version}}</h2>
+<table>
+  <thead><tr><th>Name</th><th>Type</th><th>Default</th><th>Description</th></tr></thead>
+  <tbody>
+  {{- range $p.Parameters}}
+  <tr>
+    <td><strong>{{.Title}}</strong><br><code>{{.Name}}</code>{{if .Required}} <span class="badge busy">required</span>{{end}}</td>
+    <td>{{.Type}}{{with .Enum}}<br><span class="muted">one of {{range $i, $e := .}}{{if $i}}, {{end}}{{$e}}{{end}}</span>{{end}}{{if .Min}}<br><span class="muted">from {{.Min}}</span>{{end}}{{if .Max}} <span class="muted">to {{.Max}}</span>{{end}}</td>
+    <td>{{with .Default}}<code>{{formValue .}}</code>{{end}}</td>
+    <td>{{.Description}}</td>
+  </tr>
+  {{- end}}
+  </tbody>
+</table>
+<h2>Components</h2>
+<ul>
+{{- range $p.Components}}
+  <li><strong>{{.Name}}</strong>: type {{.Type}}</li>
+{{- end}}
+</ul>
+{{end}}

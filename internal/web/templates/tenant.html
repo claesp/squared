@@ -1,0 +1,89 @@
+{{define "content"}}
+{{- $slug := .Access.Tenant.Slug}}
+{{- with .Access.Tenant.StatusMessage}}<p class="status-line">{{.}}</p>{{end}}
+{{- with .Errors}}<p class="error" role="alert">{{.Error}}</p>{{end}}
+
+<section>
+  <div class="title-row">
+    <h2>Deployments</h2>
+    {{- if can .Access "developer"}}<a class="button primary" href="/tenants/{{$slug}}/new">New deployment</a>{{end}}
+  </div>
+  {{- if .Data.Deployments}}
+  <table>
+    <thead><tr><th>Name</th><th>Environment</th><th>Package</th><th>Revision</th><th>Status</th><th>Argo CD</th></tr></thead>
+    <tbody>
+    {{- range .Data.Deployments}}
+    <tr>
+      <td><a href="/tenants/{{$slug}}/deployments/{{.Environment}}/{{.Name}}">{{.Name}}</a></td>
+      <td>{{.Environment}}</td>
+      <td>{{.PackageName}}</td>
+      <td>{{.Revision}}</td>
+      <td><span class="badge {{statusClass .Status}}">{{.Status}}</span>{{with .StatusMessage}}<br><span class="muted">{{.}}</span>{{end}}</td>
+      <td class="muted">{{.SyncStatus}}{{if .HealthStatus}} · {{.HealthStatus}}{{end}}</td>
+    </tr>
+    {{- end}}
+    </tbody>
+  </table>
+  {{- else}}
+  <p class="empty">No deployments yet.{{if can .Access "developer"}} Select <a href="/tenants/{{$slug}}/new">New deployment</a> to start.{{end}}</p>
+  {{- end}}
+</section>
+
+<section>
+  <h2>Environments</h2>
+  <table>
+    <thead><tr><th>Name</th><th>Namespace</th><th>Status</th>{{if can .Access "owner"}}<th></th>{{end}}</tr></thead>
+    <tbody>
+    {{- range .Data.Environments}}
+    <tr>
+      <td>{{.Name}}</td>
+      <td><code>{{.Namespace}}</code></td>
+      <td><span class="badge {{statusClass .Status}}">{{.Status}}</span>{{with .StatusMessage}} <span class="muted">{{.}}</span>{{end}}</td>
+      {{- if can $.Access "owner"}}
+      <td>
+        <details>
+          <summary>Remove</summary>
+          <form method="post" action="/tenants/{{$slug}}/environments/{{.Name}}/delete">
+            <input type="hidden" name="csrf" value="{{$.CSRF}}">
+            <label for="confirm-{{.Name}}">Type <code>{{.Name}}</code> to confirm</label>
+            <input id="confirm-{{.Name}}" name="confirm" required autocomplete="off">
+            <button class="danger small">Remove environment</button>
+          </form>
+        </details>
+      </td>
+      {{- end}}
+    </tr>
+    {{- end}}
+    </tbody>
+  </table>
+  {{- if can .Access "owner"}}
+  <form method="post" action="/tenants/{{$slug}}/environments" class="row">
+    <input type="hidden" name="csrf" value="{{.CSRF}}">
+    <div>
+      <label for="env-name">New environment</label>
+      <input id="env-name" name="name" required maxlength="10" pattern="[a-z][a-z0-9]*" placeholder="staging" value="{{.Value "name"}}">
+      {{with .FieldError "name"}}<p class="field-error">{{.}}</p>{{end}}
+    </div>
+    <div class="actions"><button>Add environment</button></div>
+  </form>
+  {{- end}}
+</section>
+
+<section class="card">
+  <h2>Images</h2>
+  <p>Push the images of this tenant to the registry project:</p>
+  <pre>{{.Data.Registry}}/&lt;name&gt;:&lt;tag&gt;</pre>
+  <p class="muted">In a deployment, give the image as <code>&lt;name&gt;:&lt;tag&gt;</code>. Squared finds the digest of the tag and deploys that digest. Thus a later push to the same tag does not change a running deployment.</p>
+  {{- with .Data.RepoURL}}
+  <p>Git repository with the manifests: <a href="{{.}}">{{.}}</a></p>
+  {{- end}}
+</section>
+
+{{- if can .Access "owner"}}
+<form method="post" action="/tenants/{{$slug}}/sync" class="inline-form">
+  <input type="hidden" name="csrf" value="{{.CSRF}}">
+  <button>Prepare the tenant again</button>
+  <span class="muted">Use this after a failure, or if the namespaces or the registry access are not correct.</span>
+</form>
+{{- end}}
+{{end}}

@@ -1,0 +1,59 @@
+{{define "content"}}
+<h1>Administration</h1>
+<nav class="tabs" aria-label="Administration">
+  <a href="/admin/users" aria-current="page">Users</a>
+  <a href="/admin/tenants/new">New tenant</a>
+  <a href="/admin/audit">Audit log</a>
+</nav>
+{{- with .Errors}}<p class="error" role="alert">{{.Error}}</p>{{end}}
+<table>
+  <thead><tr><th>Email</th><th>Name</th><th>Role</th><th>State</th><th>Created</th><th>Actions</th></tr></thead>
+  <tbody>
+  {{- range .Data.Users}}
+  <tr>
+    <td>{{.Email}}</td>
+    <td>{{.Name}}</td>
+    <td>{{if .Admin}}administrator{{else}}user{{end}}</td>
+    <td>{{if .Disabled}}<span class="badge bad">disabled</span>{{else}}<span class="badge ok">enabled</span>{{end}}</td>
+    <td>{{time .CreatedAt}}</td>
+    <td class="actions-cell">
+      {{- if ne .ID $.User.ID}}
+      {{- if .Disabled}}
+      <form method="post" action="/admin/users/{{.ID}}/enable"><input type="hidden" name="csrf" value="{{$.CSRF}}"><button class="small">Enable</button></form>
+      {{- else}}
+      <form method="post" action="/admin/users/{{.ID}}/disable"><input type="hidden" name="csrf" value="{{$.CSRF}}"><button class="danger small">Disable</button></form>
+      {{- end}}
+      <details>
+        <summary>Set password</summary>
+        <form method="post" action="/admin/users/{{.ID}}/password">
+          <input type="hidden" name="csrf" value="{{$.CSRF}}">
+          <label for="pw-{{.ID}}">New password</label>
+          <input id="pw-{{.ID}}" name="password" type="password" autocomplete="new-password" minlength="12" required>
+          <button class="small">Save</button>
+        </form>
+      </details>
+      {{- end}}
+    </td>
+  </tr>
+  {{- end}}
+  </tbody>
+</table>
+
+<section class="card">
+  <h2>Add a user</h2>
+  <form method="post" action="/admin/users">
+    <input type="hidden" name="csrf" value="{{.CSRF}}">
+    <label for="email">Email address</label>
+    <input id="email" name="email" type="email" required value="{{.Value "email"}}">
+    {{with .FieldError "email"}}<p class="field-error">{{.}}</p>{{end}}
+    <label for="name">Name</label>
+    <input id="name" name="name" required maxlength="100" value="{{.Value "name"}}">
+    {{with .FieldError "name"}}<p class="field-error">{{.}}</p>{{end}}
+    <label for="password">First password (12 characters or more)</label>
+    <input id="password" name="password" type="password" autocomplete="new-password" minlength="12" required>
+    {{with .FieldError "password"}}<p class="field-error">{{.}}</p>{{end}}
+    <label class="check"><input type="checkbox" name="admin" {{if eq (.Value "admin") "on"}}checked{{end}}> Platform administrator</label>
+    <button class="primary">Add user</button>
+  </form>
+</section>
+{{end}}

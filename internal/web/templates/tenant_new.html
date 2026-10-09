@@ -1,0 +1,38 @@
+{{define "content"}}
+<h1>Administration</h1>
+<nav class="tabs" aria-label="Administration">
+  <a href="/admin/users">Users</a>
+  <a href="/admin/tenants/new" aria-current="page">New tenant</a>
+  <a href="/admin/audit">Audit log</a>
+</nav>
+<section class="card">
+  <h2>New tenant</h2>
+  <p class="muted">Squared makes a registry project, a Git repository, an Argo CD project and one namespace for each environment.</p>
+  <form method="post" action="/admin/tenants">
+    <input type="hidden" name="csrf" value="{{.CSRF}}">
+    <label for="slug">Slug</label>
+    <input id="slug" name="slug" required minlength="3" maxlength="20" pattern="[a-z]([a-z0-9-]*[a-z0-9])?" value="{{.Value "slug"}}" aria-describedby="slug-help">
+    <p id="slug-help" class="help">3 to 20 lowercase letters, digits and '-'. You cannot change it later. It is part of namespace names.</p>
+    {{with .FieldError "slug"}}<p class="field-error">{{.}}</p>{{end}}
+    <label for="name">Name</label>
+    <input id="name" name="name" required maxlength="100" value="{{.Value "name"}}">
+    {{with .FieldError "name"}}<p class="field-error">{{.}}</p>{{end}}
+    <label for="owner">Email address of the first owner</label>
+    <input id="owner" name="owner" type="email" required value="{{.Value "owner"}}">
+    {{with .FieldError "owner"}}<p class="field-error">{{.}}</p>{{end}}
+    <label for="environments">Environments</label>
+    <input id="environments" name="environments" required value="{{.Value "environments"}}" aria-describedby="env-help">
+    <p id="env-help" class="help">Names separated by commas, for example "dev, prod". Each name has 1 to 10 lowercase letters or digits.</p>
+    {{with .FieldError "environments"}}<p class="field-error">{{.}}</p>{{end}}
+    <fieldset>
+      <legend>Quota for each environment</legend>
+      <div class="row">
+        <div><label for="quota_cpu">CPU</label><input id="quota_cpu" name="quota_cpu" required value="{{.Value "quota_cpu"}}">{{with .FieldError "quota_cpu"}}<p class="field-error">{{.}}</p>{{end}}</div>
+        <div><label for="quota_memory">Memory</label><input id="quota_memory" name="quota_memory" required value="{{.Value "quota_memory"}}">{{with .FieldError "quota_memory"}}<p class="field-error">{{.}}</p>{{end}}</div>
+        <div><label for="quota_pods">Pods</label><input id="quota_pods" name="quota_pods" type="number" min="1" max="1000" required value="{{.Value "quota_pods"}}">{{with .FieldError "quota_pods"}}<p class="field-error">{{.}}</p>{{end}}</div>
+      </div>
+    </fieldset>
+    <button class="primary">Add tenant</button>
+  </form>
+</section>
+{{end}}

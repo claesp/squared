@@ -1,0 +1,238 @@
+# deployment-shop-web.json
+{
+  "apiVersion": "apps/v1",
+  "kind": "Deployment",
+  "metadata": {
+    "name": "shop-web",
+    "namespace": "acme-dev",
+    "labels": {
+      "app.kubernetes.io/component": "web",
+      "app.kubernetes.io/instance": "shop",
+      "app.kubernetes.io/managed-by": "squared",
+      "app.kubernetes.io/name": "web",
+      "app.kubernetes.io/part-of": "web-app",
+      "app.kubernetes.io/version": "1.0.0",
+      "squared.dev/deployment": "shop",
+      "squared.dev/tenant": "acme"
+    }
+  },
+  "spec": {
+    "replicas": 2,
+    "revisionHistoryLimit": 5,
+    "selector": {
+      "matchLabels": {
+        "app.kubernetes.io/component": "web",
+        "app.kubernetes.io/instance": "shop"
+      }
+    },
+    "template": {
+      "metadata": {
+        "labels": {
+          "app.kubernetes.io/component": "web",
+          "app.kubernetes.io/instance": "shop",
+          "app.kubernetes.io/managed-by": "squared",
+          "app.kubernetes.io/name": "web",
+          "app.kubernetes.io/part-of": "web-app",
+          "app.kubernetes.io/version": "1.0.0",
+          "squared.dev/deployment": "shop",
+          "squared.dev/tenant": "acme"
+        }
+      },
+      "spec": {
+        "serviceAccountName": "shop-web",
+        "automountServiceAccountToken": false,
+        "enableServiceLinks": false,
+        "securityContext": {
+          "runAsNonRoot": true,
+          "seccompProfile": {
+            "type": "RuntimeDefault"
+          }
+        },
+        "imagePullSecrets": [
+          {
+            "name": "squared-registry"
+          }
+        ],
+        "containers": [
+          {
+            "name": "web",
+            "image": "registry.test/acme/app@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+            "imagePullPolicy": "IfNotPresent",
+            "env": [
+              {
+                "name": "SQUARED_COMPONENT",
+                "value": "web"
+              },
+              {
+                "name": "SQUARED_DEPLOYMENT",
+                "value": "shop"
+              },
+              {
+                "name": "SQUARED_TENANT",
+                "value": "acme"
+              },
+              {
+                "name": "PORT",
+                "value": "8080"
+              }
+            ],
+            "ports": [
+              {
+                "name": "http",
+                "containerPort": 8080,
+                "protocol": "TCP"
+              }
+            ],
+            "resources": {
+              "requests": {
+                "cpu": "100m",
+                "memory": "256Mi"
+              },
+              "limits": {
+                "memory": "256Mi"
+              }
+            },
+            "securityContext": {
+              "allowPrivilegeEscalation": false,
+              "readOnlyRootFilesystem": true,
+              "runAsNonRoot": true,
+              "capabilities": {
+                "drop": [
+                  "ALL"
+                ]
+              }
+            },
+            "readinessProbe": {
+              "httpGet": {
+                "path": "/",
+                "port": "http"
+              },
+              "periodSeconds": 5,
+              "timeoutSeconds": 2,
+              "failureThreshold": 3
+            },
+            "livenessProbe": {
+              "httpGet": {
+                "path": "/",
+                "port": "http"
+              },
+              "initialDelaySeconds": 10,
+              "periodSeconds": 10,
+              "timeoutSeconds": 2,
+              "failureThreshold": 6
+            },
+            "volumeMounts": [
+              {
+                "name": "tmp",
+                "mountPath": "/tmp"
+              }
+            ]
+          }
+        ],
+        "volumes": [
+          {
+            "name": "tmp",
+            "emptyDir": {
+              "sizeLimit": "64Mi"
+            }
+          }
+        ],
+        "topologySpreadConstraints": [
+          {
+            "maxSkew": 1,
+            "topologyKey": "kubernetes.io/hostname",
+            "whenUnsatisfiable": "ScheduleAnyway",
+            "labelSelector": {
+              "matchLabels": {
+                "app.kubernetes.io/component": "web",
+                "app.kubernetes.io/instance": "shop"
+              }
+            }
+          }
+        ]
+      }
+    }
+  }
+}
+# poddisruptionbudget-shop-web.json
+{
+  "apiVersion": "policy/v1",
+  "kind": "PodDisruptionBudget",
+  "metadata": {
+    "name": "shop-web",
+    "namespace": "acme-dev",
+    "labels": {
+      "app.kubernetes.io/component": "web",
+      "app.kubernetes.io/instance": "shop",
+      "app.kubernetes.io/managed-by": "squared",
+      "app.kubernetes.io/name": "web",
+      "app.kubernetes.io/part-of": "web-app",
+      "app.kubernetes.io/version": "1.0.0",
+      "squared.dev/deployment": "shop",
+      "squared.dev/tenant": "acme"
+    }
+  },
+  "spec": {
+    "maxUnavailable": 1,
+    "selector": {
+      "matchLabels": {
+        "app.kubernetes.io/component": "web",
+        "app.kubernetes.io/instance": "shop"
+      }
+    }
+  }
+}
+# service-shop-web.json
+{
+  "apiVersion": "v1",
+  "kind": "Service",
+  "metadata": {
+    "name": "shop-web",
+    "namespace": "acme-dev",
+    "labels": {
+      "app.kubernetes.io/component": "web",
+      "app.kubernetes.io/instance": "shop",
+      "app.kubernetes.io/managed-by": "squared",
+      "app.kubernetes.io/name": "web",
+      "app.kubernetes.io/part-of": "web-app",
+      "app.kubernetes.io/version": "1.0.0",
+      "squared.dev/deployment": "shop",
+      "squared.dev/tenant": "acme"
+    }
+  },
+  "spec": {
+    "type": "ClusterIP",
+    "selector": {
+      "app.kubernetes.io/component": "web",
+      "app.kubernetes.io/instance": "shop"
+    },
+    "ports": [
+      {
+        "name": "http",
+        "port": 80,
+        "targetPort": "http",
+        "protocol": "TCP"
+      }
+    ]
+  }
+}
+# serviceaccount-shop-web.json
+{
+  "apiVersion": "v1",
+  "kind": "ServiceAccount",
+  "metadata": {
+    "name": "shop-web",
+    "namespace": "acme-dev",
+    "labels": {
+      "app.kubernetes.io/component": "web",
+      "app.kubernetes.io/instance": "shop",
+      "app.kubernetes.io/managed-by": "squared",
+      "app.kubernetes.io/name": "web",
+      "app.kubernetes.io/part-of": "web-app",
+      "app.kubernetes.io/version": "1.0.0",
+      "squared.dev/deployment": "shop",
+      "squared.dev/tenant": "acme"
+    }
+  },
+  "automountServiceAccountToken": false
+}

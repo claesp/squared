@@ -1,0 +1,38 @@
+{
+  "name": "web-with-worker",
+  "version": "1.0.0",
+  "title": "Web application with worker",
+  "description": "An HTTP service and a background worker that use the same image and settings. The worker starts with the argument \"worker\".",
+  "parameters": [
+    {"name": "image", "title": "Image", "type": "image", "required": true, "example": "app:1.0.0",
+     "description": "Image in the registry project of the tenant."},
+    {"name": "web_replicas", "title": "Web replicas", "type": "integer", "default": 2, "min": 0, "max": 20,
+     "description": "Number of web pods."},
+    {"name": "worker_replicas", "title": "Worker replicas", "type": "integer", "default": 1, "min": 0, "max": 20,
+     "description": "Number of worker pods."},
+    {"name": "port", "title": "Port", "type": "integer", "default": 8080, "min": 1024, "max": 65535,
+     "description": "The port where the web program listens."},
+    {"name": "health_path", "title": "Health check path", "type": "string", "default": "/", "pattern": "/[A-Za-z0-9/._-]*",
+     "description": "The path that answers 2xx or 3xx when the web program is ready."},
+    {"name": "host", "title": "Public host name", "type": "string", "pattern": "([a-z0-9]([a-z0-9-]*[a-z0-9])?\\.)+[a-z]{2,63}",
+     "description": "Optional. If you set it, the web service is available from outside the cluster at this name."},
+    {"name": "env", "title": "Environment variables", "type": "env",
+     "description": "One NAME=value on each line, for both components. Do not put secrets here."}
+  ],
+  "components": [
+    {"name": "web", "type": "web", "settings": {
+      "image": "${image}",
+      "replicas": "${web_replicas}",
+      "port": "${port}",
+      "health_path": "${health_path}",
+      "host": "${host}",
+      "env": "${env}"
+    }},
+    {"name": "worker", "type": "worker", "settings": {
+      "image": "${image}",
+      "replicas": "${worker_replicas}",
+      "args": ["worker"],
+      "env": "${env}"
+    }}
+  ]
+}

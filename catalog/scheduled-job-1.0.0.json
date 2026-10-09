@@ -1,0 +1,28 @@
+{
+  "name": "scheduled-job",
+  "version": "1.0.0",
+  "title": "Scheduled job",
+  "description": "A program that runs on a schedule and then stops, for example a nightly report.",
+  "parameters": [
+    {"name": "image", "title": "Image", "type": "image", "required": true, "example": "report:1.0.0",
+     "description": "Image in the registry project of the tenant, for example report:1.0.0."},
+    {"name": "schedule", "title": "Schedule", "type": "string", "required": true, "example": "0 3 * * *",
+     "pattern": "[0-9A-Za-z*/,-]+ [0-9A-Za-z*/,-]+ [0-9A-Za-z*/,-]+ [0-9A-Za-z*/,-]+ [0-9A-Za-z*/,-]+",
+     "description": "Cron schedule with five fields: minute, hour, day of month, month, day of week. For example 0 3 * * *."},
+    {"name": "time_zone", "title": "Time zone", "type": "string", "default": "Etc/UTC", "pattern": "[A-Za-z]+(/[A-Za-z0-9_+-]+)*",
+     "description": "IANA time zone of the schedule, for example Europe/Stockholm."},
+    {"name": "size", "title": "Memory", "type": "string", "default": "256Mi", "enum": ["128Mi", "256Mi", "512Mi", "1Gi", "2Gi"],
+     "description": "Memory for the job."},
+    {"name": "env", "title": "Environment variables", "type": "env",
+     "description": "One NAME=value on each line. Do not put secrets here: Git keeps all values."}
+  ],
+  "components": [
+    {"name": "job", "type": "cron", "settings": {
+      "image": "${image}",
+      "schedule": "${schedule}",
+      "time_zone": "${time_zone}",
+      "memory": "${size}",
+      "env": "${env}"
+    }}
+  ]
+}

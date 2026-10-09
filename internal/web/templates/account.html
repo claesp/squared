@@ -1,0 +1,63 @@
+{{define "content"}}
+<h1>Account</h1>
+<p class="muted">{{.User.Name}} · {{.User.Email}}{{if .User.Admin}} · platform administrator{{end}}</p>
+
+{{- with .Data.NewToken}}
+<section class="card notice">
+  <h2>Your new API token</h2>
+  <p>Copy the token now. Squared does not show it again.</p>
+  <pre class="token">{{.}}</pre>
+  <p class="muted">Use it in the HTTP header <code>Authorization: Bearer &lt;token&gt;</code>. See the API documentation.</p>
+</section>
+{{- end}}
+
+<section class="card">
+  <h2>API tokens</h2>
+  {{- if .Data.Tokens}}
+  <table>
+    <thead><tr><th>Name</th><th>Starts with</th><th>Created</th><th>Expires</th><th>Last use</th><th></th></tr></thead>
+    <tbody>
+    {{- range .Data.Tokens}}
+    <tr>
+      <td>{{.Name}}</td><td><code>{{.Prefix}}…</code></td><td>{{time .CreatedAt}}</td><td>{{timeptr .ExpiresAt}}</td><td>{{timeptr .LastUsedAt}}</td>
+      <td><form method="post" action="/account/tokens/{{.ID}}/delete"><input type="hidden" name="csrf" value="{{$.CSRF}}"><button class="danger small">Remove</button></form></td>
+    </tr>
+    {{- end}}
+    </tbody>
+  </table>
+  {{- else}}
+  <p class="empty">You have no API tokens.</p>
+  {{- end}}
+  <form method="post" action="/account/tokens" class="row">
+    <input type="hidden" name="csrf" value="{{.CSRF}}">
+    <div>
+      <label for="token-name">Name</label>
+      <input id="token-name" name="name" required maxlength="100" value="{{.Value "name"}}" placeholder="CI pipeline">
+      {{with .FieldError "name"}}<p class="field-error">{{.}}</p>{{end}}
+    </div>
+    <div>
+      <label for="token-days">Days until expiry</label>
+      <input id="token-days" name="days" type="number" min="0" max="366" value="90" required>
+      {{with .FieldError "days"}}<p class="field-error">{{.}}</p>{{end}}
+    </div>
+    <div class="actions"><button class="primary">Make token</button></div>
+  </form>
+</section>
+
+<section class="card">
+  <h2>Change password</h2>
+  <form method="post" action="/account/password">
+    <input type="hidden" name="csrf" value="{{.CSRF}}">
+    <label for="current">Current password</label>
+    <input id="current" name="current_password" type="password" autocomplete="current-password" required>
+    {{with .FieldError "current"}}<p class="field-error">{{.}}</p>{{end}}
+    <label for="password">New password (12 characters or more)</label>
+    <input id="password" name="password" type="password" autocomplete="new-password" minlength="12" required>
+    {{with .FieldError "password"}}<p class="field-error">{{.}}</p>{{end}}
+    <label for="password2">New password again</label>
+    <input id="password2" name="password2" type="password" autocomplete="new-password" minlength="12" required>
+    {{with .FieldError "password2"}}<p class="field-error">{{.}}</p>{{end}}
+    <button class="primary">Change password</button>
+  </form>
+</section>
+{{end}}

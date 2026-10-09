@@ -1,0 +1,22 @@
+{{define "content"}}
+{{- if not .Access}}
+<h1>Administration</h1>
+<nav class="tabs" aria-label="Administration">
+  <a href="/admin/users">Users</a>
+  <a href="/admin/tenants/new">New tenant</a>
+  <a href="/admin/audit" aria-current="page">Audit log</a>
+</nav>
+{{- end}}
+{{- if .Data}}
+<table>
+  <thead><tr><th>Time</th><th>Who</th><th>Action</th><th>Object</th><th>Detail</th></tr></thead>
+  <tbody>
+  {{- range .Data}}
+  <tr><td>{{time .CreatedAt}}</td><td>{{.ActorEmail}}</td><td><code>{{.Action}}</code></td><td>{{.Target}}</td><td>{{.Detail}}</td></tr>
+  {{- end}}
+  </tbody>
+</table>
+{{- else}}
+<p class="empty">No events.</p>
+{{- end}}
+{{end}}

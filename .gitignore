@@ -1,0 +1,10 @@
+# Build output
+/bin/
+/dist/
+*.test
+*.out
+coverage.html
+
+# Local secrets and generated development files
+/.dev/
+*.local.env

@@ -1,0 +1,23 @@
+{{define "content"}}
+<div class="title-row">
+  <h1>Tenants</h1>
+  {{- if .User.Admin}}<a class="button primary" href="/admin/tenants/new">New tenant</a>{{end}}
+</div>
+{{- if .Data}}
+<table>
+  <thead><tr><th>Name</th><th>Slug</th><th>Status</th><th>Created</th></tr></thead>
+  <tbody>
+  {{- range .Data}}
+  <tr>
+    <td><a href="/tenants/{{.Slug}}">{{.Name}}</a></td>
+    <td><code>{{.Slug}}</code></td>
+    <td><span class="badge {{statusClass .Status}}">{{.Status}}</span>{{with .StatusMessage}} <span class="muted">{{.}}</span>{{end}}</td>
+    <td>{{time .CreatedAt}}</td>
+  </tr>
+  {{- end}}
+  </tbody>
+</table>
+{{- else}}
+<p class="empty">You are not a member of a tenant. Ask an administrator or a tenant owner to add you.</p>
+{{- end}}
+{{end}}

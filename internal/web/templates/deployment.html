@@ -1,0 +1,87 @@
+{{define "content"}}
+{{- $v := .Data.View}}
+{{- $dep := $v.Deployment}}
+{{- $slug := .Access.Tenant.Slug}}
+{{- $base := printf "/tenants/%s/deployments/%s/%s" $slug $dep.Environment $dep.Name}}
+<div class="title-row">
+  <h2>{{$dep.Name}} <span class="badge {{statusClass $dep.Status}}">{{$dep.Status}}</span></h2>
+  {{- if and (can .Access "developer") (ne (print $dep.Status) "deleting")}}<a class="button primary" href="{{$base}}/edit">Change</a>{{end}}
+</div>
+{{- with $dep.StatusMessage}}<p class="status-line">{{.}}</p>{{end}}
+{{- with .Errors}}<p class="error" role="alert">{{.Error}}</p>{{end}}
+
+<dl class="facts">
+  <dt>Environment</dt><dd>{{$dep.Environment}} (namespace <code>{{$dep.Namespace}}</code>)</dd>
+  <dt>Package</dt><dd><a href="/catalog/{{$dep.PackageName}}">{{$dep.PackageName}}</a>{{with .Data.Current}} version {{.PackageVersion}}{{end}}</dd>
+  <dt>Desired revision</dt><dd>{{$dep.Revision}}</dd>
+  <dt>Argo CD application</dt><dd><code>{{$dep.AppName}}</code>{{if $dep.SyncStatus}}: {{$dep.SyncStatus}}, {{$dep.HealthStatus}}{{end}}</dd>
+  {{- with .Data.Current}}
+  <dt>Commit</dt><dd>{{if .CommitSHA}}{{if $.Data.CommitURL}}<a href="{{$.Data.CommitURL}}"><code>{{short .CommitSHA}}</code></a>{{else}}<code>{{short .CommitSHA}}</code>{{end}}{{else}}not yet{{end}}</dd>
+  {{- end}}
+  {{- with .Data.RepoURL}}<dt>Manifests</dt><dd><a href="{{.}}">Git repository</a></dd>{{end}}
+</dl>
+
+{{- with .Data.Current}}
+<section class="card">
+  <h3>Values of revision {{.Number}}</h3>
+  <table class="values">
+    <tbody>
+    {{- $pkg := $.Data.Package}}
+    {{- range $pkg.Parameters}}
+    <tr><th scope="row">{{.Title}}</th><td><pre>{{display (index $.Data.Current.Values .Name)}}</pre></td></tr>
+    {{- end}}
+    </tbody>
+  </table>
+  {{- if .Images}}
+  <h4>Images</h4>
+  <ul class="mono">{{range $k, $img := .Images}}<li>{{$k}}: {{$img}}</li>{{end}}</ul>
+  {{- end}}
+</section>
+{{- end}}
+
+<section>
+  <h3>Revisions</h3>
+  <table>
+    <thead><tr><th>Number</th><th>Package</th><th>Status</th><th>Commit</th><th>By</th><th>Time</th><th>Note</th>{{if can .Access "developer"}}<th></th>{{end}}</tr></thead>
+    <tbody>
+    {{- range $v.Revisions}}
+    <tr {{if eq .Number $dep.Revision}}class="current"{{end}}>
+      <td>{{.Number}}{{if eq .Number $dep.Revision}} (desired){{end}}</td>
+      <td>{{.PackageVersion}}</td>
+      <td><span class="badge {{statusClass .Status}}">{{.Status}}</span>{{with .Error}}<br><span class="field-error">{{.}}</span>{{end}}</td>
+      <td>{{with .CommitSHA}}<code>{{short .}}</code>{{end}}</td>
+      <td>{{.CreatedByEmail}}</td>
+      <td>{{time .CreatedAt}}</td>
+      <td>{{.Message}}</td>
+      {{- if can $.Access "developer"}}
+      <td>{{if and (ne .Number $dep.Revision) .Images}}
+        <form method="post" action="{{$base}}/rollback"><input type="hidden" name="csrf" value="{{$.CSRF}}"><input type="hidden" name="revision" value="{{.Number}}"><button class="small">Roll back to this</button></form>
+      {{end}}</td>
+      {{- end}}
+    </tr>
+    {{- end}}
+    </tbody>
+  </table>
+</section>
+
+{{- if can .Access "developer"}}
+<section class="card danger-zone">
+  <h3>Operations</h3>
+  <form method="post" action="{{$base}}/sync" class="inline-form">
+    <input type="hidden" name="csrf" value="{{.CSRF}}">
+    <button>Process again</button>
+    <span class="muted">Use this after a failure. The worker uses the same revision.</span>
+  </form>
+  <details>
+    <summary>Remove the deployment</summary>
+    <form method="post" action="{{$base}}/delete">
+      <input type="hidden" name="csrf" value="{{.CSRF}}">
+      <p>Argo CD removes all objects of the deployment from the cluster. The revisions are removed from Squared. The Git history stays.</p>
+      <label for="confirm">Type <code>{{$dep.Name}}</code> to confirm</label>
+      <input id="confirm" name="confirm" required autocomplete="off">
+      <button class="danger">Remove deployment</button>
+    </form>
+  </details>
+</section>
+{{- end}}
+{{end}}

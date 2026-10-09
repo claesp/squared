@@ -1,0 +1,41 @@
+{{define "content"}}
+{{- with .Errors}}<p class="error" role="alert">{{.Error}}</p>{{end}}
+<table>
+  <thead><tr><th>Email</th><th>Name</th><th>Role</th><th>Since</th>{{if can .Access "owner"}}<th></th>{{end}}</tr></thead>
+  <tbody>
+  {{- range .Data}}
+  <tr>
+    <td>{{.Email}}</td><td>{{.Name}}</td><td>{{.Role}}</td><td>{{time .CreatedAt}}</td>
+    {{- if can $.Access "owner"}}
+    <td><form method="post" action="/tenants/{{$.Access.Tenant.Slug}}/members/{{.UserID}}/remove"><input type="hidden" name="csrf" value="{{$.CSRF}}"><button class="danger small">Remove</button></form></td>
+    {{- end}}
+  </tr>
+  {{- end}}
+  </tbody>
+</table>
+<dl class="roles">
+  <dt>owner</dt><dd>All operations of a developer. Can also change members and environments.</dd>
+  <dt>developer</dt><dd>Can make, change, roll back and remove deployments.</dd>
+  <dt>viewer</dt><dd>Can read all data of the tenant.</dd>
+</dl>
+{{- if can .Access "owner"}}
+<section class="card">
+  <h2>Add a member or change a role</h2>
+  <form method="post" action="/tenants/{{.Access.Tenant.Slug}}/members" class="row">
+    <input type="hidden" name="csrf" value="{{.CSRF}}">
+    <div>
+      <label for="email">Email address of the user</label>
+      <input id="email" name="email" type="email" required value="{{.Value "email"}}">
+      {{with .FieldError "email"}}<p class="field-error">{{.}}</p>{{end}}
+    </div>
+    <div>
+      <label for="role">Role</label>
+      <select id="role" name="role">
+        {{- range roles}}<option value="{{.}}" {{if eq (print .) ($.Value "role")}}selected{{end}}>{{.}}</option>{{end}}
+      </select>
+    </div>
+    <div class="actions"><button class="primary">Save</button></div>
+  </form>
+</section>
+{{- end}}
+{{end}}

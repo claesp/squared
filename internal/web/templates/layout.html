@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+{{- if .Refresh}}
+<meta http-equiv="refresh" content="{{.Refresh}}">
+{{- end}}
+<title>{{.Title}} · Squared</title>
+<link rel="stylesheet" href="/static/style.css">
+<link rel="icon" href="/static/icon.svg" type="image/svg+xml">
+</head>
+<body>
+<header class="top">
+  <a class="brand" href="/"><img src="/static/icon.svg" alt="" width="22" height="22"> Squared</a>
+  {{- if .User}}
+  <nav aria-label="Main">
+    <a href="/" {{if eq .Nav "tenants"}}aria-current="page"{{end}}>Tenants</a>
+    <a href="/catalog" {{if eq .Nav "catalog"}}aria-current="page"{{end}}>Catalog</a>
+    {{- if .User.Admin}}
+    <a href="/admin/users" {{if eq .Nav "admin"}}aria-current="page"{{end}}>Administration</a>
+    {{- end}}
+    <a href="/account" {{if eq .Nav "account"}}aria-current="page"{{end}}>Account</a>
+  </nav>
+  <form method="post" action="/logout" class="signout">
+    <input type="hidden" name="csrf" value="{{.CSRF}}">
+    <span class="who">{{.User.Email}}</span>
+    <button class="linklike">Sign out</button>
+  </form>
+  {{- end}}
+</header>
+<main>
+{{- with .Flash}}
+<p class="flash" role="status">{{.}}</p>
+{{- end}}
+{{- with .Access}}
+<div class="tenant-head">
+  <p class="crumb"><a href="/">Tenants</a> /</p>
+  <h1><a href="/tenants/{{.Tenant.Slug}}">{{.Tenant.Name}}</a> <span class="badge {{statusClass .Tenant.Status}}">{{.Tenant.Status}}</span></h1>
+  <p class="muted">Tenant <code>{{.Tenant.Slug}}</code> · your role: {{.Role}}</p>
+  <nav class="tabs" aria-label="Tenant">
+    <a href="/tenants/{{.Tenant.Slug}}" {{if eq $.Tab "overview"}}aria-current="page"{{end}}>Overview</a>
+    <a href="/tenants/{{.Tenant.Slug}}/members" {{if eq $.Tab "members"}}aria-current="page"{{end}}>Members</a>
+    <a href="/tenants/{{.Tenant.Slug}}/audit" {{if eq $.Tab "audit"}}aria-current="page"{{end}}>Audit log</a>
+    {{- if $.User.Admin}}
+    <a href="/tenants/{{.Tenant.Slug}}/settings" {{if eq $.Tab "settings"}}aria-current="page"{{end}}>Settings</a>
+    {{- end}}
+  </nav>
+</div>
+{{- end}}
+{{- with .Errors}}{{with .FieldMessage "form"}}
+<p class="error" role="alert">{{.}}</p>
+{{- end}}{{end}}
+{{template "content" .}}
+</main>
+<footer class="foot">
+  {{- if .Refresh}}This page loads again every {{.Refresh}} seconds while work is in progress.{{end}}
+</footer>
+</body>
+</html>

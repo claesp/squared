@@ -1,0 +1,67 @@
+{{define "content"}}
+{{- $d := .Data}}
+{{- $pkg := $d.Package}}
+<p class="crumb">{{if $d.Deployment}}<a href="/tenants/{{.Access.Tenant.Slug}}/deployments/{{$d.Deployment.Environment}}/{{$d.Deployment.Name}}">{{$d.Deployment.Name}}</a> /{{else}}<a href="/tenants/{{.Access.Tenant.Slug}}/new">New deployment</a> /{{end}}</p>
+<h2>{{.Title}}</h2>
+<p class="muted">Package <a href="/catalog/{{$pkg.Name}}">{{$pkg.Title}}</a> version {{$pkg.Version}}. {{$pkg.Description}}</p>
+
+{{- if gt (len $d.Versions) 1}}
+<form method="get" action="{{$d.Action}}" class="row version-picker">
+  <div>
+    <label for="version-pick">Package version</label>
+    <select id="version-pick" name="version">
+      {{- range $d.Versions}}<option value="{{.Version}}" {{if eq .Version $pkg.Version}}selected{{end}}>{{.Version}}</option>{{end}}
+    </select>
+  </div>
+  <div class="actions"><button>Use this version</button></div>
+</form>
+{{- end}}
+
+{{- with .Errors}}<p class="error" role="alert">Correct the fields that have a message.</p>{{end}}
+<form method="post" action="{{$d.Action}}" class="card">
+  <input type="hidden" name="csrf" value="{{.CSRF}}">
+  <input type="hidden" name="version" value="{{$pkg.Version}}">
+  {{- if not $d.Deployment}}
+  <label for="name">Deployment name</label>
+  <input id="name" name="name" required maxlength="30" pattern="[a-z]([a-z0-9-]*[a-z0-9])?" value="{{.Value "name"}}" aria-describedby="name-help">
+  <p id="name-help" class="help">1 to 30 lowercase letters, digits and '-'. You cannot change it later.</p>
+  {{with .FieldError "name"}}<p class="field-error">{{.}}</p>{{end}}
+  <label for="environment">Environment</label>
+  <select id="environment" name="environment">
+    {{- range $d.Environments}}<option value="{{.Name}}" {{if eq .Name ($.Value "environment")}}selected{{end}}>{{.Name}} ({{.Namespace}})</option>{{end}}
+  </select>
+  {{with .FieldError "environment"}}<p class="field-error">{{.}}</p>{{end}}
+  {{- end}}
+
+  {{- range $pkg.Parameters}}
+  <div class="param">
+    {{- if eq .Type "boolean"}}
+    <label class="check"><input type="checkbox" id="p-{{.Name}}" name="{{.Name}}" {{if eq ($.Value .Name) "on"}}checked{{end}}> {{.Title}}</label>
+    {{- else}}
+    <label for="p-{{.Name}}">{{.Title}}{{if .Required}} <span class="req">(required)</span>{{end}}</label>
+    {{- if eq .Type "env"}}
+    <textarea id="p-{{.Name}}" name="{{.Name}}" rows="5" spellcheck="false" placeholder="LOG_LEVEL=info">{{$.Value .Name}}</textarea>
+    {{- else if .Enum}}
+    <select id="p-{{.Name}}" name="{{.Name}}">
+      {{- $cur := $.Value .Name}}
+      {{- if not .Required}}{{if not .Default}}<option value="">(not set)</option>{{end}}{{end}}
+      {{- range .Enum}}<option value="{{.}}" {{if eq . $cur}}selected{{end}}>{{.}}</option>{{end}}
+    </select>
+    {{- else if eq .Type "integer"}}
+    <input id="p-{{.Name}}" name="{{.Name}}" type="number" {{with .Min}}min="{{.}}"{{end}} {{with .Max}}max="{{.}}"{{end}} {{if .Required}}required{{end}} value="{{$.Value .Name}}">
+    {{- else if eq .Type "image"}}
+    <div class="prefixed"><span class="prefix">{{$d.Registry}}</span><input id="p-{{.Name}}" name="{{.Name}}" {{if .Required}}required{{end}} spellcheck="false" placeholder="{{.Example}}" value="{{$.Value .Name}}"></div>
+    {{- else}}
+    <input id="p-{{.Name}}" name="{{.Name}}" {{if .Required}}required{{end}} spellcheck="false" placeholder="{{.Example}}" value="{{$.Value .Name}}">
+    {{- end}}
+    {{- end}}
+    {{with .Description}}<p class="help">{{.}}</p>{{end}}
+    {{with $.FieldError .Name}}<p class="field-error">{{.}}</p>{{end}}
+  </div>
+  {{- end}}
+
+  <label for="message">Note about this change (optional)</label>
+  <input id="message" name="message" maxlength="500" value="{{.Value "message"}}" placeholder="Update to version 1.4.2">
+  <button class="primary">{{if $d.Deployment}}Save and deploy{{else}}Make deployment{{end}}</button>
+</form>
+{{end}}

@@ -84,15 +84,18 @@ replaces manual changes at the next synchronization.
 
 // Handle processes a task. It has the type queue.Handler.
 func (w *Worker) Handle(ctx context.Context, task domain.Task, attempt int) error {
+	// Only one task for each object runs at the same time. Without the
+	// lock, a sync that started before a removal can commit the files
+	// again after the removal.
 	switch task.Kind {
 	case domain.TaskTenantSync:
-		return w.syncTenant(ctx, task.TenantID)
-	case domain.TaskDeploymentSync:
-		return w.syncDeployment(ctx, task.DeploymentID, attempt)
-	case domain.TaskDeploymentDelete:
-		return w.deleteDeployment(ctx, task.DeploymentID)
+		return w.store.WithLock(ctx, "tenant:"+task.TenantID, func() error { return w.syncTenant(ctx, task.TenantID) })
 	case domain.TaskTenantDelete:
-		return w.deleteTenant(ctx, task.TenantID)
+		return w.store.WithLock(ctx, "tenant:"+task.TenantID, func() error { return w.deleteTenant(ctx, task.TenantID) })
+	case domain.TaskDeploymentSync:
+		return w.store.WithLock(ctx, "deployment:"+task.DeploymentID, func() error { return w.syncDeployment(ctx, task.DeploymentID, attempt) })
+	case domain.TaskDeploymentDelete:
+		return w.store.WithLock(ctx, "deployment:"+task.DeploymentID, func() error { return w.deleteDeployment(ctx, task.DeploymentID) })
 	}
 	return queue.Permanent(fmt.Errorf("unknown task kind %q", task.Kind))
 }

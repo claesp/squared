@@ -22,6 +22,9 @@ controls that it uses. Read [architecture.md](architecture.md) first.
   does not exist. This prevents user enumeration.
 - **Rate limit.** The server accepts 10 sign-in attempts in 5 minutes for
   each client address and for each email address.
+- **Memory limit for hashes.** At most four Argon2id operations run at the
+  same time. Many sign-in requests at the same time thus cannot use all
+  memory of the server.
 - **Sessions** use a random token with 160 bits of entropy. The database
   keeps only the SHA-256 hash of the token. A copy of the database thus
   does not give access. Sessions expire after 12 hours

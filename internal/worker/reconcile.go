@@ -37,7 +37,8 @@ func (w *Worker) reconcileOnce(ctx context.Context) (tenants, deployments, failu
 			continue
 		}
 		tenants++
-		if err := w.syncTenantFiles(ctx, &t); err != nil {
+		err := w.store.WithLock(ctx, "tenant:"+t.ID, func() error { return w.syncTenantFiles(ctx, &t) })
+		if err != nil {
 			failures++
 			w.log.Warn("reconcile tenant", "tenant", t.Slug, "error", err)
 		}
@@ -57,7 +58,8 @@ func (w *Worker) reconcileOnce(ctx context.Context) (tenants, deployments, failu
 			break
 		}
 		deployments++
-		if err := w.syncDeployment(ctx, d.ID, 1); err != nil {
+		err := w.store.WithLock(ctx, "deployment:"+d.ID, func() error { return w.syncDeployment(ctx, d.ID, 1) })
+		if err != nil {
 			failures++
 			w.log.Warn("reconcile deployment", "deployment", d.AppName, "error", err)
 		}

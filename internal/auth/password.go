@@ -26,6 +26,17 @@ const (
 
 var errBadHash = errors.New("bad password hash format")
 
+// hashSlots limits the number of Argon2id operations at the same time.
+// Each operation uses 19 MiB of memory. Without a limit, many sign-in
+// requests at the same time can use all memory of the process.
+var hashSlots = make(chan struct{}, 4)
+
+func argonKey(password, salt []byte, time, memory uint32, threads uint8, keyLen uint32) []byte {
+	hashSlots <- struct{}{}
+	defer func() { <-hashSlots }()
+	return argon2.IDKey(password, salt, time, memory, threads, keyLen)
+}
+
 // HashPassword returns an Argon2id hash of password in the PHC string
 // format, for example "$argon2id$v=19$m=19456,t=2,p=1$<salt>$<hash>".
 func HashPassword(password string) (string, error) {
@@ -33,7 +44,7 @@ func HashPassword(password string) (string, error) {
 	if _, err := rand.Read(salt); err != nil {
 		return "", fmt.Errorf("make salt: %w", err)
 	}
-	key := argon2.IDKey([]byte(password), salt, argonTime, argonMemory, argonThreads, argonKeyLen)
+	key := argonKey([]byte(password), salt, argonTime, argonMemory, argonThreads, argonKeyLen)
 	return fmt.Sprintf("$argon2id$v=%d$m=%d,t=%d,p=%d$%s$%s", argon2.Version, argonMemory, argonTime,
 		argonThreads, b64.EncodeToString(salt), b64.EncodeToString(key)), nil
 }
@@ -69,7 +80,7 @@ func CheckPassword(hash, password string) (bool, error) {
 	if err != nil || len(want) == 0 || len(want) > 64 {
 		return false, errBadHash
 	}
-	got := argon2.IDKey([]byte(password), salt, time, memory, threads, uint32(len(want)))
+	got := argonKey([]byte(password), salt, time, memory, threads, uint32(len(want)))
 	return subtle.ConstantTimeCompare(got, want) == 1, nil
 }
 

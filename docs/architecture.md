@@ -152,6 +152,12 @@ idempotent: each handler reads the desired state from the database and
 makes the external systems agree with it. A handler that runs two times
 gives the same result as a handler that runs one time.
 
+Only one task for each tenant or deployment runs at the same time. The
+worker holds a PostgreSQL advisory lock for the object during the task.
+This works also with more than one worker replica. Without the lock, a
+synchronization that started before a removal could write the files again
+after the removal.
+
 ### D6: Retries with a delay, then the dead queue
 
 If a task fails, the worker sends it to the retry queue with a delay. The

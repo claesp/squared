@@ -43,6 +43,13 @@ func Open(ctx context.Context, url string) (*Store, error) {
 	if err != nil {
 		return nil, fmt.Errorf("parse database url: %w", err)
 	}
+	// The default pool size is the number of CPUs. The worker holds one
+	// connection for each task lock and needs more for the queries of the
+	// task, thus use a larger pool. The URL parameter pool_max_conns
+	// changes the value.
+	if !strings.Contains(url, "pool_max_conns") {
+		cfg.MaxConns = 20
+	}
 	pool, err := pgxpool.NewWithConfig(ctx, cfg)
 	if err != nil {
 		return nil, fmt.Errorf("connect to database: %w", err)
@@ -74,6 +81,33 @@ func (s *Store) InTx(ctx context.Context, fn func(tx *Store) error) error {
 	return pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
 		return fn(&Store{db: tx})
 	})
+}
+
+// WithLock runs fn while it holds a PostgreSQL advisory lock for key. Other
+// processes that ask for the same key wait. The worker uses it to process
+// only one task for each tenant or deployment at the same time, also with
+// more than one worker replica.
+func (s *Store) WithLock(ctx context.Context, key string, fn func() error) error {
+	if s.pool == nil {
+		return errors.New("lock: store is in a transaction")
+	}
+	conn, err := s.pool.Acquire(ctx)
+	if err != nil {
+		return fmt.Errorf("lock %s: %w", key, err)
+	}
+	defer conn.Release()
+	if _, err := conn.Exec(ctx, "SELECT pg_advisory_lock(hashtextextended($1, 0))", key); err != nil {
+		return fmt.Errorf("lock %s: %w", key, err)
+	}
+	defer func() {
+		// Use a new context: the lock must be released also if ctx is
+		// done. If the release fails, close the connection, which
+		// releases the lock.
+		if _, err := conn.Exec(context.Background(), "SELECT pg_advisory_unlock(hashtextextended($1, 0))", key); err != nil {
+			_ = conn.Conn().Close(context.Background())
+		}
+	}()
+	return fn()
 }
 
 // mapErr changes database errors into domain errors.

@@ -197,3 +197,54 @@ func TestTenantAndDeploymentPages(t *testing.T) {
 		t.Fatal("a pending deployment page does not refresh")
 	}
 }
+
+func TestChangeAndRollbackForms(t *testing.T) {
+	srv := newServer(t)
+	c := client(t)
+	csrf := signIn(t, srv, c)
+	post := func(path string, v url.Values) *http.Response {
+		t.Helper()
+		v.Set("csrf", csrf)
+		resp, err := c.PostForm(srv.URL+path, v)
+		storetest.Must(t, err)
+		resp.Body.Close()
+		return resp
+	}
+	post("/admin/tenants", url.Values{"slug": {"acme"}, "name": {"Acme"}, "owner": {"admin@example.com"},
+		"environments": {"dev"}, "quota_cpu": {"1"}, "quota_memory": {"1Gi"}, "quota_pods": {"5"}})
+	post("/tenants/acme/new/worker", url.Values{"name": {"bg"}, "environment": {"dev"}, "image": {"bg:1"}, "env": {"A=1"}})
+
+	// The change form shows the current values.
+	resp, err := c.Get(srv.URL + "/tenants/acme/deployments/dev/bg/edit")
+	storetest.Must(t, err)
+	b := body(t, resp)
+	if !strings.Contains(b, `value="bg:1"`) || !strings.Contains(b, "A=1") {
+		t.Fatal("the change form does not show the current values")
+	}
+	resp = post("/tenants/acme/deployments/dev/bg/edit", url.Values{"version": {"1.0.0"}, "image": {"bg:2"}, "replicas": {"3"}, "message": {"second"}})
+	if resp.StatusCode != http.StatusSeeOther {
+		t.Fatalf("change: status %d", resp.StatusCode)
+	}
+	resp, err = c.Get(srv.URL + "/tenants/acme/deployments/dev/bg")
+	storetest.Must(t, err)
+	b = body(t, resp)
+	if !strings.Contains(b, "bg:2") || !strings.Contains(b, "second") || !strings.Contains(b, "2 (desired)") {
+		t.Fatal("the deployment page does not show revision 2")
+	}
+
+	// Revision 1 has no resolved images yet, thus a rollback is refused.
+	resp = post("/tenants/acme/deployments/dev/bg/rollback", url.Values{"revision": {"1"}})
+	if resp.StatusCode != http.StatusUnprocessableEntity {
+		t.Fatalf("rollback to an unresolved revision: status %d", resp.StatusCode)
+	}
+
+	// Removal needs the name as confirmation.
+	resp = post("/tenants/acme/deployments/dev/bg/delete", url.Values{"confirm": {"wrong"}})
+	if resp.StatusCode != http.StatusUnprocessableEntity {
+		t.Fatalf("removal without confirmation: status %d", resp.StatusCode)
+	}
+	resp = post("/tenants/acme/deployments/dev/bg/delete", url.Values{"confirm": {"bg"}})
+	if resp.StatusCode != http.StatusSeeOther {
+		t.Fatalf("removal: status %d", resp.StatusCode)
+	}
+}

@@ -100,6 +100,11 @@ the address of the application. Do not use a `*.localhost` name inside
 the cluster: git and curl resolve such names to the loopback address
 without DNS.
 
+Because of this, Forgejo shows a warning on `http://localhost:30300` that
+the address is not the configured address. The warning is expected and
+Forgejo works. Use the `forgejo-admin` account to see the repositories:
+tenant members have no Forgejo accounts in the development environment.
+
 The Kind node pulls images from Harbor at `localhost:30002` over plain
 HTTP. The script writes a containerd `hosts.toml` file in the node for
 this. Kube-proxy runs in iptables mode, because only that mode answers on

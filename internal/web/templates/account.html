@@ -1,6 +1,6 @@
 {{define "content"}}
 <h1>Account</h1>
-<p class="muted">{{.User.Name}} · {{.User.Email}}{{if .User.Admin}} · platform administrator{{end}}</p>
+<p class="muted">{{.User.Name}} · {{.User.Email}}{{if .User.Admin}} · platform administrator{{end}}{{if .User.SSO}} · signs in with the identity provider{{end}}</p>
 
 {{- with .Data.NewToken}}
 <section class="card notice">
@@ -44,6 +44,12 @@
   </form>
 </section>
 
+{{- if not .User.HasPassword}}
+<section class="card">
+  <h2>Password</h2>
+  <p>The identity provider manages your password, your name and your email address. Change them there. Squared copies the name and the email address at your next sign-in.</p>
+</section>
+{{- else}}
 <section class="card">
   <h2>Change password</h2>
   <form method="post" action="/account/password">
@@ -60,4 +66,5 @@
     <button class="primary">Change password</button>
   </form>
 </section>
+{{- end}}
 {{end}}

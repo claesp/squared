@@ -15,6 +15,7 @@ HARBOR_CHART_VERSION="1.19.2"
 FORGEJO_URL="http://localhost:30300"
 HARBOR_URL="http://localhost:30002"
 SQUARED_URL="http://localhost:30080"
+KEYCLOAK_URL="http://localhost:30180"
 
 log() { printf '\033[1;34m==>\033[0m %s\n' "$*" >&2; }
 die() { printf '\033[1;31merror:\033[0m %s\n' "$*" >&2; exit 1; }

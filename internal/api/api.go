@@ -16,17 +16,23 @@ import (
 
 	"squared/internal/core"
 	"squared/internal/domain"
+	"squared/internal/sso"
 )
 
 // Server serves the API.
 type Server struct {
 	svc *core.Service
 	log *slog.Logger
+	sso *sso.Client // nil if OIDC access tokens are not enabled.
 }
 
-// New returns a Server.
-func New(svc *core.Service, log *slog.Logger) *Server {
-	return &Server{svc: svc, log: log}
+// New returns a Server. If ssoClient is not nil and has an API audience,
+// the API also accepts OIDC access tokens from the identity provider.
+func New(svc *core.Service, log *slog.Logger, ssoClient *sso.Client) *Server {
+	if ssoClient != nil && ssoClient.Config().APIAudience == "" {
+		ssoClient = nil
+	}
+	return &Server{svc: svc, log: log, sso: ssoClient}
 }
 
 // Routes registers the routes on mux.
@@ -85,7 +91,7 @@ func (s *Server) auth(fn handlerFunc) http.Handler {
 			writeError(w, http.StatusUnauthorized, "unauthenticated", "an API token is necessary", nil)
 			return
 		}
-		u, err := s.svc.TokenUser(r.Context(), strings.TrimSpace(token))
+		u, err := s.tokenUser(r, strings.TrimSpace(token))
 		if err != nil {
 			if !errors.Is(err, domain.ErrUnauthenticated) {
 				s.log.Error("check API token", "error", err)
@@ -99,6 +105,29 @@ func (s *Server) auth(fn handlerFunc) http.Handler {
 			s.fail(w, r, err)
 		}
 	})
+}
+
+// tokenUser returns the user of a personal access token or of an OIDC
+// access token.
+func (s *Server) tokenUser(r *http.Request, token string) (*domain.User, error) {
+	if strings.HasPrefix(token, "sqp_") || s.sso == nil {
+		return s.svc.TokenUser(r.Context(), token)
+	}
+	id, err := s.sso.VerifyAccessToken(r.Context(), token)
+	if err != nil {
+		s.log.Info("OIDC access token rejected", "error", err)
+		return nil, domain.ErrUnauthenticated
+	}
+	ident := core.Identity{Issuer: id.Issuer, Subject: id.Subject, Email: id.Email, EmailVerified: id.EmailVerified, Name: id.Name}
+	if admin, managed := s.sso.Config().Admin(id); managed {
+		ident.Admin = &admin
+	}
+	u, err := s.svc.SignInIdentity(r.Context(), ident, "api")
+	if errors.Is(err, core.ErrNoVerifiedEmail) || errors.Is(err, domain.ErrConflict) {
+		s.log.Info("OIDC access token without a usable identity", "error", err)
+		return nil, domain.ErrUnauthenticated
+	}
+	return u, err
 }
 
 // fail writes an error response that agrees with err.

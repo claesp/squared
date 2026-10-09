@@ -1,0 +1,126 @@
+{
+  "realm": "squared",
+  "displayName": "Squared",
+  "enabled": true,
+  "sslRequired": "external",
+  "registrationAllowed": false,
+  "loginWithEmailAllowed": true,
+  "duplicateEmailsAllowed": false,
+  "resetPasswordAllowed": false,
+  "bruteForceProtected": true,
+  "failureFactor": 10,
+  "passwordPolicy": "length(12)",
+  "accessTokenLifespan": 300,
+  "ssoSessionIdleTimeout": 3600,
+  "groups": [
+    {"name": "squared-admins"}
+  ],
+  "clients": [
+    {
+      "clientId": "squared",
+      "name": "Squared",
+      "description": "The Squared web interface and API.",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "clientAuthenticatorType": "client-secret",
+      "secret": "${SQUARED_CLIENT_SECRET}",
+      "standardFlowEnabled": true,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": false,
+      "frontchannelLogout": false,
+      "redirectUris": ["http://localhost:30080/auth/callback"],
+      "webOrigins": ["http://localhost:30080"],
+      "attributes": {
+        "pkce.code.challenge.method": "S256",
+        "post.logout.redirect.uris": "http://localhost:30080/login"
+      },
+      "defaultClientScopes": ["basic", "profile", "email", "roles", "web-origins", "acr"],
+      "protocolMappers": [
+        {
+          "name": "groups",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-group-membership-mapper",
+          "config": {
+            "claim.name": "groups",
+            "full.path": "false",
+            "id.token.claim": "true",
+            "access.token.claim": "true",
+            "userinfo.token.claim": "true"
+          }
+        },
+        {
+          "name": "squared-api-audience",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "config": {
+            "included.custom.audience": "squared-api",
+            "access.token.claim": "true",
+            "id.token.claim": "false"
+          }
+        }
+      ]
+    },
+    {
+      "clientId": "squared-cli",
+      "name": "Squared command line (development only)",
+      "description": "A public client with the password grant. The end-to-end test uses it to get API access tokens. Do not use the password grant in production.",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": true,
+      "standardFlowEnabled": false,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": true,
+      "defaultClientScopes": ["basic", "profile", "email", "roles", "acr"],
+      "protocolMappers": [
+        {
+          "name": "groups",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-group-membership-mapper",
+          "config": {
+            "claim.name": "groups",
+            "full.path": "false",
+            "id.token.claim": "true",
+            "access.token.claim": "true",
+            "userinfo.token.claim": "true"
+          }
+        },
+        {
+          "name": "squared-api-audience",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "config": {
+            "included.custom.audience": "squared-api",
+            "access.token.claim": "true",
+            "id.token.claim": "false"
+          }
+        }
+      ]
+    }
+  ],
+  "users": [
+    {
+      "id": "0b8c8a39-6f34-4b8e-9d47-1c2f6a5e0a01",
+      "username": "admin",
+      "email": "admin@squared.test",
+      "emailVerified": true,
+      "firstName": "Platform",
+      "lastName": "Administrator",
+      "enabled": true,
+      "credentials": [{"type": "password", "value": "${ADMIN_USER_PASSWORD}", "temporary": false}],
+      "groups": ["/squared-admins"]
+    },
+    {
+      "id": "0b8c8a39-6f34-4b8e-9d47-1c2f6a5e0a02",
+      "username": "dev",
+      "email": "dev@squared.test",
+      "emailVerified": true,
+      "firstName": "Dana",
+      "lastName": "Developer",
+      "enabled": true,
+      "credentials": [{"type": "password", "value": "${DEV_USER_PASSWORD}", "temporary": false}],
+      "groups": []
+    }
+  ]
+}

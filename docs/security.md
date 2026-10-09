@@ -15,6 +15,36 @@ controls that it uses. Read [architecture.md](architecture.md) first.
 
 ## Authentication
 
+### Sign-in with Keycloak (OpenID Connect)
+
+- Squared uses the authorization code flow with PKCE (`S256`), a random
+  state and a nonce. The client is confidential: the token request has the
+  client secret.
+- The state protects against forged callbacks. The server keeps each
+  sign-in attempt in the database for ten minutes and uses it one time.
+  A cookie binds the attempt to the browser; a callback without the cookie
+  fails.
+- The server verifies the signature, the issuer, the audience, the expiry
+  time and the nonce of the ID token.
+- Squared links an identity to an existing user only if the email address
+  is verified, and only if the user has no other identity.
+- The administrator flag comes from a Keycloak group. Removing a user from
+  the group removes the administrator rights at the next sign-in.
+- Sign-out also ends the Keycloak session.
+- Passwords, second factors, brute force protection and password policies
+  are in Keycloak. In the development realm, brute force protection is on
+  and passwords have at least 12 characters.
+- With OIDC, the password sign-in of Squared is off by default
+  (`SQUARED_LOCAL_LOGIN`).
+- Access tokens from Keycloak are valid for the API only with the audience
+  `squared-api`. They expire after five minutes in the development realm.
+  A disabled user in Squared cannot use them.
+- A Squared session lives until it expires (`SQUARED_SESSION_TTL`), also if
+  the Keycloak session ends earlier. Use a short session time if this is a
+  problem. Disable the user in Squared to end all sessions at once.
+
+### Passwords and tokens of Squared
+
 - **Passwords** are hashed with Argon2id (19 MiB memory, 2 iterations, 1
   thread, 16 byte salt). This follows the OWASP recommendation. A password
   has at least 12 characters.
@@ -112,17 +142,21 @@ commit has the revision and the user.
 
 ## Production checklist
 
-1. Put TLS in front of the server (ingress or load balancer). Set
+1. Run Keycloak with TLS, a production database and `start` (not
+   `start-dev`). Remove the `squared-cli` client with the password grant.
+2. Turn on a second factor in Keycloak for the administrator group.
+3. Put TLS in front of the server (ingress or load balancer). Set
    `SQUARED_HSTS=true` and `SQUARED_TRUST_PROXY=true` if a proxy sets
    `X-Forwarded-For`.
-2. Use TLS for PostgreSQL (`sslmode=verify-full`) and RabbitMQ (`amqps://`).
-3. Give the worker a Forgejo account that is the owner of the Squared
+4. Use TLS for PostgreSQL (`sslmode=verify-full`) and RabbitMQ (`amqps://`).
+5. Give the worker a Forgejo account that is the owner of the Squared
    organization only. Give Argo CD a separate read-only account.
-4. Give the worker a Harbor robot account with system permissions for
+6. Give the worker a Harbor robot account with system permissions for
    projects and robots, not the `admin` account.
-5. Set a webhook secret in Forgejo and in Argo CD.
-6. Restrict access to the Argo CD, Forgejo and Harbor web interfaces.
-7. Make backups of PostgreSQL and Forgejo. Git and the database together
+7. Set a webhook secret in Forgejo and in Argo CD.
+8. Restrict access to the Argo CD, Forgejo and Harbor web interfaces.
+9. Make backups of PostgreSQL and Forgejo. Git and the database together
    are the complete state.
-8. Remove the first administrator password secret after the first start,
-   or change the password in the web interface.
+10. With OIDC, do not set the first administrator variables. Without
+    OIDC, remove the first administrator password secret after the first
+    start, or change the password in the web interface.

@@ -277,6 +277,29 @@ func (c Config) workerRoleBinding(t *domain.Tenant, e domain.Environment) object
 	}
 }
 
+// MarkerPath is the path of a manifest that is always in the platform
+// repository. Argo CD refuses an automatic sync that removes all objects
+// of an application. Without this manifest, the removal of the last
+// tenant would be such a sync. With it, the protection stays for a
+// repository that somebody empties by mistake.
+const MarkerPath = "tenants/platform.json"
+
+// MarkerFile returns the content of the file at MarkerPath.
+func (c Config) MarkerFile() ([]byte, error) {
+	return render.Marshal(map[string]any{
+		"apiVersion": "v1",
+		"kind":       "ConfigMap",
+		"metadata": map[string]any{
+			"name":      "squared-platform",
+			"namespace": c.ArgoNamespace,
+			"labels":    map[string]string{render.LabelManagedBy: render.ManagedBy},
+		},
+		"data": map[string]string{
+			"description": "Squared writes the files of the platform repository. This object is always there.",
+		},
+	})
+}
+
 // AppInput describes the application of a deployment.
 type AppInput struct {
 	Tenant     *domain.Tenant

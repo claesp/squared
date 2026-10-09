@@ -2,6 +2,8 @@ package web
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -44,7 +46,20 @@ func (p page) FieldError(field string) string {
 // Value returns the value of a form field after a validation error.
 func (p page) Value(field string) string { return p.Form[field] }
 
+// staticPath returns the path of an embedded static file with a hash of
+// its content. A changed file thus gets a new address, and browsers do not
+// use an old copy from their cache.
+func staticPath(name string) string {
+	b, err := fs.ReadFile(staticFS, "static/"+name)
+	if err != nil {
+		return "/static/" + name
+	}
+	sum := sha256.Sum256(b)
+	return "/static/" + name + "?v=" + hex.EncodeToString(sum[:6])
+}
+
 var funcs = template.FuncMap{
+	"static": staticPath,
 	"statusClass": func(s domain.Status) string {
 		switch s {
 		case domain.StatusReady, domain.StatusDeployed:

@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # End-to-end test against the Kind development environment.
 #
-# The test signs in to the web interface, makes an API token, makes a
+# The test signs in to the web interface through the Keycloak login form,
+# makes an API token, checks Keycloak access tokens for the API, makes a
 # tenant, pushes an image to Harbor, deploys the image, changes it, rolls
 # it back and removes it. It also checks that pods of other namespaces
 # cannot connect to the tenant. At the end it removes the tenant. Set
@@ -16,7 +17,8 @@ NS="${TENANT}-dev"
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 ADMIN_EMAIL="admin@squared.test"
-ADMIN_PASSWORD="$(secret squared-admin-password)"
+ADMIN_PASSWORD="$(secret keycloak-admin-user-password)"
+DEV_PASSWORD="$(secret keycloak-dev-user-password)"
 
 step() { printf '\n\033[1;32m--- %s\033[0m\n' "$*" >&2; }
 
@@ -90,16 +92,49 @@ probe_phase() { k -n "${TENANT}-outside" get pod probe -o jsonpath='{.status.pha
 
 probe_done() { [[ "$(probe_phase)" == "Succeeded" || "$(probe_phase)" == "Failed" ]]; }
 
-step "sign in to the web interface and make an API token"
+# kc_signin USER PASSWORD JAR signs in to Squared through the Keycloak
+# login form, like a browser: Squared sends the browser to Keycloak,
+# Keycloak shows its form, and after the form Keycloak sends the browser
+# back to the callback of Squared.
+kc_signin() {
+  local user="$1" password="$2" jar="$3" action final
+  curl -sS -L -c "$jar" -b "$jar" -o "$WORK/kc.html" "${SQUARED_URL}/auth/login"
+  action="$(grep -o 'action="[^"]*login-actions/authenticate[^"]*"' "$WORK/kc.html" | head -1 | sed 's/^action="//; s/"$//; s/&amp;/\&/g')"
+  [[ -n "$action" ]] || die "the Keycloak login form is missing"
+  final="$(curl -sS -L -c "$jar" -b "$jar" -o /dev/null -w '%{url_effective}' \
+    --data-urlencode "username=$user" --data-urlencode "password=$password" "$action")"
+  [[ "$final" == "${SQUARED_URL}/" ]] || die "sign-in of $user ended at $final"
+}
+
+# kc_token USER PASSWORD prints a Keycloak access token for the API. It
+# uses the password grant of the development client "squared-cli".
+kc_token() {
+  curl -fsS "${KEYCLOAK_URL}/realms/squared/protocol/openid-connect/token" \
+    -d grant_type=password -d client_id=squared-cli -d scope=openid \
+    --data-urlencode "username=$1" --data-urlencode "password=$2" | jq -er .access_token
+}
+
+step "sign in to the web interface with Keycloak and make an API token"
 JAR="$WORK/cookies"
-curl -sS -c "$JAR" -b "$JAR" -o /dev/null --data-urlencode "email=$ADMIN_EMAIL" \
-  --data-urlencode "password=$ADMIN_PASSWORD" "${SQUARED_URL}/login"
+kc_signin admin "$ADMIN_PASSWORD" "$JAR"
 CSRF="$(curl -sS -c "$JAR" -b "$JAR" "${SQUARED_URL}/account" | sed -n 's/.*name="csrf" value="\([^"]*\)".*/\1/p' | head -1)"
 [[ -n "$CSRF" ]] || die "sign-in failed"
 TOKEN="$(curl -sS -c "$JAR" -b "$JAR" --data-urlencode "csrf=$CSRF" --data-urlencode "name=e2e $TENANT" \
   --data-urlencode "days=1" "${SQUARED_URL}/account/tokens" | sed -n 's/.*<pre class="token">\([^<]*\)<.*/\1/p')"
 [[ "$TOKEN" == sqp_* ]] || die "no API token"
 api GET /me | jq -e '.admin == true' >/dev/null
+
+step "use Keycloak access tokens for the API"
+ADMIN_JWT="$(kc_token admin "$ADMIN_PASSWORD")"
+DEV_JWT="$(kc_token dev "$DEV_PASSWORD")"
+curl -fsS -H "Authorization: Bearer $ADMIN_JWT" "${SQUARED_URL}/api/v1/me" | jq -e '.admin == true and .email == "admin@squared.test"' >/dev/null \
+  || die "the access token of the administrator does not give administrator rights"
+curl -fsS -H "Authorization: Bearer $DEV_JWT" "${SQUARED_URL}/api/v1/me" | jq -e '.admin == false and .email == "dev@squared.test"' >/dev/null \
+  || die "the access token of the developer gives the wrong rights"
+code="$(curl -sS -o /dev/null -w '%{http_code}' -X POST -H "Authorization: Bearer $DEV_JWT" -H 'Content-Type: application/json' \
+  -d '{"slug": "forbidden", "name": "No", "owner": "dev@squared.test", "environments": ["dev"]}' "${SQUARED_URL}/api/v1/tenants")"
+[[ "$code" == "403" ]] || die "a user without the administrator group made a tenant (status $code)"
+log "the administrator group in Keycloak controls the administrator rights"
 
 step "make tenant $TENANT"
 api POST /tenants "$(jq -n --arg s "$TENANT" --arg o "$ADMIN_EMAIL" \

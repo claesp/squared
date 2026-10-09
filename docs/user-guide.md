@@ -5,13 +5,24 @@ in the glossary of [architecture.md](architecture.md#glossary).
 
 ## Sign in
 
-Open the address of Squared and sign in with your email address and your
-password. An administrator gives you your first password. Change it on the
-**Account** page.
+Open the address of Squared and select **Sign in with Keycloak**. Sign in
+at Keycloak with your Keycloak account. Keycloak then sends you back to
+Squared. At your first sign-in, Squared makes your account from your
+Keycloak name and verified email address.
+
+Keycloak manages your password, your name and your email address. Change
+them in Keycloak. **Sign out** in Squared also signs you out of Keycloak.
+
+If your organization does not use Keycloak, sign in with your email
+address and password. An administrator gives you your first password.
+Change it on the **Account** page.
 
 ## Roles
 
-A platform administrator adds users and tenants. In a tenant, each member
+Members of the Keycloak group `squared-admins` are platform
+administrators. A platform administrator adds tenants. A tenant owner can
+add only users that exist in Squared: ask the user to sign in one time
+first, or ask an administrator to add the user. In a tenant, each member
 has one role:
 
 | Operation | viewer | developer | owner |

@@ -4,7 +4,8 @@ Squared is a management platform for a cloud service on Kubernetes. Tenants
 use a web interface or a JSON API to deploy applications from a catalog of
 tested packages.
 
-Squared does not apply workloads to the cluster itself. It writes the
+Users sign in with [Keycloak](https://www.keycloak.org). Squared does not
+apply workloads to the cluster itself. It writes the
 desired state to Git in [Forgejo](https://forgejo.org), and
 [Argo CD](https://argo-cd.readthedocs.io) applies it. Images come from
 [Harbor](https://goharbor.io). Tasks go from the web server to the worker
@@ -15,9 +16,12 @@ through [RabbitMQ](https://www.rabbitmq.com).
 - **Multi-tenancy.** Each tenant gets its own namespaces, Git repository,
   Harbor project and Argo CD project, with quotas, network isolation and the
   "restricted" Pod Security Standard.
+- **Single sign-on with Keycloak.** OpenID Connect authorization code flow
+  with PKCE. A Keycloak group gives platform administrator rights. The API
+  also accepts Keycloak access tokens.
 - **Users and roles.** Platform administrators, and owners, developers and
-  viewers in each tenant. Argon2id passwords, sessions with CSRF protection,
-  and personal API tokens.
+  viewers in each tenant. Sessions with CSRF protection, personal API
+  tokens, and optional local passwords (Argon2id).
 - **Component-based packages.** Administrators define packages from
   components (`web`, `worker`, `cron`) with typed parameters. The renderer
   adds secure settings that tenants cannot change.
@@ -29,7 +33,8 @@ through [RabbitMQ](https://www.rabbitmq.com).
   idempotent tasks, retries with delays and a dead queue.
 - **Audit log** of all changes, in the database and in Git.
 - **Small dependency set**: the Go standard library, plus clients for
-  PostgreSQL and RabbitMQ, and `x/crypto` for Argon2id.
+  PostgreSQL and RabbitMQ, `x/crypto` for Argon2id, and `go-oidc` with
+  `x/oauth2` for OpenID Connect.
 
 ## Quick start
 
@@ -41,8 +46,8 @@ make kind-up   # makes the complete environment in Kind (about 5 minutes)
 make e2e       # deploys an example application from end to end
 ```
 
-Then open http://localhost:30080 and sign in as `admin@squared.test`. The
-password is in `.dev/squared-admin-password`.
+Then open http://localhost:30080, select **Sign in with Keycloak** and sign
+in as `admin`. The password is in `.dev/keycloak-admin-user-password`.
 
 ## Build and test
 

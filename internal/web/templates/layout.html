@@ -7,12 +7,12 @@
 <meta http-equiv="refresh" content="{{.Refresh}}">
 {{- end}}
 <title>{{.Title}} · Squared</title>
-<link rel="stylesheet" href="/static/style.css">
-<link rel="icon" href="/static/icon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="{{static "style.css"}}">
+<link rel="icon" href="{{static "icon.svg"}}" type="image/svg+xml">
 </head>
 <body>
 <header class="top">
-  <a class="brand" href="/"><img src="/static/icon.svg" alt="" width="22" height="22"> Squared</a>
+  <a class="brand" href="/"><img src="{{static "icon.svg"}}" alt="" width="22" height="22"> Squared</a>
   {{- if .User}}
   <nav aria-label="Main">
     <a href="/" {{if eq .Nav "tenants"}}aria-current="page"{{end}}>Tenants</a>

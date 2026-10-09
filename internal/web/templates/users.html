@@ -7,13 +7,14 @@
 </nav>
 {{- with .Errors}}<p class="error" role="alert">{{.Error}}</p>{{end}}
 <table>
-  <thead><tr><th>Email</th><th>Name</th><th>Role</th><th>State</th><th>Created</th><th>Actions</th></tr></thead>
+  <thead><tr><th>Email</th><th>Name</th><th>Role</th><th>Sign-in</th><th>State</th><th>Created</th><th>Actions</th></tr></thead>
   <tbody>
   {{- range .Data.Users}}
   <tr>
     <td>{{.Email}}</td>
     <td>{{.Name}}</td>
     <td>{{if .Admin}}administrator{{else}}user{{end}}</td>
+    <td>{{if .SSO}}identity provider{{if .HasPassword}} and password{{end}}{{else if .HasPassword}}password{{else}}<span class="muted">waiting for the first sign-in</span>{{end}}</td>
     <td>{{if .Disabled}}<span class="badge bad">disabled</span>{{else}}<span class="badge ok">enabled</span>{{end}}</td>
     <td>{{time .CreatedAt}}</td>
     <td class="actions-cell">
@@ -23,6 +24,7 @@
       {{- else}}
       <form method="post" action="/admin/users/{{.ID}}/disable"><input type="hidden" name="csrf" value="{{$.CSRF}}"><button class="danger small">Disable</button></form>
       {{- end}}
+      {{- if $.Data.LocalLogin}}
       <details>
         <summary>Set password</summary>
         <form method="post" action="/admin/users/{{.ID}}/password">
@@ -32,6 +34,7 @@
           <button class="small">Save</button>
         </form>
       </details>
+      {{- end}}
       {{- end}}
     </td>
   </tr>
@@ -49,10 +52,20 @@
     <label for="name">Name</label>
     <input id="name" name="name" required maxlength="100" value="{{.Value "name"}}">
     {{with .FieldError "name"}}<p class="field-error">{{.}}</p>{{end}}
+    {{- if .Data.SSO}}
+    <label for="password">Password (optional)</label>
+    <input id="password" name="password" type="password" autocomplete="new-password" minlength="12" aria-describedby="password-help">
+    <p id="password-help" class="help">Leave it empty for a user who signs in with the identity provider. The first sign-in with this verified email address links the account.</p>
+    {{- else}}
     <label for="password">First password (12 characters or more)</label>
     <input id="password" name="password" type="password" autocomplete="new-password" minlength="12" required>
+    {{- end}}
     {{with .FieldError "password"}}<p class="field-error">{{.}}</p>{{end}}
+    {{- if .Data.AdminManaged}}
+    <p class="help">The identity provider sets the administrator rights at each sign-in: members of its administrator group are administrators.</p>
+    {{- else}}
     <label class="check"><input type="checkbox" name="admin" {{if eq (.Value "admin") "on"}}checked{{end}}> Platform administrator</label>
+    {{- end}}
     <button class="primary">Add user</button>
   </form>
 </section>

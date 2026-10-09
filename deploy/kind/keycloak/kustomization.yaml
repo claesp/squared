@@ -1,0 +1,11 @@
+# Keycloak for the Kind development cluster. hack/kind-up.sh makes the
+# secret "keycloak" with the passwords and the client secret.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - keycloak.yaml
+configMapGenerator:
+  - name: keycloak-realm
+    namespace: keycloak
+    files:
+      - realm-squared.json

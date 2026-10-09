@@ -11,13 +11,37 @@ import (
 	"squared/internal/domain"
 )
 
+// loginData tells the sign-in page which methods to show.
+type loginData struct {
+	SSO     bool
+	SSOName string
+	Local   bool
+}
+
+func (s *Server) loginData() loginData {
+	return loginData{SSO: s.cfg.SSO != nil, SSOName: s.cfg.SSOName, Local: s.cfg.LocalLogin}
+}
+
 func (s *Server) loginPage(w http.ResponseWriter, r *http.Request) {
-	if err := s.render(w, r, "login", page{Title: "Sign in", Form: map[string]string{"next": safeNext(r.URL.Query().Get("next"))}}); err != nil {
+	p := page{Title: "Sign in", Data: s.loginData(), Form: map[string]string{"next": safeNext(r.URL.Query().Get("next"))}}
+	if err := s.render(w, r, "login", p); err != nil {
 		s.fail(w, r, err)
 	}
 }
 
+// loginError shows the sign-in page with a message.
+func (s *Server) loginError(w http.ResponseWriter, r *http.Request, status int, next, msg string) {
+	w.WriteHeader(status)
+	_ = s.renderStatus(w, r, status, "login", page{Title: "Sign in", Data: s.loginData(),
+		Form:   map[string]string{"next": next},
+		Errors: &domain.ValidationError{Fields: []domain.FieldError{{Field: "form", Message: msg}}}})
+}
+
 func (s *Server) login(w http.ResponseWriter, r *http.Request) {
+	if !s.cfg.LocalLogin {
+		s.loginError(w, r, http.StatusForbidden, "/", "Sign-in with a password is not enabled. Use the button to sign in.")
+		return
+	}
 	email := strings.ToLower(strings.TrimSpace(r.PostFormValue("email")))
 	password := r.PostFormValue("password")
 	next := safeNext(r.PostFormValue("next"))
@@ -31,7 +55,7 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 	if !s.limiter.allow("ip:"+ip, now) || !s.limiter.allow("email:"+email, now) {
 		s.log.Warn("sign-in rate limit", "ip", ip, "email", email)
 		w.WriteHeader(http.StatusTooManyRequests)
-		_ = s.renderStatus(w, r, http.StatusTooManyRequests, "login", page{Title: "Sign in", Form: form,
+		_ = s.renderStatus(w, r, http.StatusTooManyRequests, "login", page{Title: "Sign in", Form: form, Data: s.loginData(),
 			Errors: &domain.ValidationError{Fields: []domain.FieldError{{Field: "form", Message: "Too many attempts. Wait some minutes and try again."}}}})
 		return
 	}
@@ -39,7 +63,7 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 	if errors.Is(err, domain.ErrUnauthenticated) {
 		s.log.Info("sign-in failed", "ip", ip, "email", email)
 		w.WriteHeader(http.StatusUnauthorized)
-		_ = s.renderStatus(w, r, http.StatusUnauthorized, "login", page{Title: "Sign in", Form: form,
+		_ = s.renderStatus(w, r, http.StatusUnauthorized, "login", page{Title: "Sign in", Form: form, Data: s.loginData(),
 			Errors: &domain.ValidationError{Fields: []domain.FieldError{{Field: "form", Message: "The email address or the password is not correct."}}}})
 		return
 	}
@@ -48,12 +72,12 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.limiter.reset("email:" + email)
-	token, _, err := s.svc.NewSession(r.Context(), u)
+	token, _, err := s.svc.NewSession(r.Context(), u, "")
 	if err != nil {
 		s.fail(w, r, err)
 		return
 	}
-	s.log.Info("signed in", "user", u.Email, "ip", ip)
+	s.log.Info("signed in", "user", u.Email, "ip", ip, "method", "password")
 	s.setSession(w, token)
 	http.Redirect(w, r, next, http.StatusSeeOther)
 }
@@ -65,6 +89,14 @@ func (s *Server) logout(w http.ResponseWriter, r *http.Request) error {
 		}
 	}
 	s.clearSession(w)
+	// After an SSO sign-in, also end the session at the provider.
+	// Otherwise the next sign-in continues without a password.
+	if sess := sessionFrom(r); sess != nil && sess.IDToken != "" && s.cfg.SSO != nil {
+		if to := s.cfg.SSO.LogoutURL(r.Context(), sess.IDToken); to != "" {
+			http.Redirect(w, r, to, http.StatusSeeOther)
+			return nil
+		}
+	}
 	http.Redirect(w, r, "/login", http.StatusSeeOther)
 	return nil
 }
@@ -100,7 +132,7 @@ func (s *Server) changePassword(w http.ResponseWriter, r *http.Request) error {
 		return s.showAccount(w, r, "", err)
 	}
 	// All sessions ended. Make a new session for this browser.
-	token, _, err := s.svc.NewSession(r.Context(), u)
+	token, _, err := s.svc.NewSession(r.Context(), u, "")
 	if err != nil {
 		return err
 	}
@@ -155,7 +187,10 @@ func (s *Server) packagePage(w http.ResponseWriter, r *http.Request) error {
 }
 
 type usersData struct {
-	Users []domain.User
+	Users        []domain.User
+	SSO          bool
+	LocalLogin   bool
+	AdminManaged bool // The identity provider sets the administrator flag.
 }
 
 func (s *Server) usersPage(w http.ResponseWriter, r *http.Request) error {
@@ -167,7 +202,11 @@ func (s *Server) showUsers(w http.ResponseWriter, r *http.Request, formErr error
 	if err != nil {
 		return err
 	}
-	p := page{Title: "Users", Nav: "admin", Data: usersData{Users: users}}
+	data := usersData{Users: users, SSO: s.cfg.SSO != nil, LocalLogin: s.cfg.LocalLogin}
+	if s.cfg.SSO != nil {
+		data.AdminManaged = s.cfg.SSO.Config().AdminGroup != ""
+	}
+	p := page{Title: "Users", Nav: "admin", Data: data}
 	if formErr != nil {
 		return s.invalid(w, r, formErr, "users", p)
 	}

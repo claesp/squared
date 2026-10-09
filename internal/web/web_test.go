@@ -31,11 +31,11 @@ func newServer(t *testing.T) *httptest.Server {
 	svc := core.New(st, cat, render.Check, log, core.Config{SessionTTL: time.Hour, DefaultQuota: domain.Quota{CPU: "1", Memory: "1Gi", Pods: 5}})
 	_, err = svc.BootstrapAdmin(context.Background(), "admin@example.com", "admin password 1")
 	storetest.Must(t, err)
-	w, err := web.New(svc, web.Config{CookieSecure: false, RegistryHost: "registry.test"}, log)
+	w, err := web.New(svc, web.Config{CookieSecure: false, RegistryHost: "registry.test", LocalLogin: true}, log)
 	storetest.Must(t, err)
 	mux := http.NewServeMux()
 	w.Routes(mux)
-	h := httpx.SecurityHeaders(false, http.NewCrossOriginProtection().Handler(mux))
+	h := httpx.SecurityHeaders(false, nil, http.NewCrossOriginProtection().Handler(mux))
 	srv := httptest.NewServer(h)
 	t.Cleanup(srv.Close)
 	return srv

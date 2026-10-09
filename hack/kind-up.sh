@@ -111,6 +111,20 @@ setup_forgejo() {
   fi
 }
 
+deploy_keycloak() {
+  log "installing Keycloak"
+  k create namespace keycloak --dry-run=client -o yaml | k apply -f - >/dev/null
+  k -n keycloak create secret generic keycloak \
+    --from-literal="admin-password=$(secret keycloak-admin-password)" \
+    --from-literal="squared-client-secret=$(secret keycloak-squared-client-secret)" \
+    --from-literal="admin-user-password=$(secret keycloak-admin-user-password)" \
+    --from-literal="dev-user-password=$(secret keycloak-dev-user-password)" \
+    --dry-run=client -o yaml | k apply -f - >/dev/null
+  k apply -k "$ROOT/deploy/kind/keycloak" >/dev/null
+  k -n keycloak rollout status deployment/keycloak --timeout 10m >/dev/null
+  wait_http "${KEYCLOAK_URL}/realms/squared/.well-known/openid-configuration"
+}
+
 setup_argocd() {
   log "configuring Argo CD"
   k -n argocd create secret generic squared-forgejo \
@@ -135,7 +149,7 @@ deploy_squared() {
   # Each component gets only the secrets that it uses.
   k -n squared create secret generic squared-server \
     --from-literal="database-url=$db_url" --from-literal="amqp-url=$amqp_url" \
-    --from-literal="admin-password=$(secret squared-admin-password)" \
+    --from-literal="oidc-client-secret=$(secret keycloak-squared-client-secret)" \
     --dry-run=client -o yaml | k apply -f - >/dev/null
   k -n squared create secret generic squared-worker \
     --from-literal="database-url=$db_url" --from-literal="amqp-url=$amqp_url" \
@@ -147,6 +161,7 @@ deploy_squared() {
 
 create_cluster
 install_charts
+deploy_keycloak
 setup_forgejo
 setup_argocd
 deploy_squared
@@ -155,7 +170,10 @@ cat <<INFO
 
 The development environment is ready.
 
-  Squared   ${SQUARED_URL}   admin@squared.test / $(secret squared-admin-password)
+  Squared   ${SQUARED_URL}   sign in with Keycloak:
+              admin@squared.test / $(secret keycloak-admin-user-password)   (platform administrator)
+              dev@squared.test / $(secret keycloak-dev-user-password)   (user)
+  Keycloak  ${KEYCLOAK_URL}   admin / $(secret keycloak-admin-password)   (administration console)
   Forgejo   ${FORGEJO_URL}   forgejo-admin / $(secret forgejo-admin-password)
   Harbor    ${HARBOR_URL}   admin / $(secret harbor-admin-password)
   Argo CD   http://localhost:30081   admin / $(k -n argocd get secret argocd-initial-admin-secret -o jsonpath='{.data.password}' | base64 -d)

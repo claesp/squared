@@ -1,0 +1,105 @@
+# Keycloak for development. It runs in development mode with an internal
+# database. At each start it imports the realm "squared" if the realm does
+# not exist. The users have fixed IDs, thus a new import gives the same
+# identities. In production, run Keycloak with "start", TLS and PostgreSQL.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: keycloak
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: keycloak
+  namespace: keycloak
+  labels:
+    app.kubernetes.io/name: keycloak
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: keycloak
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: keycloak
+    spec:
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 0
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: keycloak
+          image: quay.io/keycloak/keycloak:26.8.0@sha256:b0f60d489d51c5d113390bdf5461d4c06e6051be026c05549f2e1e10ec352bcc
+          args: ["start-dev", "--import-realm"]
+          env:
+            # Browsers use this address. The issuer in the tokens is
+            # http://localhost:30180/realms/squared.
+            - name: KC_HOSTNAME
+              value: http://localhost:30180
+            # Requests from inside the cluster (token, keys) get endpoints
+            # with the address that they used.
+            - name: KC_HOSTNAME_BACKCHANNEL_DYNAMIC
+              value: "true"
+            - name: KC_HTTP_ENABLED
+              value: "true"
+            - name: KC_HEALTH_ENABLED
+              value: "true"
+            - name: KC_BOOTSTRAP_ADMIN_USERNAME
+              value: admin
+            - name: KC_BOOTSTRAP_ADMIN_PASSWORD
+              valueFrom: { secretKeyRef: { name: keycloak, key: admin-password } }
+            # Values for the placeholders in the realm file.
+            - name: SQUARED_CLIENT_SECRET
+              valueFrom: { secretKeyRef: { name: keycloak, key: squared-client-secret } }
+            - name: ADMIN_USER_PASSWORD
+              valueFrom: { secretKeyRef: { name: keycloak, key: admin-user-password } }
+            - name: DEV_USER_PASSWORD
+              valueFrom: { secretKeyRef: { name: keycloak, key: dev-user-password } }
+          ports:
+            - name: http
+              containerPort: 8080
+            - name: management
+              containerPort: 9000
+          readinessProbe:
+            httpGet: { path: /health/ready, port: management }
+            periodSeconds: 5
+          livenessProbe:
+            httpGet: { path: /health/live, port: management }
+            initialDelaySeconds: 60
+            periodSeconds: 10
+            failureThreshold: 6
+          resources:
+            requests: { cpu: 200m, memory: 512Mi }
+            limits: { memory: 1Gi }
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: realm
+              mountPath: /opt/keycloak/data/import
+              readOnly: true
+      volumes:
+        - name: realm
+          configMap:
+            name: keycloak-realm
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: keycloak
+  namespace: keycloak
+spec:
+  type: NodePort
+  selector:
+    app.kubernetes.io/name: keycloak
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http
+      nodePort: 30180

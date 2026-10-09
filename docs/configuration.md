@@ -33,8 +33,26 @@ file. If a variable is not valid, the program stops and lists all problems.
 | `SQUARED_DEFAULT_QUOTA_CPU` | `4` | Default CPU quota of each environment of a new tenant. |
 | `SQUARED_DEFAULT_QUOTA_MEMORY` | `8Gi` | Default memory quota. |
 | `SQUARED_DEFAULT_QUOTA_PODS` | `50` | Default pod quota. |
-| `SQUARED_BOOTSTRAP_ADMIN_EMAIL` | empty | If set and the database has no users, the server adds this platform administrator at start. |
+| `SQUARED_BOOTSTRAP_ADMIN_EMAIL` | empty | If set and the database has no users, the server adds this platform administrator at start. Not necessary with OIDC and an administrator group. |
 | `SQUARED_BOOTSTRAP_ADMIN_PASSWORD` (secret) | empty | Password of the first administrator. Necessary if the email is set. |
+| `SQUARED_LOCAL_LOGIN` | `true` without OIDC, `false` with OIDC | Permit the sign-in with an email address and a password. With OIDC, set it to `true` only for an emergency account. |
+
+### Sign-in with OpenID Connect (for example Keycloak)
+
+OIDC is enabled when `SQUARED_OIDC_ISSUER` is set.
+
+| Variable | Default | Description |
+|---|---|---|
+| `SQUARED_OIDC_ISSUER` | empty | Issuer URL, exactly as in the `iss` claim of the tokens, for example `https://id.example.com/realms/squared`. |
+| `SQUARED_OIDC_DISCOVERY_URL` | the issuer | Base URL for discovery if the server cannot use the issuer URL, for example the address of the Keycloak service inside the cluster. The issuer of the tokens must still be `SQUARED_OIDC_ISSUER`. |
+| `SQUARED_OIDC_CLIENT_ID` | (necessary with OIDC) | Client ID of Squared at the provider. |
+| `SQUARED_OIDC_CLIENT_SECRET` (secret) | (necessary with OIDC) | Client secret. |
+| `SQUARED_OIDC_REDIRECT_URL` | (necessary with OIDC) | `https://<squared>/auth/callback`. Register it at the provider. |
+| `SQUARED_OIDC_POST_LOGOUT_URL` | empty | Where the provider sends the browser after sign-out, for example `https://<squared>/login`. Register it at the provider. |
+| `SQUARED_OIDC_NAME` | `Keycloak` | Name of the provider on the sign-in button. |
+| `SQUARED_OIDC_GROUPS_CLAIM` | `groups` | Claim with the group names. |
+| `SQUARED_OIDC_ADMIN_GROUP` | empty | Members of this group are platform administrators. Squared sets the flag at each sign-in. If empty, administrators set the flag in Squared. |
+| `SQUARED_OIDC_API_AUDIENCE` | empty | If set, the API also accepts access tokens of the provider with this value in the `aud` claim. |
 
 ## `squared worker`
 

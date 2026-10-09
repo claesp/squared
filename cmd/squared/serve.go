@@ -19,6 +19,7 @@ import (
 	"squared/internal/metrics"
 	"squared/internal/queue"
 	"squared/internal/render"
+	"squared/internal/sso"
 	"squared/internal/store"
 	"squared/internal/web"
 )
@@ -57,6 +58,16 @@ func serve(ctx context.Context, log *slog.Logger) error {
 		TrustProxy:    env.Bool("SQUARED_TRUST_PROXY", false),
 	}
 	hsts := env.Bool("SQUARED_HSTS", false)
+	ssoClient, err := ssoFromEnv(&env)
+	if err != nil {
+		return err
+	}
+	webCfg.SSO = ssoClient
+	webCfg.SSOName = env.String("SQUARED_OIDC_NAME", "Keycloak")
+	webCfg.LocalLogin = env.Bool("SQUARED_LOCAL_LOGIN", ssoClient == nil)
+	if ssoClient == nil && !webCfg.LocalLogin {
+		return errors.New("SQUARED_LOCAL_LOGIN=false needs OIDC (SQUARED_OIDC_ISSUER)")
+	}
 	coreCfg := core.Config{
 		SessionTTL: env.Duration("SQUARED_SESSION_TTL", 12*time.Hour),
 		DefaultQuota: domain.Quota{
@@ -64,6 +75,7 @@ func serve(ctx context.Context, log *slog.Logger) error {
 			Memory: env.String("SQUARED_DEFAULT_QUOTA_MEMORY", "8Gi"),
 			Pods:   env.Int("SQUARED_DEFAULT_QUOTA_PODS", 50),
 		},
+		SSO: ssoClient != nil,
 	}
 	adminEmail := env.String("SQUARED_BOOTSTRAP_ADMIN_EMAIL", "")
 	adminPassword := env.Secret("SQUARED_BOOTSTRAP_ADMIN_PASSWORD", adminEmail != "")
@@ -104,7 +116,7 @@ func serve(ctx context.Context, log *slog.Logger) error {
 	}
 	mux := http.NewServeMux()
 	webServer.Routes(mux)
-	api.New(svc, log).Routes(mux)
+	api.New(svc, log, ssoClient).Routes(mux)
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte("ok\n"))
 	})
@@ -125,7 +137,11 @@ func serve(ctx context.Context, log *slog.Logger) error {
 	var handler http.Handler = mux
 	handler = cop.Handler(handler)
 	handler = httpx.LimitBody(1<<20, handler)
-	handler = httpx.SecurityHeaders(hsts, handler)
+	var formOrigins []string
+	if ssoClient != nil {
+		formOrigins = append(formOrigins, ssoClient.IssuerOrigin())
+	}
+	handler = httpx.SecurityHeaders(hsts, formOrigins, handler)
 	reg := &metrics.Registry{}
 	handler = httpx.Log(log, reg, handler)
 
@@ -166,4 +182,28 @@ func cleanUp(ctx context.Context, svc *core.Service, log *slog.Logger) {
 		case <-t.C:
 		}
 	}
+}
+
+// ssoFromEnv returns the OpenID Connect client, or nil if
+// SQUARED_OIDC_ISSUER is not set.
+func ssoFromEnv(env *config.Reader) (*sso.Client, error) {
+	issuer := env.String("SQUARED_OIDC_ISSUER", "")
+	if issuer == "" {
+		return nil, nil
+	}
+	cfg := sso.Config{
+		Issuer:        issuer,
+		DiscoveryURL:  env.String("SQUARED_OIDC_DISCOVERY_URL", ""),
+		ClientID:      env.Required("SQUARED_OIDC_CLIENT_ID"),
+		ClientSecret:  env.Secret("SQUARED_OIDC_CLIENT_SECRET", true),
+		RedirectURL:   env.Required("SQUARED_OIDC_REDIRECT_URL"),
+		PostLogoutURL: env.String("SQUARED_OIDC_POST_LOGOUT_URL", ""),
+		GroupsClaim:   env.String("SQUARED_OIDC_GROUPS_CLAIM", "groups"),
+		AdminGroup:    env.String("SQUARED_OIDC_ADMIN_GROUP", ""),
+		APIAudience:   env.String("SQUARED_OIDC_API_AUDIENCE", ""),
+	}
+	if err := env.Err(); err != nil {
+		return nil, err
+	}
+	return sso.New(cfg)
 }

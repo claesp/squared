@@ -62,9 +62,13 @@ func (w *Worker) Prepare(ctx context.Context) error {
 	if err := w.forgejo.EnsureRepo(ctx, g.Org, g.PlatformRepo, "Squared platform state. Only Squared writes here."); err != nil {
 		return fmt.Errorf("prepare platform repository: %w", err)
 	}
-	readme := map[string][]byte{"tenants/README.md": []byte(platformReadme)}
-	only := func(p string) bool { return p == "tenants/README.md" }
-	if _, _, err := w.forgejo.Sync(ctx, g.Org, g.PlatformRepo, g.Branch, only, readme, "Add README"); err != nil {
+	marker, err := g.MarkerFile()
+	if err != nil {
+		return err
+	}
+	files := map[string][]byte{"tenants/README.md": []byte(platformReadme), gitops.MarkerPath: marker}
+	only := func(p string) bool { return p == "tenants/README.md" || p == gitops.MarkerPath }
+	if _, _, err := w.forgejo.Sync(ctx, g.Org, g.PlatformRepo, g.Branch, only, files, "Prepare the platform repository"); err != nil {
 		return fmt.Errorf("prepare platform repository: %w", err)
 	}
 	if w.cfg.PlatformProject != "" {

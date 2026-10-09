@@ -21,7 +21,7 @@ with `Delegate=yes` for this. The user service of systemd must have
 `Delegate=yes` (see the
 [Kind rootless guide](https://kind.sigs.k8s.io/docs/user/rootless/)).
 
-Use about 8 GB of free memory and 20 GB of free disk for the complete
+Use about 9 GB of free memory and 20 GB of free disk for the complete
 environment.
 
 ## Layout
@@ -44,10 +44,11 @@ internal/kube/          minimal Kubernetes client
 internal/rest/          JSON over HTTP helper
 internal/httpx/         HTTP middleware
 internal/auth/          password hashes and tokens
+internal/sso/           OpenID Connect client (sign-in, access tokens)
 internal/config/        environment variables
 catalog/                default package catalog
 deploy/kubernetes/      manifests of Squared (kustomize base and Kind overlay)
-deploy/kind/            Kind cluster and Helm values for development
+deploy/kind/            Kind cluster, Helm values and Keycloak for development
 hack/                   development scripts
 examples/hello/         example application for tests
 ```
@@ -76,7 +77,7 @@ git diff internal/render/testdata
 ## Development environment in Kind
 
 ```bash
-make kind-up      # cluster, Argo CD, Forgejo, Harbor, PostgreSQL, RabbitMQ, Squared
+make kind-up      # cluster, Argo CD, Forgejo, Harbor, Keycloak, PostgreSQL, RabbitMQ, Squared
 make kind-deploy  # after a code change: build, load and restart Squared
 make e2e          # end-to-end test
 make kind-down    # remove the cluster
@@ -88,7 +89,8 @@ are also in `.dev/` (Git ignores this directory).
 
 | Service | Address | User |
 |---|---|---|
-| Squared | http://localhost:30080 | `admin@squared.test` |
+| Squared | http://localhost:30080 | Sign in with Keycloak as `admin` (administrator) or `dev` (user) |
+| Keycloak | http://localhost:30180 | `admin` (administration console, realm `master`) |
 | Forgejo | http://localhost:30300 | `forgejo-admin` |
 | Harbor | http://localhost:30002 | `admin` |
 | Argo CD | http://localhost:30081 | `admin` |
@@ -110,6 +112,37 @@ HTTP. The script writes a containerd `hosts.toml` file in the node for
 this. Kube-proxy runs in iptables mode, because only that mode answers on
 NodePorts at the localhost address of the node.
 
+### Keycloak
+
+Keycloak runs in development mode in the namespace `keycloak`. At each
+start it imports the realm `squared` from
+[`deploy/kind/keycloak/realm-squared.json`](../deploy/kind/keycloak/realm-squared.json)
+if the realm does not exist. The realm has:
+
+| Object | Purpose |
+|---|---|
+| Client `squared` | The web interface. Confidential, authorization code flow with PKCE. |
+| Client `squared-cli` | Development only: the password grant for API tokens in the end-to-end test. |
+| Group `squared-admins` | Platform administrators of Squared. |
+| User `admin` (`admin@squared.test`) | Member of `squared-admins`. Password in `.dev/keycloak-admin-user-password`. |
+| User `dev` (`dev@squared.test`) | A normal user. Password in `.dev/keycloak-dev-user-password`. |
+
+The realm file has placeholders for the client secret and the passwords.
+Keycloak takes the values from the secret `keycloak`, which
+`hack/kind-up.sh` makes. The users have fixed IDs, thus a new import after
+a restart gives the same identities.
+
+The browser uses Keycloak at `http://localhost:30180`, and this is the
+issuer in the tokens. The Squared server cannot use that address inside
+the cluster. It does discovery at the Keycloak service
+(`SQUARED_OIDC_DISCOVERY_URL`). Keycloak has
+`KC_HOSTNAME_BACKCHANNEL_DYNAMIC=true`, thus the token and key endpoints in
+that discovery document use the service address, and the issuer stays
+`http://localhost:30180/realms/squared`.
+
+To add a user, open the administration console, select the realm
+`squared`, and add the user with a verified email address.
+
 ### Push an image to the development Harbor
 
 ```bash
@@ -124,15 +157,18 @@ The Harbor project of a tenant exists after the tenant status is `ready`.
 
 `hack/e2e.sh`:
 
-1. Signs in to the web interface and makes an API token on the account page.
-2. Makes a tenant through the API and waits until it is `ready`.
-3. Pushes the example image to the Harbor project of the tenant.
-4. Deploys the image and checks the answer of the service.
-5. Checks that a pod in another namespace cannot connect to the service.
-6. Changes a value (revision 2) and checks the new answer.
-7. Rolls back to revision 1 (revision 3) and checks the old answer.
-8. Removes the deployment and checks that the objects are gone.
-9. Removes the tenant and checks that its Argo CD project is gone.
+1. Signs in through the Keycloak login form and makes an API token on the
+   account page.
+2. Gets Keycloak access tokens for `admin` and `dev`, and checks their
+   rights in the API.
+3. Makes a tenant through the API and waits until it is `ready`.
+4. Pushes the example image to the Harbor project of the tenant.
+5. Deploys the image and checks the answer of the service.
+6. Checks that a pod in another namespace cannot connect to the service.
+7. Changes a value (revision 2) and checks the new answer.
+8. Rolls back to revision 1 (revision 3) and checks the old answer.
+9. Removes the deployment and checks that the objects are gone.
+10. Removes the tenant and checks that its Argo CD project is gone.
 
 Set `KEEP_TENANT=1` to keep the tenant after the test, so that you can
 examine it.

@@ -13,6 +13,7 @@ in a production cluster.
 | Harbor | Version 2. The nodes must be able to pull from it. |
 | PostgreSQL | Version 15 or later. |
 | RabbitMQ | Version 3.13 or later (quorum queues). Three nodes for production. |
+| Keycloak (optional) | Or another OpenID Connect provider with a groups claim. |
 
 ## Install
 
@@ -30,11 +31,40 @@ in a production cluster.
 4. Apply the root application. Use
    [`deploy/kind/argocd-platform.yaml`](../deploy/kind/argocd-platform.yaml)
    as the template and change the repository address.
-5. Make the secrets `squared-server` and `squared-worker` in the namespace
+5. Configure Keycloak. See the next section.
+6. Make the secrets `squared-server` and `squared-worker` in the namespace
    `squared`. See [`hack/kind-up.sh`](../hack/kind-up.sh) for the keys.
-6. Make an overlay of [`deploy/kubernetes/base`](../deploy/kubernetes/base)
+7. Make an overlay of [`deploy/kubernetes/base`](../deploy/kubernetes/base)
    with your configuration and image, and apply it. The Kind overlay is an
    example. In production, Argo CD can apply Squared itself.
+
+## Keycloak
+
+Make these objects in the realm of your organization. The development
+realm file
+[`deploy/kind/keycloak/realm-squared.json`](../deploy/kind/keycloak/realm-squared.json)
+is a complete example.
+
+1. A client `squared`:
+   - client authentication on (confidential), standard flow only;
+   - valid redirect URI `https://<squared>/auth/callback`;
+   - valid post logout redirect URI `https://<squared>/login`;
+   - PKCE method `S256` (advanced settings).
+2. A protocol mapper "Group Membership" on the client: claim name `groups`,
+   full group path off, in the ID token and the access token.
+3. A protocol mapper "Audience" on the client: included custom audience
+   `squared-api`, in the access token. Add the same mapper to other clients
+   whose tokens may call the Squared API.
+4. A group `squared-admins` for the platform administrators.
+5. Verified email addresses for all users. Squared refuses a first
+   sign-in without a verified email address.
+
+Then set the `SQUARED_OIDC_*` variables (see
+[configuration.md](configuration.md)) and put the client secret in the
+secret of the server.
+
+If Keycloak is not available, users cannot sign in, but existing sessions
+continue. The sign-in page then tells the user to try again later.
 
 ## Health checks
 
@@ -83,6 +113,9 @@ Squared writes JSON logs to standard error. Important messages:
 | `task failed; no more retries` | The worker gave up. The task is in the dead queue. |
 | `relay outbox` (error) | The server cannot send tasks to RabbitMQ. The tasks stay in the database. |
 | `sign-in rate limit` | Too many sign-in attempts from one address or for one account. |
+| `signed in` | A user signed in. `method` is `sso` or `password`. |
+| `complete SSO sign-in` (error) | The token exchange or the token verification failed. |
+| `SSO callback with wrong state` | A callback that does not agree with its sign-in attempt. Possibly an attack. |
 
 ## Failure modes
 

@@ -14,12 +14,16 @@ It also records the important design decisions and the reasons for them.
 | Deployment | One instance of a package in an environment. |
 | Revision | One immutable set of inputs for a deployment: a copy of the package, the parameter values and the image digests. |
 | Task | A message from the API server to the worker, for example "synchronize deployment X". |
+| Identity provider | The OpenID Connect server that signs users in, for example Keycloak. |
 | Platform repository | The Git repository `squared/platform`. It has the namespaces, limits and Argo CD objects of all tenants. |
 | Tenant repository | The Git repository `squared/tenant-<tenant>`. It has the Kubernetes manifests of the deployments of one tenant. |
 
 ## Parts
 
 ```
+                                     +----------+
+              sign-in (redirect) ...>| Keycloak |<... token, keys (server)
+                     .               +----------+
              Browser (HTML, no JavaScript)       API clients (bearer token)
                           \                          /
                            v                        v
@@ -65,6 +69,35 @@ Squared is one Go binary with two roles:
 Both roles use the same `core.Service` for business rules. Thus the web
 interface and the API have the same validation and the same permission
 checks.
+
+## Flow of a sign-in
+
+Squared uses the OpenID Connect authorization code flow with PKCE:
+
+1. The user selects **Sign in with Keycloak**. The server saves a sign-in
+   attempt with a random state, nonce and PKCE code verifier. The browser
+   gets a cookie that identifies the attempt.
+2. The server sends the browser to the authorization endpoint of Keycloak.
+3. The user signs in at Keycloak. Squared never sees the password.
+4. Keycloak sends the browser back to `/auth/callback` with a code and the
+   state. The server takes the attempt from the database (one time only)
+   and compares the state.
+5. The server changes the code into tokens at the token endpoint. It sends
+   the client secret and the PKCE code verifier.
+6. The server verifies the ID token: signature, issuer, audience, expiry
+   time and nonce.
+7. The server finds or makes the user (see below) and starts a session.
+
+To find the user, Squared looks for the user that is linked to the issuer
+and subject of the identity. If there is no such user, Squared links the
+user with the same verified email address, if that user has no other
+identity. Else Squared makes a new user without a password. If an
+administrator group is configured, Squared sets the administrator flag
+from the groups claim at each sign-in.
+
+Sign-out ends the session in Squared and sends the browser to the end
+session endpoint of Keycloak with the ID token. Thus the Keycloak session
+also ends.
 
 ## Flow of a deployment
 
@@ -185,7 +218,7 @@ Pages that show work in progress load again every five seconds with
 ### D9: Few dependencies
 
 Squared uses the Go standard library for HTTP, templates, JSON and the
-Kubernetes, Forgejo and Harbor clients. It uses only three external
+Kubernetes, Forgejo and Harbor clients. It uses only these external
 modules:
 
 | Module | Reason |
@@ -193,12 +226,31 @@ modules:
 | `github.com/jackc/pgx/v5` | PostgreSQL protocol. Complex and well tested. |
 | `github.com/rabbitmq/amqp091-go` | AMQP protocol. The official RabbitMQ client. |
 | `golang.org/x/crypto` | Argon2id password hashes. Security code from the Go team. |
+| `github.com/coreos/go-oidc/v3` | OpenID Connect discovery and token verification (uses `go-jose`). |
+| `golang.org/x/oauth2` | OAuth 2.0 authorization code flow with PKCE. |
 
 ### D10: One binary, configuration from the environment
 
 The same image runs the server, the worker and the migrations. All
 configuration comes from environment variables. Secrets come from files
 (`*_FILE` variables), so that they do not show in the process environment.
+
+### D11: Keycloak signs users in; Squared keeps the permissions
+
+Keycloak is the identity provider. It keeps the passwords, the second
+factors and the account policies. Squared does not store passwords of SSO
+users. Keycloak also tells which users are platform administrators (a
+group). The roles in tenants stay in Squared, because they are part of the
+data of a tenant and owners change them in Squared.
+
+Squared uses the libraries `github.com/coreos/go-oidc/v3` (with
+`github.com/go-jose/go-jose/v4`) and `golang.org/x/oauth2`. Token
+verification is security code, thus Squared does not implement it itself.
+
+The API accepts two kinds of bearer tokens: personal access tokens of
+Squared (`sqp_...`) and access tokens of Keycloak with the audience
+`squared-api`. Keycloak tokens are short-lived, thus scripts that can get
+tokens from Keycloak do not need a long-lived secret from Squared.
 
 ## Data model
 

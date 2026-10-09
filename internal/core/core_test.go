@@ -18,6 +18,7 @@ import (
 )
 
 type fixture struct {
+	cat   *catalog.Catalog
 	svc   *core.Service
 	st    *store.Store
 	admin *domain.User
@@ -41,7 +42,7 @@ func setup(t *testing.T) *fixture {
 	}
 	admin, err := svc.Authenticate(ctx, "admin@example.com", "admin password 1")
 	storetest.Must(t, err)
-	return &fixture{svc: svc, st: st, admin: admin, ctx: ctx}
+	return &fixture{cat: cat, svc: svc, st: st, admin: admin, ctx: ctx}
 }
 
 func (f *fixture) user(t *testing.T, email string) *domain.User {
@@ -95,7 +96,7 @@ func TestAuthentication(t *testing.T) {
 		t.Fatalf("unknown user: %v", err)
 	}
 
-	token, _, err := f.svc.NewSession(f.ctx, u)
+	token, _, err := f.svc.NewSession(f.ctx, u, "")
 	storetest.Must(t, err)
 	got, _, err := f.svc.SessionUser(f.ctx, token)
 	storetest.Must(t, err)
@@ -308,5 +309,69 @@ func TestDeleteTenant(t *testing.T) {
 	}
 	if _, err := f.svc.CreateEnvironment(f.ctx, owner, "acme", "test"); !errors.Is(err, domain.ErrConflict) {
 		t.Fatalf("change of a tenant that is being removed: %v", err)
+	}
+}
+
+func ptr[T any](v T) *T { return &v }
+
+func TestSignInIdentity(t *testing.T) {
+	f := setup(t)
+	f.svc = core.New(f.st, f.cat, render.Check, storetest.Logger(), core.Config{SessionTTL: time.Hour, SSO: true})
+	id := core.Identity{Issuer: "https://id.test/realms/x", Subject: "sub-1", Email: "Alice@Example.com", EmailVerified: true, Name: "Alice", Admin: ptr(false)}
+
+	// The first sign-in makes a user without a password.
+	u, err := f.svc.SignInIdentity(f.ctx, id, "web")
+	storetest.Must(t, err)
+	if u.Email != "alice@example.com" || !u.SSO() || u.HasPassword() || u.Admin {
+		t.Fatalf("unexpected new user %+v", u)
+	}
+	// The same identity gives the same user. The provider controls the
+	// administrator flag and the profile.
+	id.Admin, id.Name = ptr(true), "Alice A."
+	again, err := f.svc.SignInIdentity(f.ctx, id, "web")
+	storetest.Must(t, err)
+	if again.ID != u.ID || !again.Admin || again.Name != "Alice A." {
+		t.Fatalf("second sign-in: %+v", again)
+	}
+	// Without a password, the password sign-in fails.
+	if _, err := f.svc.Authenticate(f.ctx, "alice@example.com", ""); !errors.Is(err, domain.ErrUnauthenticated) {
+		t.Fatalf("password sign-in of an SSO user: %v", err)
+	}
+
+	// An administrator adds a user without a password. The first sign-in
+	// with the verified address links the user.
+	storetest.Must(t, func() error {
+		_, err := f.svc.CreateUser(f.ctx, f.admin, core.NewUser{Email: "bob@example.com", Name: "Bob"})
+		return err
+	}())
+	bob, err := f.svc.SignInIdentity(f.ctx, core.Identity{Issuer: id.Issuer, Subject: "sub-2", Email: "bob@example.com", EmailVerified: true}, "web")
+	storetest.Must(t, err)
+	if bob.Name != "Bob" || bob.OIDCSubject != "sub-2" {
+		t.Fatalf("linked user: %+v", bob)
+	}
+
+	// An unverified address does not link and does not make a user.
+	_, err = f.svc.SignInIdentity(f.ctx, core.Identity{Issuer: id.Issuer, Subject: "sub-3", Email: "admin@example.com", EmailVerified: false}, "web")
+	if !errors.Is(err, core.ErrNoVerifiedEmail) {
+		t.Fatalf("unverified address: %v", err)
+	}
+	// An address of a user with a different identity is a conflict.
+	_, err = f.svc.SignInIdentity(f.ctx, core.Identity{Issuer: id.Issuer, Subject: "sub-4", Email: "bob@example.com", EmailVerified: true}, "web")
+	if !errors.Is(err, domain.ErrConflict) {
+		t.Fatalf("address of another identity: %v", err)
+	}
+	// A disabled user cannot sign in.
+	storetest.Must(t, f.svc.SetUserDisabled(f.ctx, f.admin, bob.ID, true))
+	_, err = f.svc.SignInIdentity(f.ctx, core.Identity{Issuer: id.Issuer, Subject: "sub-2", Email: "bob@example.com", EmailVerified: true}, "web")
+	if !errors.Is(err, domain.ErrUnauthenticated) {
+		t.Fatalf("disabled user: %v", err)
+	}
+}
+
+func TestPasswordRequiredWithoutSSO(t *testing.T) {
+	f := setup(t)
+	_, err := f.svc.CreateUser(f.ctx, f.admin, core.NewUser{Email: "c@example.com", Name: "C"})
+	if !isValidation(err, "password") {
+		t.Fatalf("user without password and without SSO: %v", err)
 	}
 }

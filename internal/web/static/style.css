@@ -80,6 +80,8 @@ main { max-width: 72rem; margin: 0 auto; padding: 1rem 1.5rem 3rem; }
 .cards .card { margin: 0; display: flex; flex-direction: column; }
 .cards .card .button { align-self: flex-start; margin-top: auto; }
 .narrow { max-width: 26rem; margin: 3rem auto; }
+.button.wide { display: block; text-align: center; }
+.divider { text-align: center; margin: 1.2rem 0 0; }
 .notice { border-color: var(--accent); }
 .token { font-size: 1rem; user-select: all; }
 

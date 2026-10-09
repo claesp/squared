@@ -18,6 +18,8 @@ spec:
       kind: Namespace
   namespaceResourceWhitelist:
     - group: ""
+      kind: ConfigMap
+    - group: ""
       kind: ResourceQuota
     - group: ""
       kind: LimitRange

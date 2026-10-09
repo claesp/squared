@@ -18,6 +18,7 @@ import (
 
 	"squared/internal/core"
 	"squared/internal/domain"
+	"squared/internal/sso"
 )
 
 //go:embed templates/*.html
@@ -46,6 +47,12 @@ type Config struct {
 	GitOrg string
 	// TrustProxy tells that a reverse proxy sets X-Forwarded-For.
 	TrustProxy bool
+	// SSO is the OpenID Connect client, or nil if SSO is not enabled.
+	SSO *sso.Client
+	// SSOName is the name of the identity provider on the sign-in page.
+	SSOName string
+	// LocalLogin enables the sign-in with an email address and a password.
+	LocalLogin bool
 }
 
 // Server serves the web interface.
@@ -91,6 +98,10 @@ func (s *Server) Routes(mux *http.ServeMux) {
 
 	mux.HandleFunc("GET /login", s.loginPage)
 	mux.HandleFunc("POST /login", s.login)
+	if s.cfg.SSO != nil {
+		mux.HandleFunc("GET /auth/login", s.ssoLogin)
+		mux.HandleFunc("GET /auth/callback", s.ssoCallback)
+	}
 	mux.Handle("POST /logout", s.user(s.logout))
 
 	mux.Handle("GET /{$}", s.user(s.dashboard))

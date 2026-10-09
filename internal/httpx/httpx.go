@@ -15,11 +15,18 @@ import (
 
 // SecurityHeaders adds headers that protect browsers. The content
 // security policy blocks all scripts, because the web interface uses no
-// JavaScript.
-func SecurityHeaders(hsts bool, next http.Handler) http.Handler {
+// JavaScript. formOrigins are other origins that forms can lead to: the
+// browser applies "form-action" also to the redirect after a form, for
+// example the sign-out at the identity provider.
+func SecurityHeaders(hsts bool, formOrigins []string, next http.Handler) http.Handler {
+	formAction := "'self'"
+	for _, o := range formOrigins {
+		formAction += " " + o
+	}
+	csp := "default-src 'none'; style-src 'self'; img-src 'self'; form-action " + formAction + "; frame-ancestors 'none'; base-uri 'none'"
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		h := w.Header()
-		h.Set("Content-Security-Policy", "default-src 'none'; style-src 'self'; img-src 'self'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'")
+		h.Set("Content-Security-Policy", csp)
 		h.Set("X-Content-Type-Options", "nosniff")
 		h.Set("X-Frame-Options", "DENY")
 		h.Set("Referrer-Policy", "same-origin")

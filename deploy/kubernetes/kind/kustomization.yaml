@@ -36,8 +36,20 @@ configMapGenerator:
       - SQUARED_LOG_FORMAT=json
       - SQUARED_DATABASE_URL_FILE=/etc/squared/secrets/database-url
       - SQUARED_AMQP_URL_FILE=/etc/squared/secrets/amqp-url
-      - SQUARED_BOOTSTRAP_ADMIN_EMAIL=admin@squared.test
-      - SQUARED_BOOTSTRAP_ADMIN_PASSWORD_FILE=/etc/squared/secrets/admin-password
+      # Users sign in with Keycloak. Members of the Keycloak group
+      # "squared-admins" are platform administrators.
+      - SQUARED_LOCAL_LOGIN=false
+      - SQUARED_OIDC_ISSUER=http://localhost:30180/realms/squared
+      # The server cannot use localhost:30180 inside the cluster. It does
+      # discovery at the Keycloak service, which gives token and key
+      # endpoints at the service address.
+      - SQUARED_OIDC_DISCOVERY_URL=http://keycloak.keycloak.svc.cluster.local:8080/realms/squared
+      - SQUARED_OIDC_CLIENT_ID=squared
+      - SQUARED_OIDC_CLIENT_SECRET_FILE=/etc/squared/secrets/oidc-client-secret
+      - SQUARED_OIDC_REDIRECT_URL=http://localhost:30080/auth/callback
+      - SQUARED_OIDC_POST_LOGOUT_URL=http://localhost:30080/login
+      - SQUARED_OIDC_ADMIN_GROUP=squared-admins
+      - SQUARED_OIDC_API_AUDIENCE=squared-api
       # The browser uses http://localhost:30080. Browsers accept Secure
       # cookies on localhost also without TLS.
       - SQUARED_COOKIE_SECURE=true

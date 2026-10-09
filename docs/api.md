@@ -5,16 +5,32 @@ the same permission checks as the web interface.
 
 ## Authentication
 
-Make a personal access token on the **Account** page of the web interface.
-Send it in each request:
+The API accepts two kinds of bearer tokens. Send the token in each
+request:
 
 ```
-Authorization: Bearer sqp_...
+Authorization: Bearer <token>
 ```
 
-The API does not accept session cookies. The token has the permissions of
+| Token | How to get it | Lifetime |
+|---|---|---|
+| Personal access token (`sqp_...`) | **Account** page of the web interface. | Until it expires or you remove it. |
+| Keycloak access token | Any OAuth flow of Keycloak for a client that adds the audience `squared-api` to its access tokens. | Short, for example five minutes. |
+
+The API does not accept session cookies. A token has the permissions of
 its user. When an administrator disables the user, the token stops
-working.
+working. A Keycloak token of a person who did not sign in before makes the
+Squared account, as the first web sign-in does.
+
+Example with the development environment (the password grant of the
+`squared-cli` client exists only there):
+
+```bash
+TOKEN=$(curl -s http://localhost:30180/realms/squared/protocol/openid-connect/token \
+  -d grant_type=password -d client_id=squared-cli -d scope=openid \
+  -d username=dev --data-urlencode "password=$(cat .dev/keycloak-dev-user-password)" | jq -r .access_token)
+curl -H "Authorization: Bearer $TOKEN" http://localhost:30080/api/v1/me
+```
 
 ## Conventions
 

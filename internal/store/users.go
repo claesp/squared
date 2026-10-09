@@ -9,11 +9,11 @@ import (
 	"squared/internal/domain"
 )
 
-const userColumns = "id, email, name, password_hash, admin, disabled, created_at"
+const userColumns = "id, email, name, password_hash, admin, disabled, coalesce(oidc_issuer, ''), coalesce(oidc_subject, ''), created_at"
 
 func scanUser(row pgx.Row) (*domain.User, error) {
 	var u domain.User
-	err := row.Scan(&u.ID, &u.Email, &u.Name, &u.PasswordHash, &u.Admin, &u.Disabled, &u.CreatedAt)
+	err := row.Scan(&u.ID, &u.Email, &u.Name, &u.PasswordHash, &u.Admin, &u.Disabled, &u.OIDCIssuer, &u.OIDCSubject, &u.CreatedAt)
 	if err != nil {
 		return nil, mapErr(err)
 	}
@@ -22,10 +22,26 @@ func scanUser(row pgx.Row) (*domain.User, error) {
 
 // CreateUser adds a user. It sets u.ID and u.CreatedAt.
 func (s *Store) CreateUser(ctx context.Context, u *domain.User) error {
-	err := s.db.QueryRow(ctx, `INSERT INTO users (email, name, password_hash, admin)
-		VALUES ($1, $2, $3, $4) RETURNING id, created_at`,
-		u.Email, u.Name, u.PasswordHash, u.Admin).Scan(&u.ID, &u.CreatedAt)
+	err := s.db.QueryRow(ctx, `INSERT INTO users (email, name, password_hash, admin, oidc_issuer, oidc_subject)
+		VALUES ($1, $2, $3, $4, $5, $6) RETURNING id, created_at`,
+		u.Email, u.Name, u.PasswordHash, u.Admin, nullable(u.OIDCIssuer), nullable(u.OIDCSubject)).Scan(&u.ID, &u.CreatedAt)
 	return mapErr(err)
+}
+
+// UserByIdentity returns the user that is linked to an identity of the
+// provider.
+func (s *Store) UserByIdentity(ctx context.Context, issuer, subject string) (*domain.User, error) {
+	return scanUser(s.db.QueryRow(ctx, "SELECT "+userColumns+" FROM users WHERE oidc_issuer = $1 AND oidc_subject = $2", issuer, subject))
+}
+
+// LinkIdentity links a user to an identity of the provider.
+func (s *Store) LinkIdentity(ctx context.Context, userID, issuer, subject string) error {
+	return s.execOne(ctx, "UPDATE users SET oidc_issuer = $2, oidc_subject = $3 WHERE id = $1", userID, issuer, subject)
+}
+
+// UpdateProfile saves the email address and the name of a user.
+func (s *Store) UpdateProfile(ctx context.Context, userID, email, name string) error {
+	return s.execOne(ctx, "UPDATE users SET email = $2, name = $3 WHERE id = $1", userID, email, name)
 }
 
 // UserByEmail returns the user with an email address.
@@ -98,9 +114,9 @@ func (s *Store) execOne(ctx context.Context, sql string, args ...any) error {
 }
 
 // CreateSession adds a session.
-func (s *Store) CreateSession(ctx context.Context, tokenHash []byte, userID, csrf string, expires time.Time) error {
-	_, err := s.db.Exec(ctx, `INSERT INTO sessions (token_hash, user_id, csrf_token, expires_at)
-		VALUES ($1, $2, $3, $4)`, tokenHash, userID, csrf, expires)
+func (s *Store) CreateSession(ctx context.Context, tokenHash []byte, userID, csrf, idToken string, expires time.Time) error {
+	_, err := s.db.Exec(ctx, `INSERT INTO sessions (token_hash, user_id, csrf_token, id_token, expires_at)
+		VALUES ($1, $2, $3, $4, $5)`, tokenHash, userID, csrf, idToken, expires)
 	return mapErr(err)
 }
 
@@ -109,12 +125,13 @@ func (s *Store) CreateSession(ctx context.Context, tokenHash []byte, userID, csr
 func (s *Store) SessionByHash(ctx context.Context, tokenHash []byte) (*domain.Session, *domain.User, error) {
 	var sess domain.Session
 	var u domain.User
-	err := s.db.QueryRow(ctx, `SELECT s.user_id, s.csrf_token, s.expires_at,
-			u.id, u.email, u.name, u.password_hash, u.admin, u.disabled, u.created_at
+	err := s.db.QueryRow(ctx, `SELECT s.user_id, s.csrf_token, s.id_token, s.expires_at,
+			u.id, u.email, u.name, u.password_hash, u.admin, u.disabled,
+			coalesce(u.oidc_issuer, ''), coalesce(u.oidc_subject, ''), u.created_at
 		FROM sessions s JOIN users u ON u.id = s.user_id
 		WHERE s.token_hash = $1 AND s.expires_at > now() AND NOT u.disabled`, tokenHash).Scan(
-		&sess.UserID, &sess.CSRFToken, &sess.ExpiresAt,
-		&u.ID, &u.Email, &u.Name, &u.PasswordHash, &u.Admin, &u.Disabled, &u.CreatedAt)
+		&sess.UserID, &sess.CSRFToken, &sess.IDToken, &sess.ExpiresAt,
+		&u.ID, &u.Email, &u.Name, &u.PasswordHash, &u.Admin, &u.Disabled, &u.OIDCIssuer, &u.OIDCSubject, &u.CreatedAt)
 	if err != nil {
 		return nil, nil, mapErr(err)
 	}
@@ -155,7 +172,8 @@ func (s *Store) APITokenUser(ctx context.Context, tokenHash []byte) (*domain.Use
 		FROM users u
 		WHERE t.token_hash = $1 AND u.id = t.user_id AND NOT u.disabled
 		  AND (t.expires_at IS NULL OR t.expires_at > now())
-		RETURNING u.id, u.email, u.name, u.password_hash, u.admin, u.disabled, u.created_at`, tokenHash))
+		RETURNING u.id, u.email, u.name, u.password_hash, u.admin, u.disabled,
+			coalesce(u.oidc_issuer, ''), coalesce(u.oidc_subject, ''), u.created_at`, tokenHash))
 }
 
 // ListAPITokens returns the API tokens of a user.
@@ -180,4 +198,37 @@ func (s *Store) ListAPITokens(ctx context.Context, userID string) ([]domain.APIT
 // DeleteAPIToken removes an API token of a user.
 func (s *Store) DeleteAPIToken(ctx context.Context, userID, tokenID string) error {
 	return s.execOne(ctx, "DELETE FROM api_tokens WHERE id = $1 AND user_id = $2", tokenID, userID)
+}
+
+// OIDCLogin is a sign-in attempt that waits for the provider.
+type OIDCLogin struct {
+	State    string
+	Nonce    string
+	Verifier string
+	Next     string
+}
+
+// CreateOIDCLogin saves a sign-in attempt.
+func (s *Store) CreateOIDCLogin(ctx context.Context, tokenHash []byte, l OIDCLogin, expires time.Time) error {
+	_, err := s.db.Exec(ctx, `INSERT INTO oidc_logins (token_hash, state, nonce, verifier, next, expires_at)
+		VALUES ($1, $2, $3, $4, $5, $6)`, tokenHash, l.State, l.Nonce, l.Verifier, l.Next, expires)
+	return mapErr(err)
+}
+
+// TakeOIDCLogin returns a sign-in attempt that did not expire and removes
+// it. Thus each attempt is used at most one time.
+func (s *Store) TakeOIDCLogin(ctx context.Context, tokenHash []byte) (*OIDCLogin, error) {
+	var l OIDCLogin
+	err := s.db.QueryRow(ctx, `DELETE FROM oidc_logins WHERE token_hash = $1 AND expires_at > now()
+		RETURNING state, nonce, verifier, next`, tokenHash).Scan(&l.State, &l.Nonce, &l.Verifier, &l.Next)
+	if err != nil {
+		return nil, mapErr(err)
+	}
+	return &l, nil
+}
+
+// DeleteExpiredOIDCLogins removes sign-in attempts that expired.
+func (s *Store) DeleteExpiredOIDCLogins(ctx context.Context) error {
+	_, err := s.db.Exec(ctx, "DELETE FROM oidc_logins WHERE expires_at <= now()")
+	return mapErr(err)
 }

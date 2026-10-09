@@ -19,6 +19,9 @@ import (
 type Config struct {
 	SessionTTL   time.Duration
 	DefaultQuota domain.Quota
+	// SSO tells that users can sign in with an OpenID Connect provider.
+	// Administrators can then add users without a password.
+	SSO bool
 }
 
 // Service gives access to all operations. All operations that take an

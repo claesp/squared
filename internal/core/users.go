@@ -36,6 +36,11 @@ func (s *Service) Authenticate(ctx context.Context, email, password string) (*do
 	if err != nil {
 		return nil, err
 	}
+	if !u.HasPassword() {
+		// The user signs in only with the identity provider.
+		auth.CheckDummyPassword(password)
+		return nil, domain.ErrUnauthenticated
+	}
 	ok, err := auth.CheckPassword(u.PasswordHash, password)
 	if err != nil {
 		return nil, fmt.Errorf("check password of %s: %w", u.Email, err)
@@ -46,13 +51,14 @@ func (s *Service) Authenticate(ctx context.Context, email, password string) (*do
 	return u, nil
 }
 
-// NewSession makes a session for a user. It returns the session token for
-// the cookie and the CSRF token for forms.
-func (s *Service) NewSession(ctx context.Context, u *domain.User) (token, csrf string, err error) {
+// NewSession makes a session for a user. idToken is the ID token of an
+// OIDC sign-in, or "". It returns the session token for the cookie and
+// the CSRF token for forms.
+func (s *Service) NewSession(ctx context.Context, u *domain.User, idToken string) (token, csrf string, err error) {
 	token = auth.NewToken(sessionPrefix)
 	csrf = auth.NewToken("")
 	expires := time.Now().Add(s.cfg.SessionTTL)
-	if err := s.store.CreateSession(ctx, auth.HashToken(token), u.ID, csrf, expires); err != nil {
+	if err := s.store.CreateSession(ctx, auth.HashToken(token), u.ID, csrf, idToken, expires); err != nil {
 		return "", "", fmt.Errorf("create session: %w", err)
 	}
 	return token, csrf, nil
@@ -90,6 +96,9 @@ func (s *Service) TokenUser(ctx context.Context, token string) (*domain.User, er
 // CleanUp removes expired sessions and old outbox rows.
 func (s *Service) CleanUp(ctx context.Context) error {
 	if _, err := s.store.DeleteExpiredSessions(ctx); err != nil {
+		return err
+	}
+	if err := s.store.DeleteExpiredOIDCLogins(ctx); err != nil {
 		return err
 	}
 	_, err := s.store.PurgeOutbox(ctx, 7*24*time.Hour)
@@ -157,6 +166,9 @@ func (s *Service) ChangePassword(ctx context.Context, actor *domain.User, curren
 	if actor == nil {
 		return domain.ErrUnauthenticated
 	}
+	if !actor.HasPassword() {
+		return domain.Invalid("current", "your account has no password; the identity provider manages it")
+	}
 	if _, err := s.Authenticate(ctx, actor.Email, current); err != nil {
 		return domain.Invalid("current", "is not correct")
 	}
@@ -186,7 +198,7 @@ type NewUser struct {
 	Admin    bool
 }
 
-func (in *NewUser) validate() error {
+func (in *NewUser) validate(passwordless bool) error {
 	var verr domain.ValidationError
 	email, err := domain.NormalizeEmail(in.Email)
 	if err != nil {
@@ -197,26 +209,34 @@ func (in *NewUser) validate() error {
 	if err := domain.ValidateDisplayName(in.Name); err != nil {
 		verr.Add("name", err.Error())
 	}
-	if err := domain.ValidatePassword(in.Password); err != nil {
-		verr.Add("password", err.Error())
+	if in.Password != "" || !passwordless {
+		if err := domain.ValidatePassword(in.Password); err != nil {
+			verr.Add("password", err.Error())
+		}
 	}
 	return verr.Err()
 }
 
 // CreateUser adds a user. Only platform administrators can add users.
+// With SSO, the password is optional: a user without a password is linked
+// to the identity with the same verified email address at the first
+// sign-in.
 func (s *Service) CreateUser(ctx context.Context, actor *domain.User, in NewUser) (*domain.User, error) {
 	if err := requireAdmin(actor); err != nil {
 		return nil, err
 	}
-	if err := in.validate(); err != nil {
+	if err := in.validate(s.cfg.SSO); err != nil {
 		return nil, err
 	}
-	hash, err := auth.HashPassword(in.Password)
-	if err != nil {
-		return nil, err
+	hash := ""
+	if in.Password != "" {
+		var err error
+		if hash, err = auth.HashPassword(in.Password); err != nil {
+			return nil, err
+		}
 	}
 	u := &domain.User{Email: in.Email, Name: in.Name, PasswordHash: hash, Admin: in.Admin}
-	err = s.store.InTx(ctx, func(tx *store.Store) error {
+	err := s.store.InTx(ctx, func(tx *store.Store) error {
 		if err := tx.CreateUser(ctx, u); err != nil {
 			if errors.Is(err, domain.ErrConflict) {
 				return domain.Invalid("email", "a user with this address exists")
@@ -239,7 +259,7 @@ func (s *Service) CreateUser(ctx context.Context, actor *domain.User, in NewUser
 // users. It does nothing if a user exists.
 func (s *Service) BootstrapAdmin(ctx context.Context, email, password string) (bool, error) {
 	in := NewUser{Email: email, Name: "Administrator", Password: password, Admin: true}
-	if err := in.validate(); err != nil {
+	if err := in.validate(false); err != nil {
 		return false, err
 	}
 	hash, err := auth.HashPassword(in.Password)

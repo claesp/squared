@@ -99,6 +99,9 @@ func TestTenantSync(t *testing.T) {
 	if e.git.file("squared/platform", "tenants/acme/dev/namespace.json") == nil {
 		t.Fatal("namespace file is missing")
 	}
+	if e.git.file("squared/platform", gitops.MarkerPath) == nil {
+		t.Fatal("the marker manifest is missing")
+	}
 	if _, ok := e.harbor.projects["acme"]; !ok {
 		t.Fatal("Harbor project is missing")
 	}

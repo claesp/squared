@@ -40,8 +40,16 @@ type User struct {
 	PasswordHash string
 	Admin        bool // A platform administrator can do all operations.
 	Disabled     bool
+	OIDCIssuer   string // Issuer of the linked identity, or "".
+	OIDCSubject  string // Subject of the linked identity, or "".
 	CreatedAt    time.Time
 }
+
+// HasPassword tells if the user can sign in with a password.
+func (u *User) HasPassword() bool { return u.PasswordHash != "" }
+
+// SSO tells if the user is linked to an identity of the provider.
+func (u *User) SSO() bool { return u.OIDCSubject != "" }
 
 // Tenant is an isolated customer of the platform. Each tenant has its own
 // namespaces, Git repository, registry project and Argo CD project.
@@ -143,6 +151,7 @@ type AuditEvent struct {
 type Session struct {
 	UserID    string
 	CSRFToken string
+	IDToken   string // ID token from the provider, or "" for a password sign-in.
 	ExpiresAt time.Time
 }
 

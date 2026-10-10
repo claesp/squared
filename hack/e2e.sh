@@ -199,15 +199,18 @@ check_forgejo_passwords() {
   log "Forgejo accepts no passwords on the web, and Keycloak users cannot set one"
 }
 
-# check_forgejo_tokens makes a personal access token for dev, as dev can
-# in the Forgejo settings. A token works without Keycloak, thus the guard
-# must report it when Keycloak disables dev, and when dev is a Forgejo
-# administrator without the Keycloak group.
-check_forgejo_tokens() {
+# check_forgejo_credentials makes a personal access token for dev, as dev
+# can in the Forgejo settings. A token works without Keycloak, thus the
+# guard must report it when Keycloak disables dev, and when dev is a Forgejo
+# administrator without the Keycloak group. Then it does the same with an
+# SSH key: a key also stays when SSH is off.
+check_forgejo_credentials() {
   local at kc_api="${KEYCLOAK_URL}/admin/realms/squared" id user
+  local since
+  since="$(date +%s)"
   k -n forgejo exec deploy/forgejo -c forgejo -- gitea admin user generate-access-token \
     --username dev --token-name e2e-guard --scopes read:user --raw >/dev/null || die "cannot make a Forgejo token for dev"
-  wait_for "the guard has no errors with the token of dev" 60 guard_clean
+  wait_for "a guard run without errors with the token of dev" 60 guard_clean_since "$since"
   at="$(curl -fsS "${KEYCLOAK_URL}/realms/master/protocol/openid-connect/token" -d grant_type=password -d client_id=admin-cli \
     -d username=admin --data-urlencode "password=$(secret keycloak-admin-password)" | jq -r .access_token)"
   id="$(curl -fsS -H "Authorization: Bearer $at" "$kc_api/users?username=dev&exact=true" | jq -r '.[0].id')"
@@ -226,6 +229,16 @@ check_forgejo_tokens() {
   k -n forgejo exec -i statefulset/forgejo-db -- psql -q -U forgejo -d forgejo -v ON_ERROR_STOP=1 \
     -c "DELETE FROM access_token WHERE name = 'e2e-guard'" >/dev/null
   log "the guard checks the personal access tokens of Forgejo against Keycloak"
+
+  # A public key only; nobody has the private key.
+  local key_id
+  key_id="$(fj_admin /admin/users/dev/keys -X POST -H 'Content-Type: application/json' -d '{"title": "e2e-guard",
+    "key": "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAID4TDHFy+/o19ELvPPvxDdAIuFZEyHOBWar3sCd9pznf squared-e2e"}' | jq -r .id)"
+  [[ "$key_id" =~ ^[0-9]+$ ]] || die "cannot add an SSH key for dev"
+  guard_reports_keycloak "/users/$id" "$(jq '.enabled = false' <<<"$user")" "$user" \
+    'Forgejo user dev has SSH keys [^;]*but Keycloak disabled the user'
+  fj_admin "/admin/users/dev/keys/$key_id" -X DELETE >/dev/null
+  log "the guard checks the SSH keys of Forgejo against Keycloak"
 }
 
 # kc_token USER PASSWORD prints a Keycloak access token for the API. It
@@ -319,6 +332,12 @@ worker_may_add_dev() {
 
 guard_protected() { [[ "$(worker_may_add_dev "$1")" == 403 ]]; }
 guard_clean() { guard_status | jq -e '(.protected | length > 0) and ((.errors // []) | length == 0)' >/dev/null 2>&1; }
+# guard_clean_since SECONDS tells if the last guard run was after the Unix
+# time SECONDS and had no errors.
+guard_clean_since() {
+  guard_status | jq -e --argjson t "$1" \
+    '(.time | sub("\\.[0-9]+"; "") | fromdateiso8601) > $t and ((.errors // []) | length == 0)' >/dev/null 2>&1
+}
 guard_released() { [[ "$(worker_may_add_dev "$1")" == 204 ]]; }
 
 # remove_group NAME removes a top-level Keycloak group.
@@ -561,7 +580,7 @@ check_sso dev "$DEV/keycloak-dev-user-password" false
 step "Forgejo accounts belong to Keycloak users"
 check_forgejo_linking
 check_forgejo_passwords
-check_forgejo_tokens
+check_forgejo_credentials
 
 step "make tenant $TENANT"
 api POST /tenants "$(jq -n --arg s "$TENANT" --arg o "$ADMIN_EMAIL" \

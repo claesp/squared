@@ -238,7 +238,8 @@ all `*.localhost` names.
    account. It checks that the Forgejo sign-in page has no password form
    and that `dev` cannot set a Forgejo password. It makes a Forgejo token
    for `dev`, disables `dev` in Keycloak, then makes `dev` a Forgejo
-   administrator, and checks that the guard reports both.
+   administrator, and checks that the guard reports both. It does the
+   same with an SSH key of `dev` and a disabled `dev`.
 6. Makes a tenant, adds `dev` as developer, and waits until `dev` has the
    Harbor project and can read the Forgejo repository.
 7. Pushes the example image as `dev` with the Harbor CLI secret.

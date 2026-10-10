@@ -1,5 +1,5 @@
 -- Access of the Squared guard to the authentication sources of Forgejo,
--- and to the owners of personal access tokens.
+-- and to the owners of personal access tokens and SSH keys.
 --
 -- Forgejo has no API for its authentication sources. A change in the
 -- Forgejo web interface is only in the table login_source. The column cfg
@@ -55,27 +55,44 @@ FROM s;
 REVOKE ALL ON squared_guard_auth_sources FROM PUBLIC;
 GRANT SELECT ON squared_guard_auth_sources TO squared_guard;
 
--- The owners of personal access tokens among the users of OAuth sources.
--- A token works without the identity provider, thus the guard compares
--- each owner with the user in Keycloak. The view has the number of the
--- tokens and the time of the last use, never the tokens (or their hashes,
--- salts or last characters). Local accounts are not in the view.
+-- The owners of credentials that work without the identity provider,
+-- among the users of OAuth sources: personal access tokens (API and Git)
+-- and SSH keys of the user (type 1) or principals (type 3), which Git over
+-- SSH accepts. Deploy keys (type 2) belong to repositories. The guard
+-- compares each owner with the user in Keycloak. The view has the number
+-- of the credentials and the time of the last use, never the tokens (or
+-- their hashes, salts or last characters) or the keys. Local accounts are
+-- not in the view.
 DROP VIEW IF EXISTS squared_guard_token_owners;
+DROP VIEW IF EXISTS squared_guard_credential_owners;
 
-CREATE VIEW squared_guard_token_owners WITH (security_barrier) AS
-SELECT u.name                AS user_name,
-       u.login_source        AS login_source,
-       u.login_name          AS login_name,
-       u.is_admin            AS is_admin,
-       u.is_active           AS is_active,
-       u.prohibit_login      AS prohibit_login,
-       count(t.id)           AS tokens,
-       max(t.updated_unix)   AS last_used_unix
+CREATE VIEW squared_guard_credential_owners WITH (security_barrier) AS
+WITH tokens AS (
+    SELECT uid, count(*) AS n, max(updated_unix) AS last_used
+    FROM access_token
+    GROUP BY uid
+), ssh_keys AS (
+    SELECT owner_id AS uid, count(*) AS n, max(updated_unix) AS last_used
+    FROM public_key
+    WHERE type IN (1, 3)
+    GROUP BY owner_id
+)
+SELECT u.name                          AS user_name,
+       u.login_source                  AS login_source,
+       u.login_name                    AS login_name,
+       u.is_admin                      AS is_admin,
+       u.is_active                     AS is_active,
+       u.prohibit_login                AS prohibit_login,
+       coalesce(t.n, 0)                AS tokens,
+       coalesce(t.last_used, 0)        AS tokens_last_used_unix,
+       coalesce(k.n, 0)                AS ssh_keys,
+       coalesce(k.last_used, 0)        AS ssh_keys_last_used_unix
 FROM "user" u
-JOIN access_token t ON t.uid = u.id
 JOIN login_source s ON s.id = u.login_source AND s.type = 6
+LEFT JOIN tokens t ON t.uid = u.id
+LEFT JOIN ssh_keys k ON k.uid = u.id
 WHERE u.type = 0 -- Individual users, not organizations.
-GROUP BY u.id, u.name, u.login_source, u.login_name, u.is_admin, u.is_active, u.prohibit_login;
+  AND (t.n IS NOT NULL OR k.n IS NOT NULL);
 
-REVOKE ALL ON squared_guard_token_owners FROM PUBLIC;
-GRANT SELECT ON squared_guard_token_owners TO squared_guard;
+REVOKE ALL ON squared_guard_credential_owners FROM PUBLIC;
+GRANT SELECT ON squared_guard_credential_owners TO squared_guard;

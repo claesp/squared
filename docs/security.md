@@ -332,17 +332,22 @@ controls that it uses. Read [architecture.md](architecture.md) first.
   password. Limit: the guard does not see passwords that Keycloak users
   set before this setting; they work without Keycloak. SSH is off in the
   development environment.
-- **Personal access tokens of Forgejo.** A user can make tokens in the
-  Forgejo settings, and Forgejo has no setting to prevent this. A token
-  works for the API and Git without Keycloak until somebody deletes it.
-  Thus a token can outlive the Keycloak user, and it keeps the Forgejo
-  administrator flag, which Forgejo changes only at a Keycloak sign-in.
-  The guard reads the view `squared_guard_token_owners` of
+- **Personal access tokens and SSH keys of Forgejo.** A user can make
+  tokens in the Forgejo settings, and Forgejo has no setting to prevent
+  this. A token works for the API and Git without Keycloak until somebody
+  deletes it. The same is true for the SSH keys of a user, and for SSH
+  principals: Git over SSH accepts them. A key stays when SSH is off (as in
+  the development environment), and works when somebody turns SSH on.
+  Thus a credential can outlive the Keycloak user, and it keeps the
+  Forgejo administrator flag, which Forgejo changes only at a Keycloak
+  sign-in. The guard reads the view `squared_guard_credential_owners` of
   [`forgejo-guard-view.sql`](../deploy/kind/forgejo-guard-view.sql): the
-  users of OAuth2 sources that have tokens, with the number of tokens and
-  the last use, never the tokens, their hashes or their last characters,
-  and no local account. It compares each owner of the Keycloak source with
-  the Keycloak user:
+  users of OAuth2 sources that have tokens or keys, with the number and
+  the last use of each, never the tokens, their hashes or last
+  characters, or the keys and fingerprints, and no local account. Deploy
+  keys belong to repositories, not to users, and are not in the view. The
+  guard compares each owner of the Keycloak source with the Keycloak
+  user:
 
   | Owner | Result |
   |---|---|
@@ -352,10 +357,11 @@ controls that it uses. Read [architecture.md](architecture.md) first.
   | A user of another OAuth2 source | Warning: the guard cannot check it |
   | The Forgejo account is not active or cannot sign in | No message: Forgejo refuses all its requests |
 
-  To correct an error, delete the tokens, or block the Forgejo account
-  ("prohibit sign-in"). The guard does not change Forgejo. The end-to-end
-  test makes a token for `dev`, disables `dev` in Keycloak, and then makes
-  `dev` a Forgejo administrator, and checks the errors.
+  To correct an error, delete the tokens and keys, or block the Forgejo
+  account ("prohibit sign-in"). The guard does not change Forgejo. The
+  end-to-end test makes a token for `dev`, disables `dev` in Keycloak, and
+  then makes `dev` a Forgejo administrator, and checks the errors. Then it
+  adds an SSH key for `dev` and disables `dev` again.
 
 ### Passwords and tokens of Squared
 

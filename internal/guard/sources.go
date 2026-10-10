@@ -52,9 +52,9 @@ type SourceConfig struct {
 	//                    (Clients, Audiences, Claims). It gives no groups, only errors.
 	//   keycloak-realm   the email settings of the Keycloak realm. It gives no
 	//                    groups, only errors.
-	//   forgejo-tokens   the owners of personal access tokens in the Forgejo database,
-	//                    compared with their Keycloak users (URL, PasswordFile, Name,
-	//                    SourceID). No groups, only errors.
+	//   forgejo-credentials  the owners of personal access tokens and SSH keys in the
+	//                    Forgejo database, compared with their Keycloak users (URL,
+	//                    PasswordFile, Name, SourceID). No groups, only errors.
 	//   forgejo-config   the sign-in and registration settings in the Forgejo app.ini,
 	//                    from the sidecar "squared forgejo-config" (URL). No groups,
 	//                    only errors.
@@ -73,7 +73,7 @@ type SourceConfig struct {
 	Clients   []string `json:"clients,omitempty"`
 	Audiences []string `json:"audiences,omitempty"`
 	Claims    []string `json:"claims,omitempty"`
-	// SourceID is for forgejo-tokens: the ID of the Keycloak authentication
+	// SourceID is for forgejo-credentials: the ID of the Keycloak authentication
 	// source in Forgejo.
 	SourceID int64 `json:"sourceId,omitempty"`
 	// IgnoreFields are new fields of a service configuration that an
@@ -164,14 +164,14 @@ func BuildSources(cfg *FileConfig, kc *kube.Client, idp KeycloakReader) ([]Sourc
 			sources = append(sources, &keycloakMappersSource{sc: sc, idp: idp})
 		case "keycloak-realm":
 			sources = append(sources, &keycloakRealmSource{sc: sc, idp: idp})
-		case "forgejo-tokens":
+		case "forgejo-credentials":
 			if sc.URL == "" || sc.PasswordFile == "" || sc.SourceID <= 0 {
-				return nil, fmt.Errorf("source %d: forgejo-tokens needs url, passwordFile and sourceId", i)
+				return nil, fmt.Errorf("source %d: forgejo-credentials needs url, passwordFile and sourceId", i)
 			}
 			if sc.Name == "" {
-				sc.Name = "squared_guard_token_owners"
+				sc.Name = "squared_guard_credential_owners"
 			}
-			sources = append(sources, &forgejoTokensSource{sc: sc, idp: idp})
+			sources = append(sources, &forgejoCredentialsSource{sc: sc, idp: idp})
 		case "forgejo-config":
 			if sc.URL == "" {
 				return nil, fmt.Errorf("source %d: forgejo-config needs url", i)
@@ -558,17 +558,18 @@ func (s *forgejoConfigSource) References(ctx context.Context) ([]Reference, []st
 	return nil, warnings, err
 }
 
-// forgejoTokensSource reads the owners of personal access tokens from a
-// view in the Forgejo database, and compares them with their Keycloak
-// users. See checkForgejoTokens and deploy/kind/forgejo-guard-view.sql.
-type forgejoTokensSource struct {
+// forgejoCredentialsSource reads the owners of personal access tokens and
+// SSH keys from a view in the Forgejo database, and compares them with
+// their Keycloak users. See checkForgejoCredentials and
+// deploy/kind/forgejo-guard-view.sql.
+type forgejoCredentialsSource struct {
 	sc  SourceConfig
 	idp KeycloakReader
 }
 
-func (s *forgejoTokensSource) Name() string { return s.sc.Service + " access tokens" }
+func (s *forgejoCredentialsSource) Name() string { return s.sc.Service + " credentials" }
 
-func (s *forgejoTokensSource) References(ctx context.Context) ([]Reference, []string, error) {
+func (s *forgejoCredentialsSource) References(ctx context.Context) ([]Reference, []string, error) {
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	conn, err := connectDatabase(ctx, s.sc)
@@ -587,24 +588,26 @@ func (s *forgejoTokensSource) References(ctx context.Context) ([]Reference, []st
 	if err != nil {
 		return nil, nil, fmt.Errorf("read squared_guard_auth_sources: %w", err)
 	}
-	rows, err := conn.Query(ctx, `SELECT user_name, login_source, login_name, is_admin, is_active, prohibit_login, tokens, last_used_unix
+	rows, err := conn.Query(ctx, `SELECT user_name, login_source, login_name, is_admin, is_active, prohibit_login,
+		tokens, tokens_last_used_unix, ssh_keys, ssh_keys_last_used_unix
 		FROM `+pgx.Identifier{s.sc.Name}.Sanitize()+" ORDER BY user_name")
 	if err != nil {
 		return nil, nil, fmt.Errorf("read %s (run forgejo-guard-view.sql again after a Forgejo upgrade): %w", s.sc.Name, err)
 	}
-	var owners []forgejoTokenOwner
+	var owners []forgejoCredentialOwner
 	for rows.Next() {
-		var o forgejoTokenOwner
-		var lastUsed int64
-		if err := rows.Scan(&o.UserName, &o.LoginSource, &o.LoginName, &o.IsAdmin, &o.IsActive, &o.ProhibitLogin, &o.Tokens, &lastUsed); err != nil {
+		var o forgejoCredentialOwner
+		var tokensUsed, keysUsed int64
+		if err := rows.Scan(&o.UserName, &o.LoginSource, &o.LoginName, &o.IsAdmin, &o.IsActive, &o.ProhibitLogin,
+			&o.Tokens, &tokensUsed, &o.SSHKeys, &keysUsed); err != nil {
 			return nil, nil, err
 		}
-		o.LastUsed = time.Unix(lastUsed, 0)
+		o.TokensLastUsed, o.SSHKeysLastUsed = time.Unix(tokensUsed, 0), time.Unix(keysUsed, 0)
 		owners = append(owners, o)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, nil, err
 	}
-	warnings, err := checkForgejoTokens(ctx, owners, s.sc.SourceID, adminGroup, keycloakUserStateFrom(s.idp))
+	warnings, err := checkForgejoCredentials(ctx, owners, s.sc.SourceID, adminGroup, keycloakUserStateFrom(s.idp))
 	return nil, warnings, err
 }

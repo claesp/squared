@@ -113,16 +113,16 @@ ensure_forgejo_token() {
 setup_forgejo() {
   wait_http "${FORGEJO_URL}/api/healthz"
   # The worker makes the accounts of tenant members for the authentication
-  # source keycloak, by its ID, and the guard checks the tokens of its
-  # users. Forgejo has no API for the sources.
+  # source keycloak, by its ID, and the guard checks the tokens and SSH
+  # keys of its users. Forgejo has no API for the sources.
   local source_id want
   source_id="$(k -n forgejo exec deploy/forgejo -c forgejo -- gitea admin auth list | awk '$2 == "keycloak" {print $1}')"
   want="$(sed -n 's/.*SQUARED_FORGEJO_AUTH_SOURCE_ID=\([0-9]*\).*/\1/p' "$ROOT/deploy/kubernetes/kind/kustomization.yaml")"
   [[ -n "$source_id" && "$source_id" == "$want" ]] \
     || die "the Forgejo authentication source keycloak has the ID '$source_id', but SQUARED_FORGEJO_AUTH_SOURCE_ID is '$want'"
-  want="$(jq -r '.sources[] | select(.type == "forgejo-tokens") | .sourceId' "$ROOT/deploy/kubernetes/kind/guard.json")"
+  want="$(jq -r '.sources[] | select(.type == "forgejo-credentials") | .sourceId' "$ROOT/deploy/kubernetes/kind/guard.json")"
   [[ "$source_id" == "$want" ]] \
-    || die "the Forgejo authentication source keycloak has the ID '$source_id', but sourceId of forgejo-tokens in guard.json is '$want'"
+    || die "the Forgejo authentication source keycloak has the ID '$source_id', but sourceId of forgejo-credentials in guard.json is '$want'"
   ensure_forgejo_user squared-bot
   ensure_forgejo_user argocd-reader
   # The worker makes Forgejo accounts for tenant members, thus the bot is a

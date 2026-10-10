@@ -98,6 +98,8 @@ func makeForgejoTables(t *testing.T, conn *pgx.Conn) {
 		CREATE TABLE "user" (id bigserial PRIMARY KEY, name text NOT NULL, type integer NOT NULL, login_source bigint NOT NULL,
 			login_name text NOT NULL, is_admin boolean NOT NULL, is_active boolean NOT NULL, prohibit_login boolean NOT NULL, passwd text);
 		CREATE TABLE access_token (id bigserial PRIMARY KEY, uid bigint NOT NULL, name text NOT NULL, token_hash text,
-			token_salt text, token_last_eight text, scope text, created_unix bigint, updated_unix bigint);`)
+			token_salt text, token_last_eight text, scope text, created_unix bigint, updated_unix bigint);
+		CREATE TABLE public_key (id bigserial PRIMARY KEY, owner_id bigint NOT NULL, name text NOT NULL, fingerprint text,
+			content text, type integer NOT NULL, created_unix bigint, updated_unix bigint);`)
 	storetest.Must(t, err)
 }

@@ -41,18 +41,60 @@ type mapperRules struct {
 	Ignore []string
 }
 
-// checkKeycloakMappers checks that only group membership mappers with full
-// group paths write the group claims of the tokens that the services
-// accept. Other mappers can put any value into such a claim, for example a
-// fixed group, a user attribute, or a value from the sign-in request. Then
-// a person has the rights of a group without membership, and the
-// protection of the group does not help. The function returns warnings and
-// an error that names each problem.
+// claimRule tells which mappers may write a claim that gives rights.
+type claimRule struct {
+	claim string
+	what  string // "group", "email" or "email verification", for messages.
+	// check returns "" if the mapper may write the claim, else the reason.
+	check func(m keycloak.ProtocolMapper) string
+}
+
+// claimRules returns the rules for the group claims and for the email
+// claims. Squared and Forgejo link a new sign-in to an existing account
+// with the same email address, and Squared does this only if
+// email_verified is true. Thus these claims must come from the user: a
+// fixed value, another attribute (which the user can perhaps change), or
+// a value from the sign-in request gives the account of another person.
+func claimRules(groupClaims []string) []claimRule {
+	var rules []claimRule
+	for _, c := range groupClaims {
+		rules = append(rules, claimRule{claim: c, what: "group", check: func(m keycloak.ProtocolMapper) string {
+			switch {
+			case m.ProtocolMapper != keycloakGroupMapper:
+				return "only " + keycloakGroupMapper + " may write it"
+			case m.Config["full.path"] != "true":
+				return "it writes short group names; a subgroup with the same name then gives the same rights"
+			}
+			return ""
+		}})
+	}
+	userField := func(attribute string) func(m keycloak.ProtocolMapper) string {
+		return func(m keycloak.ProtocolMapper) string {
+			if (m.ProtocolMapper == "oidc-usermodel-property-mapper" || m.ProtocolMapper == "oidc-usermodel-attribute-mapper") &&
+				m.Config["user.attribute"] == attribute {
+				return ""
+			}
+			return "only a user property or user attribute mapper for " + attribute + " may write it"
+		}
+	}
+	return append(rules,
+		claimRule{claim: "email", what: "email", check: userField("email")},
+		claimRule{claim: "email_verified", what: "email verification", check: userField("emailVerified")})
+}
+
+// checkKeycloakMappers checks the mappers that write the group and email
+// claims of the tokens that the services accept (see claimRules). Other
+// mappers can put any value into such a claim, for example a fixed group,
+// a user attribute, or a value from the sign-in request. Then a person has
+// the rights of a group without membership, or the account of another
+// person, and the protection of the group does not help. The function
+// returns warnings and an error that names each problem.
 func checkKeycloakMappers(clients []keycloak.ClientMappers, scopes []keycloak.ClientScope, r mapperRules) ([]string, error) {
 	byName := map[string]keycloak.ClientScope{}
 	for _, s := range scopes {
 		byName[s.Name] = s
 	}
+	rules := claimRules(r.Claims)
 	var warnings, problems []string
 	for _, c := range clients {
 		why := ""
@@ -63,7 +105,7 @@ func checkKeycloakMappers(clients []keycloak.ClientMappers, scopes []keycloak.Cl
 		} else {
 			continue
 		}
-		groupMappers := 0
+		allowed := map[string]bool{}
 		for _, m := range effectiveMappers(c, byName) {
 			if m.mapper.Protocol != "" && m.mapper.Protocol != "openid-connect" {
 				continue
@@ -76,21 +118,24 @@ func checkKeycloakMappers(clients []keycloak.ClientMappers, scopes []keycloak.Cl
 				}
 				continue
 			}
-			claim := m.mapper.Config["claim.name"]
-			if !writesClaim(claim, r.Claims) {
-				continue
-			}
-			switch {
-			case typ != keycloakGroupMapper:
-				problems = append(problems, fmt.Sprintf("%s (type %s) writes the group claim %s", where, typ, claim))
-			case m.mapper.Config["full.path"] != "true":
-				problems = append(problems, fmt.Sprintf("%s writes short group names into %s; a subgroup with the same name then gives the same rights", where, claim))
-			default:
-				groupMappers++
+			name := m.mapper.Config["claim.name"]
+			for _, rule := range rules {
+				if name != rule.claim && !strings.HasPrefix(name, rule.claim+".") {
+					continue // "groups.x" makes the claim "groups" an object.
+				}
+				if reason := rule.check(m.mapper); reason != "" {
+					problems = append(problems, fmt.Sprintf("%s (type %s) writes the %s claim %s: %s", where, typ, rule.what, name, reason))
+				} else {
+					allowed[rule.claim] = true
+				}
 			}
 		}
-		if groupMappers == 0 && slices.Contains(r.Clients, c.ClientID) {
-			warnings = append(warnings, fmt.Sprintf("Keycloak client %s has no group membership mapper for %s: its tokens have no groups", c.ClientID, strings.Join(r.Claims, ", ")))
+		if slices.Contains(r.Clients, c.ClientID) {
+			for _, rule := range rules {
+				if !allowed[rule.claim] {
+					warnings = append(warnings, fmt.Sprintf("Keycloak client %s has no mapper for the %s claim %s", c.ClientID, rule.what, rule.claim))
+				}
+			}
 		}
 	}
 	// Without the role view-clients, Keycloak shows no clients. Thus a
@@ -101,8 +146,8 @@ func checkKeycloakMappers(clients []keycloak.ClientMappers, scopes []keycloak.Cl
 		}
 	}
 	if len(problems) > 0 {
-		return warnings, fmt.Errorf("mappers of Keycloak can put values into group claims: %s. Only %s with full paths may write them. The guard keeps the current protection",
-			strings.Join(problems, "; "), keycloakGroupMapper)
+		return warnings, fmt.Errorf("mappers of Keycloak can put values into claims that give rights: %s. The guard keeps the current protection",
+			strings.Join(problems, "; "))
 	}
 	return warnings, nil
 }
@@ -143,15 +188,4 @@ func audienceFor(c keycloak.ClientMappers, scopes map[string]keycloak.ClientScop
 		}
 	}
 	return ""
-}
-
-// writesClaim tells if a claim name is one of the claims, or a part of
-// one: "groups.x" makes the claim "groups" an object.
-func writesClaim(name string, claims []string) bool {
-	for _, c := range claims {
-		if name == c || strings.HasPrefix(name, c+".") {
-			return true
-		}
-	}
-	return false
 }

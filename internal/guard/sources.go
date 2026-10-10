@@ -459,7 +459,8 @@ func (s *harborDatabaseSource) References(ctx context.Context) ([]Reference, []s
 
 // keycloakMappersSource checks the mappers of the Keycloak clients that
 // the services use. The protection of a group helps only if membership of
-// the group is the only way to get it into the groups claim.
+// the group is the only way to get it into the groups claim, and the
+// services link accounts by the email address. See claimRules.
 type keycloakMappersSource struct {
 	sc  SourceConfig
 	idp ClientReader

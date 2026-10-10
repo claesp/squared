@@ -2,6 +2,7 @@ package guard
 
 import (
 	"context"
+	"slices"
 	"strings"
 	"testing"
 
@@ -20,7 +21,9 @@ func groupMapper(fullPath string) keycloak.ProtocolMapper {
 func realmLikeDevelopment() ([]keycloak.ClientMappers, []keycloak.ClientScope) {
 	scopes := []keycloak.ClientScope{
 		{Name: "email", Protocol: "openid-connect", ProtocolMappers: []keycloak.ProtocolMapper{
-			{Name: "email", ProtocolMapper: "oidc-usermodel-attribute-mapper", Config: map[string]string{"claim.name": "email"}}}},
+			{Name: "email", ProtocolMapper: "oidc-usermodel-attribute-mapper", Config: map[string]string{"claim.name": "email", "user.attribute": "email"}},
+			{Name: "email verified", ProtocolMapper: "oidc-usermodel-property-mapper",
+				Config: map[string]string{"claim.name": "email_verified", "user.attribute": "emailVerified"}}}},
 		{Name: "microprofile-jwt", Protocol: "openid-connect", ProtocolMappers: []keycloak.ProtocolMapper{
 			{Name: "groups", ProtocolMapper: "oidc-usermodel-realm-role-mapper", Config: map[string]string{"claim.name": "groups"}}}},
 		{Name: "role_list", Protocol: "saml", ProtocolMappers: []keycloak.ProtocolMapper{
@@ -61,7 +64,7 @@ func TestCheckKeycloakMappersProblems(t *testing.T) {
 		{"short names", func(c []keycloak.ClientMappers, s []keycloak.ClientScope) ([]keycloak.ClientMappers, []keycloak.ClientScope) {
 			c[1].ProtocolMappers[0] = groupMapper("false")
 			return c, s
-		}, "client squared (a service uses it) own mapper \"groups\" writes short group names"},
+		}, "client squared (a service uses it) own mapper \"groups\" (type oidc-group-membership-mapper) writes the group claim groups: it writes short group names"},
 		{"value from the request in a scope", func(c []keycloak.ClientMappers, s []keycloak.ClientScope) ([]keycloak.ClientMappers, []keycloak.ClientScope) {
 			s = append(s, keycloak.ClientScope{Name: "request", ProtocolMappers: []keycloak.ProtocolMapper{{Name: "asked",
 				ProtocolMapper: "oidc-claims-param-value-idtoken-mapper", Config: map[string]string{"claim.name": "groups"}}}})
@@ -73,6 +76,21 @@ func TestCheckKeycloakMappersProblems(t *testing.T) {
 				Config: map[string]string{"claim.name": "groups.extra"}})
 			return c, s
 		}, "writes the group claim groups.extra"},
+		{"email from another attribute", func(c []keycloak.ClientMappers, s []keycloak.ClientScope) ([]keycloak.ClientMappers, []keycloak.ClientScope) {
+			c[0].ProtocolMappers = append(c[0].ProtocolMappers, keycloak.ProtocolMapper{Name: "nick", ProtocolMapper: "oidc-usermodel-attribute-mapper",
+				Config: map[string]string{"claim.name": "email", "user.attribute": "nickname"}})
+			return c, s
+		}, `own mapper "nick" (type oidc-usermodel-attribute-mapper) writes the email claim email: only a user property or user attribute mapper for email may write it`},
+		{"fixed email verification", func(c []keycloak.ClientMappers, s []keycloak.ClientScope) ([]keycloak.ClientMappers, []keycloak.ClientScope) {
+			s[0].ProtocolMappers[1] = keycloak.ProtocolMapper{Name: "verified", ProtocolMapper: "oidc-hardcoded-claim-mapper",
+				Config: map[string]string{"claim.name": "email_verified", "claim.value": "true"}}
+			return c, s
+		}, `scope email mapper "verified" (type oidc-hardcoded-claim-mapper) writes the email verification claim email_verified`},
+		{"email from the request", func(c []keycloak.ClientMappers, s []keycloak.ClientScope) ([]keycloak.ClientMappers, []keycloak.ClientScope) {
+			c[1].ProtocolMappers = append(c[1].ProtocolMappers, keycloak.ProtocolMapper{Name: "asked",
+				ProtocolMapper: "oidc-claims-param-value-idtoken-mapper", Config: map[string]string{"claim.name": "email"}})
+			return c, s
+		}, `client squared (a service uses it) own mapper "asked" (type oidc-claims-param-value-idtoken-mapper) writes the email claim email`},
 		{"unknown type", func(c []keycloak.ClientMappers, s []keycloak.ClientScope) ([]keycloak.ClientMappers, []keycloak.ClientScope) {
 			c[0].ProtocolMappers = append(c[0].ProtocolMappers, keycloak.ProtocolMapper{Name: "js", ProtocolMapper: "script-groups.js"})
 			return c, s
@@ -110,7 +128,7 @@ func TestCheckKeycloakMappersIgnoreAndWarnings(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(warnings) != 1 || !strings.Contains(warnings[0], "client squared has no group membership mapper") {
+	if len(warnings) != 1 || !strings.Contains(warnings[0], "client squared has no mapper for the group claim groups") {
 		t.Fatalf("warnings = %q", warnings)
 	}
 
@@ -149,5 +167,19 @@ func TestKeycloakMappersSource(t *testing.T) {
 	cfg.Sources[0].Clients = nil
 	if _, err := BuildSources(cfg, nil, stubClients{}); err == nil {
 		t.Fatal("a source without clients was accepted")
+	}
+}
+
+func TestCheckKeycloakMappersWithoutEmail(t *testing.T) {
+	c, s := realmLikeDevelopment()
+	c[0].DefaultClientScopes = nil // argocd without the scope email.
+	warnings, err := checkKeycloakMappers(c, s, rulesForDevelopment())
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"Keycloak client argocd has no mapper for the email claim email",
+		"Keycloak client argocd has no mapper for the email verification claim email_verified"}
+	if !slices.Equal(warnings, want) {
+		t.Fatalf("warnings = %q", warnings)
 	}
 }

@@ -149,17 +149,24 @@ controls that it uses. Read [architecture.md](architecture.md) first.
   `groups` claim. Other mappers can write that claim: a fixed value
   (`oidc-hardcoded-claim-mapper`), a user attribute, realm roles (the
   built-in scope `microprofile-jwt` does this), or even a value from the
-  sign-in request (`oidc-claims-param-value-idtoken-mapper`). The guard
-  reads the mappers of the clients that the services use, with the
-  mappers of their default and optional client scopes:
+  sign-in request (`oidc-claims-param-value-idtoken-mapper`). The same is
+  true for the email address: Squared and Forgejo link a new sign-in to
+  an existing account with the same address, and Squared does this only
+  if `email_verified` is true. A mapper that writes `email` from another
+  attribute, which the user can perhaps change, gives the account of
+  another person. The guard reads the mappers of the clients that the
+  services use, with the mappers of their default and optional client
+  scopes:
 
   | Change | Result |
   |---|---|
   | A mapper of another type writes a group claim, or a part of it (`groups.x`) | Error |
   | A group membership mapper without full paths: a subgroup with the same name gives the same rights | Error |
+  | A mapper writes `email` (or a part of it), and it is not a user property or user attribute mapper for `email` | Error |
+  | A mapper writes `email_verified`, and it is not a user property or user attribute mapper for `emailVerified` | Error |
   | A mapper type that Keycloak 26.8 does not have, for example a script mapper; it can write any claim | Error, until an operator adds the type to `ignoreFields` |
   | The guard does not see a client of its configuration, for example without `view-clients` | Error |
-  | A client of the configuration has no group membership mapper | Warning |
+  | A client of the configuration has no allowed mapper for `groups`, `email` or `email_verified` | Warning |
 
   It also checks every other client with an audience mapper for one of
   these clients or for a custom audience of a service (`squared-api`),
@@ -168,9 +175,13 @@ controls that it uses. Read [architecture.md](architecture.md) first.
   tokens have no audience of a service. The guard checks the mappers
   also when they are in no token: a later change of one flag would make
   them active. The end-to-end test adds a mapper that writes `groups` to
-  the client `argocd` and checks the error. Limit: the guard does not
-  read the client roles that `oidc-audience-resolve-mapper` turns into
-  audiences; give the service clients no client roles.
+  the client `argocd`, and a mapper that writes `email` from the attribute
+  `nickname` to the client `forgejo`, and checks the errors. Limits: the
+  guard does not read the client roles that `oidc-audience-resolve-mapper`
+  turns into audiences; give the service clients no client roles. It also
+  does not check the realm settings for email addresses: users must not
+  be able to set a verified address that they do not own, and two users
+  must not have the same address (the Keycloak default).
 - **Argo CD configuration.** Argo CD reads its RBAC only from the
   ConfigMap `argocd-rbac-cm` and from the AppProjects. The guard reads the
   same objects through the Kubernetes API, thus it sees all changes, also

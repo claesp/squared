@@ -149,7 +149,8 @@ permission `protected-groups` up to date. To install it in production:
    as the owner of the Forgejo tables, after Forgejo made them, and set a
    password for the role `squared_guard`. Permit connections from the guard
    to the database. Before a Forgejo upgrade that changes the tables
-   `login_source`, `user`, `access_token` or `public_key`, drop the views; run the file
+   `login_source`, `user`, `access_token`, `public_key`, `deploy_key` or
+   `repository`, drop the views; run the file
    again after the upgrade.
    Without database access, use the source type `forgejo-init`. Add the
    sidecar `squared forgejo-config` to the Forgejo pod, a Service for it,
@@ -177,10 +178,11 @@ to the configuration of the guard, and add its Keycloak client to
 
 ### Forgejo upgrades
 
-1. Drop the views `squared_guard_auth_sources` and
-   `squared_guard_credential_owners` if the upgrade changes the tables
-   `login_source`, `user`, `access_token` or `public_key`. After the
-   upgrade, run `forgejo-guard-view.sql` again.
+1. Drop the views `squared_guard_auth_sources`,
+   `squared_guard_credential_owners` and `squared_guard_deploy_keys` if
+   the upgrade changes the tables `login_source`, `user`, `access_token`,
+   `public_key`, `deploy_key` or `repository`. After the upgrade, run
+   `forgejo-guard-view.sql` again.
 2. Look at `GET /status` of the guard:
    - An error about a missing or new group field: Forgejo renamed or
      added a field that can give rights. The guard keeps the current

@@ -227,7 +227,8 @@ all `*.localhost` names.
    checks that the guard reports it and keeps the protection. It writes
    `ACCOUNT_LINKING = auto`, `ALLOW_ONLY_EXTERNAL_REGISTRATION = false`
    and `ENABLE_INTERNAL_SIGNIN = true` into `app.ini` of the running
-   Forgejo pod and checks that the guard reports them. It does the
+   Forgejo pod and checks that the guard reports them. It adds a deploy
+   key with write access to `squared/platform` and checks the error. It does the
    same for Harbor: it changes the administrator group through the Harbor
    API, then renames the key `oidc_admin_group` in the database.
 5. Signs in to Argo CD, Harbor and Forgejo through Keycloak as both users,

@@ -1,5 +1,6 @@
 -- Access of the Squared guard to the authentication sources of Forgejo,
--- and to the owners of personal access tokens and SSH keys.
+-- to the owners of personal access tokens and SSH keys, and to the deploy
+-- keys of the repositories.
 --
 -- Forgejo has no API for its authentication sources. A change in the
 -- Forgejo web interface is only in the table login_source. The column cfg
@@ -96,3 +97,25 @@ WHERE u.type = 0 -- Individual users, not organizations.
 
 REVOKE ALL ON squared_guard_credential_owners FROM PUBLIC;
 GRANT SELECT ON squared_guard_credential_owners TO squared_guard;
+
+-- The deploy keys of all repositories. A deploy key gives Git over SSH
+-- access to one repository, without a user and without the identity
+-- provider; a key with write access (mode 2) can push. The guard checks
+-- that nothing but Squared can write to the GitOps repositories. The view
+-- has the repository, the name, the access and the last use of each key,
+-- never the key or its fingerprint.
+DROP VIEW IF EXISTS squared_guard_deploy_keys;
+
+CREATE VIEW squared_guard_deploy_keys WITH (security_barrier) AS
+SELECT r.owner_name                                            AS owner_name,
+       r.name                                                  AS repo_name,
+       d.name                                                  AS key_name,
+       d.mode                                                  AS mode,
+       d.created_unix                                          AS created_unix,
+       greatest(d.updated_unix, coalesce(k.updated_unix, 0))   AS last_used_unix
+FROM deploy_key d
+JOIN repository r ON r.id = d.repo_id
+LEFT JOIN public_key k ON k.id = d.key_id;
+
+REVOKE ALL ON squared_guard_deploy_keys FROM PUBLIC;
+GRANT SELECT ON squared_guard_deploy_keys TO squared_guard;

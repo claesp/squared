@@ -55,6 +55,9 @@ type SourceConfig struct {
 	//   forgejo-credentials  the owners of personal access tokens and SSH keys in the
 	//                    Forgejo database, compared with their Keycloak users (URL,
 	//                    PasswordFile, Name, SourceID). No groups, only errors.
+	//   forgejo-deploy-keys  the deploy keys of the repositories of the organization Org,
+	//                    in the Forgejo database (URL, PasswordFile, Name, Org). No
+	//                    groups, only errors.
 	//   forgejo-config   the sign-in and registration settings in the Forgejo app.ini,
 	//                    from the sidecar "squared forgejo-config" (URL). No groups,
 	//                    only errors.
@@ -76,12 +79,16 @@ type SourceConfig struct {
 	// SourceID is for forgejo-credentials: the ID of the Keycloak authentication
 	// source in Forgejo.
 	SourceID int64 `json:"sourceId,omitempty"`
+	// Org is for forgejo-deploy-keys: the Forgejo organization of the
+	// GitOps repositories (default "squared", as SQUARED_GIT_ORG).
+	Org string `json:"org,omitempty"`
 	// IgnoreFields are new fields of a service configuration that an
 	// operator checked: they give no rights. The types argocd-rbac (keys),
 	// argocd-projects ("spec.<field>" or "roles.<field>"), forgejo-database,
 	// harbor-database, keycloak-mappers (mapper types), keycloak-realm
-	// (identity providers and user federation) and forgejo-config
-	// ("<section>.<key>") use it.
+	// (identity providers and user federation), forgejo-config
+	// ("<section>.<key>") and forgejo-deploy-keys ("<repository>/<key name>")
+	// use it.
 	IgnoreFields []string `json:"ignoreFields,omitempty"`
 }
 
@@ -172,6 +179,17 @@ func BuildSources(cfg *FileConfig, kc *kube.Client, idp KeycloakReader) ([]Sourc
 				sc.Name = "squared_guard_credential_owners"
 			}
 			sources = append(sources, &forgejoCredentialsSource{sc: sc, idp: idp})
+		case "forgejo-deploy-keys":
+			if sc.URL == "" || sc.PasswordFile == "" {
+				return nil, fmt.Errorf("source %d: forgejo-deploy-keys needs url and passwordFile", i)
+			}
+			if sc.Name == "" {
+				sc.Name = "squared_guard_deploy_keys"
+			}
+			if sc.Org == "" {
+				sc.Org = "squared"
+			}
+			sources = append(sources, &forgejoDeployKeysSource{sc: sc})
 		case "forgejo-config":
 			if sc.URL == "" {
 				return nil, fmt.Errorf("source %d: forgejo-config needs url", i)
@@ -609,5 +627,43 @@ func (s *forgejoCredentialsSource) References(ctx context.Context) ([]Reference,
 		return nil, nil, err
 	}
 	warnings, err := checkForgejoCredentials(ctx, owners, s.sc.SourceID, adminGroup, keycloakUserStateFrom(s.idp))
+	return nil, warnings, err
+}
+
+// forgejoDeployKeysSource reads the deploy keys from a view in the Forgejo
+// database. See checkForgejoDeployKeys and deploy/kind/forgejo-guard-view.sql.
+type forgejoDeployKeysSource struct {
+	sc SourceConfig
+}
+
+func (s *forgejoDeployKeysSource) Name() string { return s.sc.Service + " deploy keys" }
+
+func (s *forgejoDeployKeysSource) References(ctx context.Context) ([]Reference, []string, error) {
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	conn, err := connectDatabase(ctx, s.sc)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer conn.Close(context.Background())
+	rows, err := conn.Query(ctx, `SELECT owner_name, repo_name, key_name, mode, created_unix, last_used_unix
+		FROM `+pgx.Identifier{s.sc.Name}.Sanitize()+" ORDER BY owner_name, repo_name, key_name")
+	if err != nil {
+		return nil, nil, fmt.Errorf("read %s (run forgejo-guard-view.sql again after a Forgejo upgrade): %w", s.sc.Name, err)
+	}
+	var keys []forgejoDeployKey
+	for rows.Next() {
+		var k forgejoDeployKey
+		var created, used int64
+		if err := rows.Scan(&k.Owner, &k.Repo, &k.Name, &k.Mode, &created, &used); err != nil {
+			return nil, nil, err
+		}
+		k.Created, k.LastUsed = time.Unix(created, 0), time.Unix(used, 0)
+		keys = append(keys, k)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, nil, err
+	}
+	warnings, err := checkForgejoDeployKeys(keys, s.sc.Org, s.sc.IgnoreFields)
 	return nil, warnings, err
 }

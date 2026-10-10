@@ -513,6 +513,21 @@ YAML
     'ENABLE_INTERNAL_SIGNIN is on[^;]*[(]after the next start[)]'
   log "the guard checks the sign-in and registration settings of Forgejo"
 
+  # A deploy key that can push to the platform repository, as a Forgejo
+  # administrator can add it. A public key only; nobody has the private key.
+  local key_id
+  key_id="$(fj_admin /repos/squared/platform/keys -X POST -H 'Content-Type: application/json' -d '{"title": "e2e-guard",
+    "read_only": false, "key": "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIPjQQV11qooUqSWyRghuqLxvZm203ZRLZWyPFj7/k9Hh squared-e2e-deploy"}' | jq -r .id)"
+  [[ "$key_id" =~ ^[0-9]+$ ]] || die "cannot add a deploy key to squared/platform"
+  guard_reports_deploy_key() {
+    guard_status | jq -e '[.errors[]? | select(test("deploy key \"e2e-guard\" of squared/platform [^;]*can push"))] | length > 0' >/dev/null
+  }
+  wait_for "the guard reports the deploy key of squared/platform" 60 guard_reports_deploy_key
+  [[ "$(worker_may_add_dev squared-admins)" == 403 ]] || die "the protection of /squared-admins is gone after the deploy key"
+  fj_admin "/repos/squared/platform/keys/$key_id" -X DELETE >/dev/null
+  wait_for "the guard has no errors after the deploy key is removed" 60 guard_clean
+  log "the guard checks the deploy keys of the GitOps repositories"
+
   # A change of the administrator group in Harbor, through the API as in
   # the web interface.
   local hgroup="e2e-harbor-$TENANT"

@@ -362,6 +362,22 @@ controls that it uses. Read [architecture.md](architecture.md) first.
   end-to-end test makes a token for `dev`, disables `dev` in Keycloak, and
   then makes `dev` a Forgejo administrator, and checks the errors. Then it
   adds an SSH key for `dev` and disables `dev` again.
+- **Deploy keys of the GitOps repositories.** Squared is the only writer
+  of the repositories of its organization (decision D1), and Argo CD
+  deploys what they have. A deploy key belongs to a repository, not to a
+  user: Git over SSH accepts it without Keycloak, also after the person
+  who added it left, and a key with write access pushes without Squared.
+  Squared never makes deploy keys; Argo CD reads with a token. The guard
+  reads the view `squared_guard_deploy_keys` of
+  [`forgejo-guard-view.sql`](../deploy/kind/forgejo-guard-view.sql): the
+  repository, the name, the access and the last use of each key, never the
+  key or its fingerprint. A key with write access on a repository of the
+  organization is an error; a key with read access is a warning (it reads
+  all manifests). An operator can accept a key with `<repository>/<key
+  name>` in `ignoreFields`. The guard checks the keys also when SSH is
+  off. The end-to-end test adds a deploy key with write access to
+  `squared/platform` and checks the error. Other writers, for example a
+  team or a collaborator with write access, are not in this check.
 
 ### Passwords and tokens of Squared
 

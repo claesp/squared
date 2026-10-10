@@ -16,10 +16,11 @@ import (
 // as the reporter serves them.
 func safeSignIn() map[string]map[string]string {
 	return map[string]map[string]string{
+		"admin":         {"EXTERNAL_USER_DISABLE_FEATURES": "manage_password"},
 		"oauth2_client": {"ACCOUNT_LINKING": "disabled", "USERNAME": "nickname", "ENABLE_AUTO_REGISTRATION": "true", "UPDATE_AVATAR": "false"},
 		"openid":        {"ENABLE_OPENID_SIGNIN": "false", "ENABLE_OPENID_SIGNUP": "false"},
 		"service": {"DISABLE_REGISTRATION": "false", "ALLOW_ONLY_EXTERNAL_REGISTRATION": "true", "SHOW_REGISTRATION_BUTTON": "false",
-			"REQUIRE_SIGNIN_VIEW": forgejo.HiddenValue},
+			"ENABLE_INTERNAL_SIGNIN": "false", "REQUIRE_SIGNIN_VIEW": forgejo.HiddenValue},
 		"security": {"INSTALL_LOCK": "true"},
 	}
 }
@@ -69,6 +70,17 @@ func TestCheckForgejoSignInProblems(t *testing.T) {
 			s["service"]["ENABLE_REVERSE_PROXY_AUTHENTICATION_API"] = "true"
 			s["service"]["ENABLE_REVERSE_PROXY_AUTO_REGISTRATION"] = "true"
 		}), "such a header also makes new accounts"},
+		{"internal sign-in", both(func(s map[string]map[string]string) { s["service"]["ENABLE_INTERNAL_SIGNIN"] = "true" }),
+			"ENABLE_INTERNAL_SIGNIN is on"},
+		{"internal sign-in with the default", both(func(s map[string]map[string]string) { delete(s["service"], "ENABLE_INTERNAL_SIGNIN") }),
+			"ENABLE_INTERNAL_SIGNIN is on"},
+		{"passwords of Keycloak users", both(func(s map[string]map[string]string) {
+			s["admin"]["EXTERNAL_USER_DISABLE_FEATURES"] = "deletion, manage_ssh_keys"
+		}), "Keycloak users can set a Forgejo password"},
+		{"renamed feature key", both(func(s map[string]map[string]string) {
+			s["admin"]["EXTERNAL_USERS_DISABLED_FEATURES"] = s["admin"]["EXTERNAL_USER_DISABLE_FEATURES"]
+			delete(s["admin"], "EXTERNAL_USER_DISABLE_FEATURES")
+		}), "unknown key admin.EXTERNAL_USERS_DISABLED_FEATURES"},
 		{"changed file", func(r *forgejo.ConfigReport) { r.Now["service"]["SHOW_REGISTRATION_BUTTON"] = "true" },
 			"the section [service] of app.ini changed after the start"},
 		{"unknown key of oauth2_client", both(func(s map[string]map[string]string) { s["oauth2_client"]["account_linking"] = "auto" }),
@@ -133,5 +145,20 @@ func TestForgejoConfigSource(t *testing.T) {
 	refs, _, err := sources[0].References(context.Background())
 	if len(refs) != 0 || err == nil || !strings.Contains(err.Error(), "ACCOUNT_LINKING is auto") {
 		t.Fatalf("refs %v, err %v", refs, err)
+	}
+}
+
+// TestCheckForgejoSignInFeatureLists checks that the guard reads the lists
+// of disabled features as Forgejo does.
+func TestCheckForgejoSignInFeatureLists(t *testing.T) {
+	for _, admin := range []map[string]string{
+		{"EXTERNAL_USER_DISABLE_FEATURES": "deletion , manage_password"},
+		{"USER_DISABLED_FEATURES": "manage_password"}, // For all users.
+	} {
+		s := safeSignIn()
+		s["admin"] = admin
+		if _, err := checkForgejoSignIn(forgejo.ConfigReport{Start: s, Now: cloneSignIn(s)}, nil); err != nil {
+			t.Fatalf("%v: %v", admin, err)
+		}
 	}
 }

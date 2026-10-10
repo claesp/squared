@@ -285,7 +285,7 @@ controls that it uses. Read [architecture.md](architecture.md) first.
   Forgejo accounts must come only from Keycloak. The settings are only in
   `app.ini`; Forgejo has no API for them and reads the file only at its
   start. The sidecar `squared forgejo-config` in the Forgejo pod reads the
-  sections `[oauth2_client]`, `[openid]` and `[service]`, and the key
+  sections `[admin]`, `[oauth2_client]`, `[openid]` and `[service]`, and the key
   `INSTALL_LOCK` of `[security]`, at the start of the pod and at each
   request. `[service]` has secrets (for example `RECAPTCHA_SECRET`), thus
   the sidecar serves its key names, but only the values of the sign-in
@@ -299,9 +299,11 @@ controls that it uses. Read [architecture.md](architecture.md) first.
   | `ENABLE_OPENID_SIGNIN` is on (the default before the installation): people sign in with OpenID 2.0 addresses that they add to their accounts, without Keycloak, also after Keycloak disabled them | Error |
   | `ENABLE_OPENID_SIGNUP` is on: anybody with an OpenID 2.0 provider can make an account | Error |
   | `ENABLE_REVERSE_PROXY_AUTHENTICATION` or `..._API` is on: Forgejo accepts the user name in a header from every client | Error |
+  | `ENABLE_INTERNAL_SIGNIN` is on (the default): the web form accepts passwords, thus local accounts, and Keycloak users with a Forgejo password, sign in without Keycloak | Error |
+  | `manage_password` is not in `EXTERNAL_USER_DISABLE_FEATURES` (or `USER_DISABLED_FEATURES`) of `[admin]` (the default): a Keycloak user can set a Forgejo password | Error |
   | A section changed after the start: the running Forgejo can differ from the file | Error |
-  | An unknown key in `[oauth2_client]` or `[openid]`, or in `[service]` with a name like registration, sign-in, login, auth, link, proxy, OpenID, account or password | Error, until an operator adds `<section>.<key>` to `ignoreFields` |
-  | Another unknown key in `[service]` | Warning, until an operator adds it to `ignoreFields` |
+  | An unknown key in `[oauth2_client]` or `[openid]`, or in `[service]` or `[admin]` with a name like registration, sign-in, login, auth, link, proxy, OpenID, account, password or feature | Error, until an operator adds `<section>.<key>` to `ignoreFields` |
+  | Another unknown key in `[service]` or `[admin]` | Warning, until an operator adds it to `ignoreFields` |
   | `ACCOUNT_LINKING = login` (the default): a person who knows the password of a local account can link it | Warning |
   | `ENABLE_AUTO_REGISTRATION` is off or `ALLOW_ONLY_INTERNAL_REGISTRATION` is on: a Keycloak user without an account gets a page to link a local account with its password | Warning |
 
@@ -309,11 +311,27 @@ controls that it uses. Read [architecture.md](architecture.md) first.
   an unknown key. The sidecar runs as the Forgejo user with the
   configuration directory read-only, never stops because of the file, and
   has no readiness probe, so that it cannot stop Forgejo. The end-to-end
-  test writes `ACCOUNT_LINKING = auto`, and then
-  `ALLOW_ONLY_EXTERNAL_REGISTRATION = false`, into the file of the running
-  pod and checks the errors. The local accounts (the administrator and
-  the bots) can still sign in with a password (`ENABLE_INTERNAL_SIGNIN`);
-  the guard does not check this, because they are necessary.
+  test writes `ACCOUNT_LINKING = auto`,
+  `ALLOW_ONLY_EXTERNAL_REGISTRATION = false` and
+  `ENABLE_INTERNAL_SIGNIN = true` into the file of the running pod and
+  checks the errors.
+- **Passwords in Forgejo.** The OAuth2 source of Forgejo also accepts the
+  Forgejo password of its users, and by default a Keycloak user without a
+  password can set one in the account settings. With that password, the
+  person signs in without Keycloak, also after Keycloak disabled the
+  person, and keeps the administrator flag that the last Keycloak sign-in
+  gave. Thus the web form accepts no passwords (`ENABLE_INTERNAL_SIGNIN =
+  false`), and Keycloak users cannot set one (`manage_password` in
+  `EXTERNAL_USER_DISABLE_FEATURES`). The local administrator and the bots
+  of Squared and Argo CD use the API: basic authentication with the
+  password (`ENABLE_BASIC_AUTHENTICATION` stays on) or tokens. In an
+  emergency, use the API, or the command line in the pod (`forgejo admin
+  user ...`). If you turn on the web form for a short time, the guard
+  reports an error until you turn it off. The end-to-end test checks that
+  the sign-in page has no password form and that `dev` cannot set a
+  password. Limits: the guard does not see passwords that Keycloak users
+  set before this setting, nor the personal access tokens of users; both
+  work without Keycloak. SSH is off in the development environment.
 
 ### Passwords and tokens of Squared
 

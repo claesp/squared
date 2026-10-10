@@ -180,6 +180,22 @@ check_forgejo_linking() {
   log "Forgejo finds accounts by the Keycloak user ID, not by the user name or the email address"
 }
 
+# check_forgejo_passwords checks that nobody signs in to Forgejo with a
+# password on the web: the sign-in page has only the Keycloak button, and
+# a Keycloak user cannot set a Forgejo password.
+check_forgejo_passwords() {
+  local page out
+  page="$(curl -fsS "${FORGEJO_URL}/user/login")"
+  grep -q '/user/oauth2/keycloak' <<<"$page" || die "Forgejo: the sign-in page has no Keycloak button"
+  ! grep -q 'id="user_name"' <<<"$page" || die "Forgejo: the sign-in page has a form for a password"
+  out="$("$SSO" -user dev -password-file "$DEV/keycloak-dev-user-password" \
+    "login=${FORGEJO_URL}/user/oauth2/keycloak" "get=${FORGEJO_URL}/user/settings/account")" || die "the sign-in of dev to Forgejo failed"
+  jq -s -e '.[1].status == 200 and (.[1].body | contains("/user/settings/account/email"))' <<<"$out" >/dev/null \
+    || die "Forgejo: dev cannot open the account settings"
+  jq -s -e '.[1].body | contains("id=\"retype\"") | not' <<<"$out" >/dev/null || die "Forgejo: dev can set a Forgejo password"
+  log "Forgejo accepts no passwords on the web, and Keycloak users cannot set one"
+}
+
 # kc_token USER PASSWORD prints a Keycloak access token for the API. It
 # uses the password grant of the development client "squared-cli".
 # dev_access prints the HTTP status of the Harbor project and of the
@@ -442,6 +458,8 @@ YAML
   guard_reports_app_ini 'ACCOUNT_LINKING = disabled' 'ACCOUNT_LINKING = auto' 'ACCOUNT_LINKING is auto: [^;]*[(]after the next start[)]'
   guard_reports_app_ini 'ALLOW_ONLY_EXTERNAL_REGISTRATION = true' 'ALLOW_ONLY_EXTERNAL_REGISTRATION = false' \
     'local registration is open[^;]*[(]after the next start[)]'
+  guard_reports_app_ini 'ENABLE_INTERNAL_SIGNIN = false' 'ENABLE_INTERNAL_SIGNIN = true' \
+    'ENABLE_INTERNAL_SIGNIN is on[^;]*[(]after the next start[)]'
   log "the guard checks the sign-in and registration settings of Forgejo"
 
   # A change of the administrator group in Harbor, through the API as in
@@ -510,6 +528,7 @@ check_sso dev "$DEV/keycloak-dev-user-password" false
 
 step "Forgejo accounts belong to Keycloak users"
 check_forgejo_linking
+check_forgejo_passwords
 
 step "make tenant $TENANT"
 api POST /tenants "$(jq -n --arg s "$TENANT" --arg o "$ADMIN_EMAIL" \

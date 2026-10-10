@@ -11,9 +11,11 @@ import (
 )
 
 // forgejoKnownKeys are the keys of the sign-in sections in Forgejo 15
-// (modules/setting/oauth2.go, service.go and mailer.go). Forgejo reads key
+// (modules/setting/admin.go, oauth2.go, service.go and mailer.go). Forgejo reads key
 // names with the exact case.
 var forgejoKnownKeys = map[string][]string{
+	"admin": {"DEFAULT_EMAIL_NOTIFICATIONS", "DISABLE_REGULAR_ORG_CREATION", "EXTERNAL_USER_DISABLE_FEATURES",
+		"SEND_NOTIFICATION_EMAIL_ON_NEW_USER", "USER_DISABLED_FEATURES"},
 	"oauth2_client": {"ACCOUNT_LINKING", "ENABLE_AUTO_REGISTRATION", "OPENID_CONNECT_SCOPES",
 		"REGISTER_EMAIL_CONFIRM", "UPDATE_AVATAR", "USERNAME"},
 	"openid": {"BLACKLISTED_URIS", "ENABLE_OPENID_SIGNIN", "ENABLE_OPENID_SIGNUP", "WHITELISTED_URIS"},
@@ -36,10 +38,10 @@ var forgejoKnownKeys = map[string][]string{
 }
 
 // signInLike matches the names of keys that can change who can sign in or
-// make an account. An unknown key in [service] with such a name is an
-// error; other unknown keys of [service] are warnings. All unknown keys of
-// [oauth2_client] and [openid] are errors.
-var signInLike = regexp.MustCompile(`(?i)regist|sign_?up|sign_?in|login|auth|link|external|internal|proxy|openid|account|passw`)
+// make an account. An unknown key in [service] or [admin] with such a name
+// is an error; other unknown keys of these sections are warnings. All
+// unknown keys of [oauth2_client] and [openid] are errors.
+var signInLike = regexp.MustCompile(`(?i)regist|sign_?up|sign_?in|login|auth|link|external|internal|proxy|openid|account|passw|featur`)
 
 // iniBool reads a boolean as go-ini does for Forgejo (MustBool): an
 // empty or not valid value gives def.
@@ -65,6 +67,11 @@ type forgejoSignIn struct {
 	openIDSignUp        bool
 	reverseProxyAuth    bool // ENABLE_REVERSE_PROXY_AUTHENTICATION or _API
 	reverseProxyNew     bool // ENABLE_REVERSE_PROXY_AUTO_REGISTRATION
+	internalSignIn      bool // ENABLE_INTERNAL_SIGNIN: the web form accepts passwords.
+	// externalPasswords tells that Keycloak users can set a Forgejo
+	// password: "manage_password" is not in USER_DISABLED_FEATURES or
+	// EXTERNAL_USER_DISABLE_FEATURES.
+	externalPasswords bool
 }
 
 func forgejoSignInFrom(s map[string]map[string]string) forgejoSignIn {
@@ -89,7 +96,22 @@ func forgejoSignInFrom(s map[string]map[string]string) forgejoSignIn {
 	f.reverseProxyAuth = iniBool(svc["ENABLE_REVERSE_PROXY_AUTHENTICATION"], false) ||
 		iniBool(svc["ENABLE_REVERSE_PROXY_AUTHENTICATION_API"], false)
 	f.reverseProxyNew = iniBool(svc["ENABLE_REVERSE_PROXY_AUTO_REGISTRATION"], false)
+	f.internalSignIn = iniBool(svc["ENABLE_INTERNAL_SIGNIN"], true)
+	adm := s["admin"]
+	f.externalPasswords = !slices.Contains(iniList(adm["USER_DISABLED_FEATURES"]), "manage_password") &&
+		!slices.Contains(iniList(adm["EXTERNAL_USER_DISABLE_FEATURES"]), "manage_password")
 	return f
+}
+
+// iniList reads a list with commas as go-ini does for Forgejo (Strings).
+func iniList(v string) []string {
+	var out []string
+	for _, item := range strings.Split(v, ",") {
+		if item = strings.TrimSpace(item); item != "" {
+			out = append(out, item)
+		}
+	}
+	return out
 }
 
 // problems returns the settings that let a person get an account or the
@@ -107,6 +129,12 @@ func (f forgejoSignIn) problems() []string {
 	}
 	if f.openIDSignIn && f.openIDSignUp {
 		p = append(p, "ENABLE_OPENID_SIGNUP is on: anybody with an OpenID 2.0 provider can make an account")
+	}
+	if f.internalSignIn {
+		p = append(p, "ENABLE_INTERNAL_SIGNIN is on: the web sign-in form accepts passwords, thus local accounts, and Keycloak users with a Forgejo password, sign in without Keycloak")
+	}
+	if f.externalPasswords {
+		p = append(p, "Keycloak users can set a Forgejo password (manage_password is not in EXTERNAL_USER_DISABLE_FEATURES of [admin]): Forgejo accepts it for API basic authentication, and for the web form if ENABLE_INTERNAL_SIGNIN is on, also after Keycloak disabled the user")
 	}
 	if f.reverseProxyAuth {
 		p = append(p, "reverse proxy authentication is on: Forgejo accepts the user name in a header from every client that can connect to it")
@@ -166,7 +194,7 @@ func checkForgejoSignIn(rep forgejo.ConfigReport, ignore []string) ([]string, er
 				continue
 			}
 			msg := fmt.Sprintf("unknown key %s (a new or renamed setting, or a key that Forgejo does not read because of its case)", name)
-			if section == "service" && !signInLike.MatchString(k) {
+			if (section == "service" || section == "admin") && !signInLike.MatchString(k) {
 				warnings = append(warnings, "Forgejo app.ini has the "+msg+"; check it, then add it to ignoreFields")
 			} else {
 				problems = append(problems, msg)

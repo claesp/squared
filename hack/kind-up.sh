@@ -437,7 +437,7 @@ Keycloak users:
 
 Local emergency accounts:
   Keycloak  ${KEYCLOAK_URL}   admin / $(secret keycloak-admin-password)   (administration console)
-  Forgejo   forgejo-admin / $(secret forgejo-admin-password)
+  Forgejo   forgejo-admin / $(secret forgejo-admin-password)   (API only; the web form accepts no passwords)
   Harbor    admin / $(secret harbor-admin-password)
   Argo CD   admin / $(k -n argocd get secret argocd-initial-admin-secret -o jsonpath='{.data.password}' | base64 -d)
 

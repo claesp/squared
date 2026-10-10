@@ -47,6 +47,15 @@ gitea:
       ALLOW_ONLY_EXTERNAL_REGISTRATION: true
       SHOW_REGISTRATION_BUTTON: false
       REQUIRE_SIGNIN_VIEW: true
+      # The web form accepts no passwords: people sign in only with
+      # Keycloak. The local administrator and the bots use the API (basic
+      # authentication or tokens) and the command line in the pod.
+      ENABLE_INTERNAL_SIGNIN: false
+    admin:
+      # Keycloak users cannot set a Forgejo password. Forgejo would accept
+      # it for API basic authentication, also after Keycloak disabled the
+      # user.
+      EXTERNAL_USER_DISABLE_FEATURES: manage_password
     openid:
       ENABLE_OPENID_SIGNIN: false
       ENABLE_OPENID_SIGNUP: false

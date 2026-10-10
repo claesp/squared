@@ -101,7 +101,10 @@ For the copy of tenant members (decision D13 in the architecture):
 3. Set the `SQUARED_KEYCLOAK_*` variables of the worker.
 4. In Forgejo, make the bot of the worker an administrator and give its
    token the scope `write:admin`. In `[oauth2_client]`, set
-   `ACCOUNT_LINKING = disabled` and `USERNAME = nickname`. Set
+   `ACCOUNT_LINKING = disabled` and `USERNAME = nickname`. In `[service]`,
+   set `ENABLE_INTERNAL_SIGNIN = false`; in `[admin]`, set
+   `EXTERNAL_USER_DISABLE_FEATURES = manage_password`. The local
+   administrator then uses only the API and the command line in the pod. Set
    `SQUARED_FORGEJO_AUTH_SOURCE_ID` of the worker to the ID of the Keycloak
    authentication source (`forgejo admin auth list`).
 5. If Forgejo has accounts from an earlier version of Squared, which

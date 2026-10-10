@@ -62,6 +62,8 @@ RECAPTCHA_SECRET = s3cret-captcha
 ACCOUNT_LINKING = disabled
 [openid]
 ENABLE_OPENID_SIGNIN = false
+[admin]
+EXTERNAL_USER_DISABLE_FEATURES = manage_password
 [database]
 PASSWD = s3cret-db
 `)
@@ -79,6 +81,7 @@ PASSWD = s3cret-db
 		"service": {"DISABLE_REGISTRATION": "false", "ALLOW_ONLY_EXTERNAL_REGISTRATION": "true",
 			"RECAPTCHA_SECRET": HiddenValue}, // The name, not the value.
 		"security": {"INSTALL_LOCK": "true"}, // Only this key.
+		"admin":    {"EXTERNAL_USER_DISABLE_FEATURES": "manage_password"},
 	}
 	for section, values := range want {
 		if !maps.Equal(rep.Start[section], values) {

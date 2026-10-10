@@ -75,8 +75,10 @@ type reportedSection struct {
 // settings. [service] has secrets (for example RECAPTCHA_SECRET), thus the
 // reporter serves its key names, but only the values of the sign-in and
 // registration settings. Of [security], it serves only INSTALL_LOCK, which
-// changes the default of ENABLE_OPENID_SIGNIN.
+// changes the default of ENABLE_OPENID_SIGNIN. [admin] has the features
+// that users cannot use, for example "manage_password".
 var signInSections = []reportedSection{
+	{name: "admin"},
 	{name: "oauth2_client"},
 	{name: "openid"},
 	{name: "service", values: []string{

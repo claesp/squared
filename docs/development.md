@@ -99,7 +99,7 @@ Forgejo. After a change of that role, run
 | Squared | http://localhost:30080 | Keycloak |
 | Argo CD | http://localhost:30081 | Keycloak, or the local `admin` account |
 | Harbor | http://localhost:30002 | Keycloak, or the local `admin` account |
-| Forgejo | http://forgejo.localhost:30300 | Keycloak, or the local `forgejo-admin` account |
+| Forgejo | http://forgejo.localhost:30300 | Keycloak. The local `forgejo-admin` account works only with the API: the web form accepts no passwords. |
 | Keycloak | http://keycloak.localhost:30180 | `admin` (administration console, realm `master`) |
 
 Sign in with the Keycloak user `platform-admin` (an administrator in all
@@ -225,9 +225,9 @@ all `*.localhost` names.
    command line, which writes the same table as the web interface. Then it
    renames the field `AdminGroup` in the database, as an upgrade could, and
    checks that the guard reports it and keeps the protection. It writes
-   `ACCOUNT_LINKING = auto`, and then
-   `ALLOW_ONLY_EXTERNAL_REGISTRATION = false`, into `app.ini` of the
-   running Forgejo pod and checks that the guard reports them. It does the
+   `ACCOUNT_LINKING = auto`, `ALLOW_ONLY_EXTERNAL_REGISTRATION = false`
+   and `ENABLE_INTERNAL_SIGNIN = true` into `app.ini` of the running
+   Forgejo pod and checks that the guard reports them. It does the
    same for Harbor: it changes the administrator group through the Harbor
    API, then renames the key `oidc_admin_group` in the database.
 5. Signs in to Argo CD, Harbor and Forgejo through Keycloak as both users,
@@ -235,7 +235,8 @@ all `*.localhost` names.
    to Forgejo as two new Keycloak users with the address
    `dev@e2e-intruder.test` and with the name and address of the local
    Forgejo administrator, and checks that neither gets an existing
-   account.
+   account. It checks that the Forgejo sign-in page has no password form
+   and that `dev` cannot set a Forgejo password.
 6. Makes a tenant, adds `dev` as developer, and waits until `dev` has the
    Harbor project and can read the Forgejo repository.
 7. Pushes the example image as `dev` with the Harbor CLI secret.

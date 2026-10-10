@@ -59,14 +59,7 @@ func forgejoInitGroups(script string) []string {
 			}
 		}
 		for _, m := range forgejoTeamMap.FindAllStringSubmatch(line, -1) {
-			raw := strings.ReplaceAll(m[1], `\"`, `"`)
-			var mapping map[string]any
-			if json.Unmarshal([]byte(raw), &mapping) != nil {
-				continue
-			}
-			for g := range mapping {
-				groups = append(groups, g)
-			}
+			groups = append(groups, teamMapGroups(strings.ReplaceAll(m[1], `\"`, `"`))...)
 		}
 	}
 	return groups
@@ -82,4 +75,19 @@ func splitGroups(v string) []string {
 		}
 	}
 	return out
+}
+
+// teamMapGroups returns the groups of a Forgejo group to team map, which
+// is JSON: {"/group": {"org": ["team"]}}. A value that is not valid JSON
+// gives no groups.
+func teamMapGroups(raw string) []string {
+	var mapping map[string]any
+	if strings.TrimSpace(raw) == "" || json.Unmarshal([]byte(raw), &mapping) != nil {
+		return nil
+	}
+	groups := make([]string, 0, len(mapping))
+	for g := range mapping {
+		groups = append(groups, g)
+	}
+	return groups
 }

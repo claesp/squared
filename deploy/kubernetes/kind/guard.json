@@ -10,6 +10,8 @@
      "user": "robot$squared-guard", "passwordFile": "/etc/squared/secrets/harbor-robot-password"},
     {"type": "configmap", "service": "Harbor", "namespace": "harbor", "name": "harbor-oidc", "key": "oidc_admin_group"},
     {"type": "configmap", "service": "Squared", "namespace": "squared", "selector": "squared.dev/config=true", "key": "SQUARED_OIDC_ADMIN_GROUP"},
-    {"type": "forgejo-init", "service": "Forgejo", "namespace": "forgejo", "name": "forgejo-init"}
+    {"type": "forgejo-database", "service": "Forgejo",
+     "url": "postgres://squared_guard@forgejo-db.forgejo.svc.cluster.local:5432/forgejo?sslmode=disable",
+     "passwordFile": "/etc/squared/secrets/forgejo-db-password"}
   ]
 }

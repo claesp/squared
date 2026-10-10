@@ -125,6 +125,10 @@ forwarder sidecar (`socat`) in the repository server thus listens on
 127.0.0.1:30300 and forwards to the Forgejo service. All other clients are
 Go programs, which ask DNS.
 
+Forgejo uses its own PostgreSQL database in the namespace `forgejo`
+(`deploy/kind/forgejo-db.yaml`). The guard reads the authentication sources
+from a view in this database (see [security.md](security.md)).
+
 The Kind node pulls images from Harbor at `localhost:30002` over plain
 HTTP. The script writes a containerd `hosts.toml` file in the node for
 this. Kube-proxy runs in iptables mode, because only that mode answers on
@@ -202,7 +206,9 @@ all `*.localhost` names.
    subgroup named `squared-admins` gives no rights.
 4. Checks that the guard sees `/squared-admins` in the configurations of
    all four services, that a new group in the Argo CD RBAC is made and
-   protected, and that it is released when the line goes.
+   protected, and that it is released when the line goes. It does the same
+   with a change of the Forgejo administrator group through the Forgejo
+   command line, which writes the same table as the web interface.
 5. Signs in to Argo CD, Harbor and Forgejo through Keycloak as both users,
    and checks the administrator rights in each service.
 6. Makes a tenant, adds `dev` as developer, and waits until `dev` has the

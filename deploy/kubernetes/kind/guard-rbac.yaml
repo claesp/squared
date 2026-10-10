@@ -43,28 +43,6 @@ roleRef: { apiGroup: rbac.authorization.k8s.io, kind: Role, name: squared-guard 
 subjects:
   - { kind: ServiceAccount, name: squared-guard, namespace: squared-guard }
 ---
-# The init script of the Forgejo Helm chart is in a secret. It contains
-# commands and the names of environment variables, not the secrets.
-apiVersion: rbac.authorization.k8s.io/v1
-kind: Role
-metadata:
-  name: squared-guard
-  namespace: forgejo
-rules:
-  - apiGroups: [""]
-    resources: ["secrets"]
-    resourceNames: ["forgejo-init"]
-    verbs: ["get"]
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
-metadata:
-  name: squared-guard
-  namespace: forgejo
-roleRef: { apiGroup: rbac.authorization.k8s.io, kind: Role, name: squared-guard }
-subjects:
-  - { kind: ServiceAccount, name: squared-guard, namespace: squared-guard }
----
 # The configuration of Squared has a hash in its name, thus the guard
 # lists the ConfigMaps with the label squared.dev/config.
 apiVersion: rbac.authorization.k8s.io/v1

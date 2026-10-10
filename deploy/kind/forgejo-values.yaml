@@ -19,6 +19,13 @@ gitea:
     username: forgejo-admin
     email: forgejo-admin@local.invalid
     passwordMode: keepUpdated
+  # The database password comes from the secret forgejo-db.
+  additionalConfigFromEnvs:
+    - name: FORGEJO__DATABASE__PASSWD
+      valueFrom:
+        secretKeyRef:
+          name: forgejo-db
+          key: password
   # Sign-in with Keycloak. The chart makes the authentication source at
   # start. Members of the Keycloak group squared-admins are Forgejo
   # administrators.
@@ -51,8 +58,15 @@ gitea:
       # their first sign-in. Forgejo links them by the email address.
       ACCOUNT_LINKING: auto
       UPDATE_AVATAR: false
+    # PostgreSQL (deploy/kind/forgejo-db.yaml). The guard reads the
+    # authentication sources from a view in this database, also after a
+    # change in the Forgejo web interface.
     database:
-      DB_TYPE: sqlite3
+      DB_TYPE: postgres
+      HOST: forgejo-db.forgejo.svc.cluster.local:5432
+      NAME: forgejo
+      USER: forgejo
+      SSL_MODE: disable
     webhook:
       # Allow the push webhook to Argo CD inside the cluster.
       ALLOWED_HOST_LIST: "*.svc.cluster.local"

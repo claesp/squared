@@ -130,14 +130,21 @@ permission `protected-groups` up to date. To install it in production:
    Keycloak grants a scope only if all permissions for the same resources
    grant it, and admin permissions accept only that strategy, thus two such
    permissions block each other.
-3. Make a Harbor robot account at system level with the permissions "list
+3. If Forgejo uses PostgreSQL, run
+   [`deploy/kind/forgejo-guard-view.sql`](../deploy/kind/forgejo-guard-view.sql)
+   as the owner of the Forgejo tables, after Forgejo made them, and set a
+   password for the role `squared_guard`. Permit connections from the guard
+   to the database. Before a Forgejo upgrade that changes the table
+   `login_source`, drop the view; run the file again after the upgrade.
+   Without database access, use the source type `forgejo-init`.
+4. Make a Harbor robot account at system level with the permissions "list
    projects" and "list members" of all projects.
-4. Write the configuration file (see [configuration.md](configuration.md))
+5. Write the configuration file (see [configuration.md](configuration.md))
    with a source for each service that gives rights to groups.
-5. Give the service account of the guard read access to the objects of
+6. Give the service account of the guard read access to the objects of
    the sources (see
    [`deploy/kubernetes/kind/guard-rbac.yaml`](../deploy/kubernetes/kind/guard-rbac.yaml)).
-6. Run one replica. `GET /status` on port 8082 shows the protected groups,
+7. Run one replica. `GET /status` on port 8082 shows the protected groups,
    the places that refer to them, the errors and the warnings of the last
    run.
 

@@ -128,7 +128,8 @@ is a complete example.
 | `argocd-projects` | `namespace` | Groups of the roles of all AppProjects, except the tenant groups in the role `member` of their own tenant project. |
 | `harbor-members` | `url`, `user`, `passwordFile` | Group members of all projects, except the tenant groups in their own tenant project. A robot account with "list projects" and "list members" is enough. |
 | `configmap` | `namespace`, `name` or `selector`, `key` | Group paths in one key, separated by commas or white space. |
-| `forgejo-init` | `namespace`, `name`, `key` (default `configure_gitea.sh`) | `--admin-group`, `--restricted-group` and the keys of `--group-team-map` in the init script of the Forgejo Helm chart. |
+| `forgejo-database` | `url` (PostgreSQL, without password), `passwordFile`, `name` (default `squared_guard_auth_sources`) | The administrator, restricted and team map groups of all OAuth authentication sources, from the view of [`forgejo-guard-view.sql`](../deploy/kind/forgejo-guard-view.sql). Sees changes in the web interface. |
+| `forgejo-init` | `namespace`, `name`, `key` (default `configure_gitea.sh`) | `--admin-group`, `--restricted-group` and the keys of `--group-team-map` in the init script of the Forgejo Helm chart. Use it only if the guard cannot reach the Forgejo database: it does not see changes in the web interface. |
 
 All groups are full paths, for example `/squared-admins`. The guard warns
 about a short name: it never matches the groups claim.

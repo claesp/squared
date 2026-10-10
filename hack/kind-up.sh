@@ -54,6 +54,11 @@ install_charts() {
     --wait --timeout 10m >/dev/null
 
   k create namespace forgejo --dry-run=client -o yaml | k apply -f - >/dev/null
+  log "installing the Forgejo database"
+  k -n forgejo create secret generic forgejo-db --from-literal="password=$(secret forgejo-db-password)" \
+    --dry-run=client -o yaml | k apply -f - >/dev/null
+  k apply -f "$ROOT/deploy/kind/forgejo-db.yaml" >/dev/null
+  k -n forgejo rollout status statefulset/forgejo-db --timeout 5m >/dev/null
   k -n forgejo create secret generic forgejo-oauth --from-literal=key=forgejo \
     --from-literal="secret=$(secret keycloak-forgejo-client-secret)" --dry-run=client -o yaml | k apply -f - >/dev/null
   log "installing Forgejo $FORGEJO_CHART_VERSION"
@@ -155,6 +160,19 @@ deploy_keycloak() {
   k apply -k "$ROOT/deploy/kind/keycloak" >/dev/null
   k -n keycloak rollout status deployment/keycloak --timeout 10m >/dev/null
   wait_http "${KEYCLOAK_URL}/realms/squared/.well-known/openid-configuration"
+}
+
+# setup_forgejo_guard gives the guard read access to the group settings
+# of the Forgejo authentication sources: a view without the client secrets,
+# and a role that can read only that view.
+setup_forgejo_guard() {
+  log "giving the guard read access to the Forgejo authentication sources"
+  k -n forgejo exec -i statefulset/forgejo-db -- psql -q -U forgejo -d forgejo -v ON_ERROR_STOP=1 \
+    < "$ROOT/deploy/kind/forgejo-guard-view.sql" >/dev/null
+  k -n forgejo exec -i statefulset/forgejo-db -- psql -q -U forgejo -d forgejo -v ON_ERROR_STOP=1 \
+    -v "pw=$(secret forgejo-db-guard-password)" >/dev/null <<'SQL'
+ALTER ROLE squared_guard PASSWORD :'pw';
+SQL
 }
 
 # setup_harbor makes Keycloak the authentication of Harbor. The settings
@@ -349,6 +367,7 @@ deploy_squared() {
   k -n squared-guard create secret generic squared-guard \
     --from-literal="keycloak-client-secret=$(secret keycloak-squared-guard-client-secret)" \
     --from-literal="harbor-robot-password=$(secret harbor-guard-robot-password)" \
+    --from-literal="forgejo-db-password=$(secret forgejo-db-guard-password)" \
     --dry-run=client -o yaml | k apply -f - >/dev/null
   "$ROOT/hack/kind-deploy.sh"
 }
@@ -359,6 +378,7 @@ deploy_keycloak
 setup_keycloak_permissions
 install_charts
 setup_forgejo
+setup_forgejo_guard
 setup_harbor
 setup_argocd
 deploy_squared

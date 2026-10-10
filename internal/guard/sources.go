@@ -8,6 +8,9 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"time"
+
+	"github.com/jackc/pgx/v5"
 
 	"squared/internal/domain"
 	"squared/internal/gitops"
@@ -39,6 +42,8 @@ type SourceConfig struct {
 	//   harbor-members   group members of all Harbor projects (URL, User, PasswordFile)
 	//   configmap        group paths in a ConfigMap key (Namespace, Name or Selector, Key)
 	//   forgejo-init     the init script of the Forgejo Helm chart (Namespace, Name, Key)
+	//   forgejo-database the authentication sources in the Forgejo database, through a
+	//                    view that has only the group settings (URL, PasswordFile, Name)
 	Type         string `json:"type"`
 	Service      string `json:"service"`
 	Namespace    string `json:"namespace,omitempty"`
@@ -93,6 +98,14 @@ func BuildSources(cfg *FileConfig, kc *kube.Client) ([]Source, error) {
 				return nil, fmt.Errorf("source %d: configmap needs a key and either a name or a selector", i)
 			}
 			sources = append(sources, &configMapSource{sc: sc, kube: kc})
+		case "forgejo-database":
+			if sc.URL == "" || sc.PasswordFile == "" {
+				return nil, fmt.Errorf("source %d: forgejo-database needs url and passwordFile", i)
+			}
+			if sc.Name == "" {
+				sc.Name = "squared_guard_auth_sources"
+			}
+			sources = append(sources, &forgejoDatabaseSource{sc: sc})
 		case "forgejo-init":
 			if sc.Key == "" {
 				sc.Key = "configure_gitea.sh"
@@ -278,4 +291,61 @@ func (s *forgejoInitSource) References(ctx context.Context) ([]Reference, error)
 		refs = append(refs, Reference{Group: g, Service: s.sc.Service, Where: s.sc.Namespace + "/" + s.sc.Name + " " + s.sc.Key})
 	}
 	return refs, nil
+}
+
+// forgejoDatabaseSource reads the group settings of the OAuth
+// authentication sources from a view in the Forgejo database. It sees
+// changes in the Forgejo web interface, which the init script does not
+// have. See deploy/kind/forgejo-guard-view.sql.
+type forgejoDatabaseSource struct {
+	sc SourceConfig
+}
+
+func (s *forgejoDatabaseSource) Name() string { return s.sc.Service + " database" }
+
+func (s *forgejoDatabaseSource) References(ctx context.Context) ([]Reference, error) {
+	cfg, err := pgx.ParseConfig(s.sc.URL)
+	if err != nil {
+		return nil, fmt.Errorf("parse url: %w", err)
+	}
+	password, err := os.ReadFile(s.sc.PasswordFile)
+	if err != nil {
+		return nil, err
+	}
+	cfg.Password = strings.TrimSpace(string(password))
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	conn, err := pgx.ConnectConfig(ctx, cfg)
+	if err != nil {
+		return nil, fmt.Errorf("connect: %w", err)
+	}
+	defer conn.Close(context.Background())
+	rows, err := conn.Query(ctx, "SELECT name, is_active, admin_group, restricted_group, group_team_map FROM "+
+		pgx.Identifier{s.sc.Name}.Sanitize()+" ORDER BY id")
+	if err != nil {
+		return nil, fmt.Errorf("read %s: %w", s.sc.Name, err)
+	}
+	defer rows.Close()
+	var refs []Reference
+	for rows.Next() {
+		var name, admin, restricted, teamMap string
+		var active bool
+		if err := rows.Scan(&name, &active, &admin, &restricted, &teamMap); err != nil {
+			return nil, err
+		}
+		// An inactive source gives no rights now, but somebody can turn it
+		// on in the web interface. Thus its groups are protected too.
+		where := "authentication source " + name
+		// The administrator and the restricted group are single values.
+		groups := teamMapGroups(teamMap)
+		for _, g := range []string{admin, restricted} {
+			if g = strings.TrimSpace(g); g != "" {
+				groups = append(groups, g)
+			}
+		}
+		for _, g := range groups {
+			refs = append(refs, Reference{Group: g, Service: s.sc.Service, Where: where})
+		}
+	}
+	return refs, rows.Err()
 }

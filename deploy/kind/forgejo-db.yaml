@@ -1,0 +1,116 @@
+# PostgreSQL for Forgejo in the development environment. The guard reads
+# the authentication sources of Forgejo from a view in this database, with
+# a role that can read only that view (see setup_forgejo_guard in
+# hack/kind-up.sh). In production, use a managed database.
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: forgejo-db
+  namespace: forgejo
+  labels:
+    app.kubernetes.io/name: forgejo-db
+spec:
+  serviceName: forgejo-db
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: forgejo-db
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: forgejo-db
+    spec:
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 70
+        runAsGroup: 70
+        fsGroup: 70
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: postgres
+          image: docker.io/library/postgres:17-alpine@sha256:b0f9560a2de083e2cc7382e75f808c7381a32852a7ec49117deedb300e552b24
+          env:
+            - name: POSTGRES_USER
+              value: forgejo
+            - name: POSTGRES_DB
+              value: forgejo
+            - name: POSTGRES_PASSWORD_FILE
+              value: /etc/postgres/password
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
+          ports:
+            - name: postgres
+              containerPort: 5432
+          readinessProbe:
+            exec:
+              command: ["pg_isready", "-U", "forgejo", "-d", "forgejo"]
+            periodSeconds: 5
+          resources:
+            requests: { cpu: 50m, memory: 128Mi }
+            limits: { memory: 512Mi }
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql/data
+            - name: run
+              mountPath: /var/run/postgresql
+            - name: password
+              mountPath: /etc/postgres
+              readOnly: true
+      volumes:
+        - name: run
+          emptyDir: {}
+        - name: password
+          secret:
+            secretName: forgejo-db
+            items:
+              - { key: password, path: password }
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 1Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: forgejo-db
+  namespace: forgejo
+spec:
+  selector:
+    app.kubernetes.io/name: forgejo-db
+  ports:
+    - name: postgres
+      port: 5432
+      targetPort: postgres
+---
+# Only Forgejo and the guard can connect.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: forgejo-db
+  namespace: forgejo
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: forgejo-db
+  policyTypes: ["Ingress"]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: forgejo
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: squared-guard
+      ports:
+        - port: 5432

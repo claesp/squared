@@ -111,11 +111,19 @@ controls that it uses. Read [architecture.md](architecture.md) first.
 - **Limits of the guard.** It sees only the sources in its configuration.
   Change the administrator group of Harbor in the ConfigMap `harbor-oidc`,
   not in the Harbor web interface: a Harbor robot account cannot read the
-  Harbor configuration. Forgejo has no API for its authentication sources;
-  the guard reads the init script of the Helm chart, which Forgejo applies
-  at each start. A change in the Forgejo web interface is not visible to the
-  guard and is lost at the next start. The guard makes only top-level
-  groups. A group that becomes protected keeps the members that it had
+  Harbor configuration. The guard makes only top-level groups.
+- **Forgejo authentication sources.** Forgejo has no API for them, and a
+  change in the web interface is only in the table `login_source`. That
+  table also has the OAuth client secrets. Thus the guard gets a database
+  role, `squared_guard`, that can read only the view
+  `squared_guard_auth_sources`
+  ([`deploy/kind/forgejo-guard-view.sql`](../deploy/kind/forgejo-guard-view.sql)).
+  The view has the name, the active flag and the administrator, restricted
+  and team map groups of each OAuth source. A test checks that the role
+  cannot read the table and that the view has no secret. The guard also
+  protects the groups of inactive sources, because an administrator can
+  turn them on. The network policy of the database accepts only Forgejo
+  and the namespace of the guard. A group that becomes protected keeps the members that it had
   before; the guard warns about them.
 - **Full group paths.** The groups claim has full paths, for example
   `/squared-admins`, and all services compare the full path. Short names

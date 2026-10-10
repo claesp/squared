@@ -230,6 +230,18 @@ worker_may_add_dev() {
   curl -sS -o /dev/null -X DELETE -H "Authorization: Bearer $at" "$a/users/$dev/groups/$gid"
 }
 
+guard_protected() { [[ "$(worker_may_add_dev "$1")" == 403 ]]; }
+guard_released() { [[ "$(worker_may_add_dev "$1")" == 204 ]]; }
+
+# remove_group NAME removes a top-level Keycloak group.
+remove_group() {
+  local at gid
+  at="$(curl -fsS "${KEYCLOAK_URL}/realms/master/protocol/openid-connect/token" -d grant_type=password -d client_id=admin-cli \
+    -d username=admin --data-urlencode "password=$(secret keycloak-admin-password)" | jq -r .access_token)"
+  gid="$(curl -fsS -H "Authorization: Bearer $at" "${KEYCLOAK_URL}/admin/realms/squared/groups?search=$1&exact=true" | jq -r '.[0].id')"
+  curl -fsS -o /dev/null -X DELETE -H "Authorization: Bearer $at" "${KEYCLOAK_URL}/admin/realms/squared/groups/$gid"
+}
+
 check_guard() {
   local st service group="e2e-ops-$TENANT" policy
   # All four services refer to the administrator group.
@@ -244,18 +256,25 @@ check_guard() {
   policy="$(k -n argocd get configmap argocd-rbac-cm -o jsonpath='{.data.policy\.csv}')"
   k -n argocd patch configmap argocd-rbac-cm --type merge \
     -p "$(jq -n --arg p "$policy"$'\ng, /'"$group"$', role:readonly\n' '{data: {"policy.csv": $p}}')" >/dev/null
-  guard_protected() { [[ "$(worker_may_add_dev "$group")" == 403 ]]; }
-  wait_for "the guard made and protected /$group" 90 guard_protected
+  wait_for "the guard made and protected /$group" 90 guard_protected "$group"
   # Without the line, the group is not protected anymore.
   k -n argocd patch configmap argocd-rbac-cm --type merge -p "$(jq -n --arg p "$policy" '{data: {"policy.csv": $p}}')" >/dev/null
-  guard_released() { [[ "$(worker_may_add_dev "$group")" == 204 ]]; }
-  wait_for "the guard released /$group" 90 guard_released
-  local at gid
-  at="$(curl -fsS "${KEYCLOAK_URL}/realms/master/protocol/openid-connect/token" -d grant_type=password -d client_id=admin-cli \
-    -d username=admin --data-urlencode "password=$(secret keycloak-admin-password)" | jq -r .access_token)"
-  gid="$(curl -fsS -H "Authorization: Bearer $at" "${KEYCLOAK_URL}/admin/realms/squared/groups?search=$group&exact=true" | jq -r '.[0].id')"
-  curl -fsS -o /dev/null -X DELETE -H "Authorization: Bearer $at" "${KEYCLOAK_URL}/admin/realms/squared/groups/$gid"
+  wait_for "the guard released /$group" 90 guard_released "$group"
+  remove_group "$group"
   log "the guard follows the Argo CD RBAC configuration"
+
+  # A change of the administrator group in Forgejo, as in the web
+  # interface. The Forgejo command line writes the same database table.
+  local fgroup="e2e-forgejo-$TENANT" auth_id
+  forgejo_cli() { k -n forgejo exec deploy/forgejo -c forgejo -- gitea "$@"; }
+  auth_id="$(forgejo_cli admin auth list | awk '$2 == "keycloak" {print $1}')"
+  [[ -n "$auth_id" ]] || die "Forgejo has no authentication source keycloak"
+  forgejo_cli admin auth update-oauth --id "$auth_id" --admin-group "/$fgroup" >/dev/null
+  wait_for "the guard made and protected /$fgroup" 90 guard_protected "$fgroup"
+  forgejo_cli admin auth update-oauth --id "$auth_id" --admin-group "/squared-admins" >/dev/null
+  wait_for "the guard released /$fgroup" 90 guard_released "$fgroup"
+  remove_group "$fgroup"
+  log "the guard follows the Forgejo authentication sources, also changes outside the Helm chart"
 }
 
 kc_token() {

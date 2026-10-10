@@ -25,6 +25,21 @@ import (
 // database is removed when the test ends.
 func New(t testing.TB) *store.Store {
 	t.Helper()
+	st, err := store.Open(context.Background(), NewDatabase(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(st.Close)
+	if err := st.Migrate(context.Background(), Logger()); err != nil {
+		t.Fatal(err)
+	}
+	return st
+}
+
+// NewDatabase makes an empty database and returns its URL. The database is
+// removed when the test ends.
+func NewDatabase(t testing.TB) string {
+	t.Helper()
 	base := os.Getenv("SQUARED_TEST_DATABASE_URL")
 	if base == "" {
 		t.Skip("SQUARED_TEST_DATABASE_URL is not set")
@@ -50,15 +65,7 @@ func New(t testing.TB) *store.Store {
 		t.Fatalf("parse SQUARED_TEST_DATABASE_URL: %v", err)
 	}
 	u.Path = "/" + name
-	st, err := store.Open(ctx, u.String())
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(st.Close)
-	if err := st.Migrate(ctx, Logger()); err != nil {
-		t.Fatal(err)
-	}
-	return st
+	return u.String()
 }
 
 // Logger returns a logger that writes nothing.

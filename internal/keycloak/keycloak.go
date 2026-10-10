@@ -211,6 +211,7 @@ type User struct {
 	Email     string `json:"email"`
 	FirstName string `json:"firstName"`
 	LastName  string `json:"lastName"`
+	Enabled   bool   `json:"enabled"`
 }
 
 // UserByID returns the user with an ID. It returns ErrUserNotFound if the
@@ -225,6 +226,23 @@ func (c *Client) UserByID(ctx context.Context, id string) (*User, error) {
 		return nil, fmt.Errorf("read user %s: %w", id, err)
 	}
 	return &u, nil
+}
+
+// UserGroupPaths returns the full paths of the groups that the user is a
+// direct member of, as the groups claim has them.
+func (c *Client) UserGroupPaths(ctx context.Context, id string) ([]string, error) {
+	var groups []struct {
+		Path string `json:"path"`
+	}
+	path := "/users/" + url.PathEscape(id) + "/groups?briefRepresentation=true&first=0&max=1000"
+	if err := c.rest.Do(ctx, http.MethodGet, path, nil, &groups); err != nil {
+		return nil, fmt.Errorf("read groups of user %s: %w", id, err)
+	}
+	paths := make([]string, 0, len(groups))
+	for _, g := range groups {
+		paths = append(paths, g.Path)
+	}
+	return paths, nil
 }
 
 // GroupByPath returns the group with a full path, for example

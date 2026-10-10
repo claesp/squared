@@ -143,6 +143,8 @@ type stubClients struct {
 	clients []keycloak.ClientMappers
 	scopes  []keycloak.ClientScope
 	realm   keycloak.RealmEmail
+	users   map[string]keycloak.User
+	groups  map[string][]string
 }
 
 func (s stubClients) Clients(context.Context) ([]keycloak.ClientMappers, error) {
@@ -154,6 +156,17 @@ func (s stubClients) ClientScopes(context.Context) ([]keycloak.ClientScope, erro
 
 func (s stubClients) RealmEmailSettings(context.Context) (*keycloak.RealmEmail, error) {
 	return &s.realm, nil
+}
+
+func (s stubClients) UserByID(_ context.Context, id string) (*keycloak.User, error) {
+	if u, ok := s.users[id]; ok {
+		return &u, nil
+	}
+	return nil, keycloak.ErrUserNotFound
+}
+
+func (s stubClients) UserGroupPaths(_ context.Context, id string) ([]string, error) {
+	return s.groups[id], nil
 }
 
 func TestKeycloakMappersSource(t *testing.T) {

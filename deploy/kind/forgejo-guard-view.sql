@@ -1,4 +1,5 @@
--- Access of the Squared guard to the authentication sources of Forgejo.
+-- Access of the Squared guard to the authentication sources of Forgejo,
+-- and to the owners of personal access tokens.
 --
 -- Forgejo has no API for its authentication sources. A change in the
 -- Forgejo web interface is only in the table login_source. The column cfg
@@ -14,7 +15,7 @@
 --
 -- Run it as the owner of the Forgejo tables, after Forgejo made them. The
 -- password of the role is set separately. If an upgrade of Forgejo must
--- change a column that the view uses, drop the view, upgrade, and run this
+-- change a column that a view uses, drop the views, upgrade, and run this
 -- file again. The file works with PostgreSQL 13 and later.
 
 DO $$
@@ -53,3 +54,28 @@ FROM s;
 
 REVOKE ALL ON squared_guard_auth_sources FROM PUBLIC;
 GRANT SELECT ON squared_guard_auth_sources TO squared_guard;
+
+-- The owners of personal access tokens among the users of OAuth sources.
+-- A token works without the identity provider, thus the guard compares
+-- each owner with the user in Keycloak. The view has the number of the
+-- tokens and the time of the last use, never the tokens (or their hashes,
+-- salts or last characters). Local accounts are not in the view.
+DROP VIEW IF EXISTS squared_guard_token_owners;
+
+CREATE VIEW squared_guard_token_owners WITH (security_barrier) AS
+SELECT u.name                AS user_name,
+       u.login_source        AS login_source,
+       u.login_name          AS login_name,
+       u.is_admin            AS is_admin,
+       u.is_active           AS is_active,
+       u.prohibit_login      AS prohibit_login,
+       count(t.id)           AS tokens,
+       max(t.updated_unix)   AS last_used_unix
+FROM "user" u
+JOIN access_token t ON t.uid = u.id
+JOIN login_source s ON s.id = u.login_source AND s.type = 6
+WHERE u.type = 0 -- Individual users, not organizations.
+GROUP BY u.id, u.name, u.login_source, u.login_name, u.is_admin, u.is_active, u.prohibit_login;
+
+REVOKE ALL ON squared_guard_token_owners FROM PUBLIC;
+GRANT SELECT ON squared_guard_token_owners TO squared_guard;

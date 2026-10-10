@@ -141,6 +141,10 @@ check_sso() {
   log "$user signs in to Argo CD, Harbor and Forgejo with one Keycloak session (administrator: $admin)"
 }
 
+# fj_admin PATH [CURL OPTIONS] calls the Forgejo API as the local
+# administrator.
+fj_admin() { curl -fsS -u "forgejo-admin:$(secret forgejo-admin-password)" "${FORGEJO_URL}/api/v1$1" "${@:2}"; }
+
 # check_forgejo_linking signs in to Forgejo as two new Keycloak users who
 # try to get existing Forgejo accounts:
 #   - e2e-intruder has the address dev@e2e-intruder.test. Forgejo must not
@@ -154,7 +158,6 @@ check_forgejo_linking() {
     -d username=admin --data-urlencode "password=$(secret keycloak-admin-password)" | jq -r .access_token)"
   openssl rand -base64 24 | tr -d '/+=\n' > "$pw"
   source_id="$(k -n forgejo exec deploy/forgejo -c forgejo -- gitea admin auth list | awk '$2 == "keycloak" {print $1}')"
-  fj_admin() { curl -fsS -u "forgejo-admin:$(secret forgejo-admin-password)" "${FORGEJO_URL}/api/v1$1" "${@:2}"; }
   for user in e2e-intruder forgejo-admin; do
     email="dev@e2e-intruder.test"
     [[ "$user" == forgejo-admin ]] && email="$(fj_admin /users/forgejo-admin | jq -r .email)"
@@ -194,6 +197,35 @@ check_forgejo_passwords() {
     || die "Forgejo: dev cannot open the account settings"
   jq -s -e '.[1].body | contains("id=\"retype\"") | not' <<<"$out" >/dev/null || die "Forgejo: dev can set a Forgejo password"
   log "Forgejo accepts no passwords on the web, and Keycloak users cannot set one"
+}
+
+# check_forgejo_tokens makes a personal access token for dev, as dev can
+# in the Forgejo settings. A token works without Keycloak, thus the guard
+# must report it when Keycloak disables dev, and when dev is a Forgejo
+# administrator without the Keycloak group.
+check_forgejo_tokens() {
+  local at kc_api="${KEYCLOAK_URL}/admin/realms/squared" id user
+  k -n forgejo exec deploy/forgejo -c forgejo -- gitea admin user generate-access-token \
+    --username dev --token-name e2e-guard --scopes read:user --raw >/dev/null || die "cannot make a Forgejo token for dev"
+  wait_for "the guard has no errors with the token of dev" 60 guard_clean
+  at="$(curl -fsS "${KEYCLOAK_URL}/realms/master/protocol/openid-connect/token" -d grant_type=password -d client_id=admin-cli \
+    -d username=admin --data-urlencode "password=$(secret keycloak-admin-password)" | jq -r .access_token)"
+  id="$(curl -fsS -H "Authorization: Bearer $at" "$kc_api/users?username=dev&exact=true" | jq -r '.[0].id')"
+  user="$(curl -fsS -H "Authorization: Bearer $at" "$kc_api/users/$id")"
+  guard_reports_keycloak "/users/$id" "$(jq '.enabled = false' <<<"$user")" "$user" \
+    'Forgejo user dev has personal access tokens [^;]*but Keycloak disabled the user'
+
+  fj_admin /admin/users/dev -X PATCH -H 'Content-Type: application/json' -d '{"admin": true}' >/dev/null
+  guard_reports_admin() {
+    guard_status | jq -e '[.errors[]? | select(test("Forgejo user dev is a Forgejo administrator, but not a member of /squared-admins"))] | length > 0' >/dev/null
+  }
+  wait_for "the guard reports the administrator flag of dev with a token" 60 guard_reports_admin
+  fj_admin /admin/users/dev -X PATCH -H 'Content-Type: application/json' -d '{"admin": false}' >/dev/null
+  wait_for "the guard has no errors without the administrator flag" 60 guard_clean
+
+  k -n forgejo exec -i statefulset/forgejo-db -- psql -q -U forgejo -d forgejo -v ON_ERROR_STOP=1 \
+    -c "DELETE FROM access_token WHERE name = 'e2e-guard'" >/dev/null
+  log "the guard checks the personal access tokens of Forgejo against Keycloak"
 }
 
 # kc_token USER PASSWORD prints a Keycloak access token for the API. It
@@ -529,6 +561,7 @@ check_sso dev "$DEV/keycloak-dev-user-password" false
 step "Forgejo accounts belong to Keycloak users"
 check_forgejo_linking
 check_forgejo_passwords
+check_forgejo_tokens
 
 step "make tenant $TENANT"
 api POST /tenants "$(jq -n --arg s "$TENANT" --arg o "$ADMIN_EMAIL" \

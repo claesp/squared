@@ -3,6 +3,7 @@ package guard
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -51,6 +52,9 @@ type SourceConfig struct {
 	//                    (Clients, Audiences, Claims). It gives no groups, only errors.
 	//   keycloak-realm   the email settings of the Keycloak realm. It gives no
 	//                    groups, only errors.
+	//   forgejo-tokens   the owners of personal access tokens in the Forgejo database,
+	//                    compared with their Keycloak users (URL, PasswordFile, Name,
+	//                    SourceID). No groups, only errors.
 	//   forgejo-config   the sign-in and registration settings in the Forgejo app.ini,
 	//                    from the sidecar "squared forgejo-config" (URL). No groups,
 	//                    only errors.
@@ -69,6 +73,9 @@ type SourceConfig struct {
 	Clients   []string `json:"clients,omitempty"`
 	Audiences []string `json:"audiences,omitempty"`
 	Claims    []string `json:"claims,omitempty"`
+	// SourceID is for forgejo-tokens: the ID of the Keycloak authentication
+	// source in Forgejo.
+	SourceID int64 `json:"sourceId,omitempty"`
 	// IgnoreFields are new fields of a service configuration that an
 	// operator checked: they give no rights. The types argocd-rbac (keys),
 	// argocd-projects ("spec.<field>" or "roles.<field>"), forgejo-database,
@@ -96,12 +103,14 @@ func LoadFile(path string) (*FileConfig, error) {
 	return &cfg, nil
 }
 
-// KeycloakReader reads the mappers of the Keycloak clients and the email
-// settings of the realm.
+// KeycloakReader reads the mappers of the Keycloak clients, the email
+// settings of the realm, and users.
 type KeycloakReader interface {
 	Clients(ctx context.Context) ([]keycloak.ClientMappers, error)
 	ClientScopes(ctx context.Context) ([]keycloak.ClientScope, error)
 	RealmEmailSettings(ctx context.Context) (*keycloak.RealmEmail, error)
+	UserByID(ctx context.Context, id string) (*keycloak.User, error)
+	UserGroupPaths(ctx context.Context, id string) ([]string, error)
 }
 
 // BuildSources makes the sources of a configuration.
@@ -155,6 +164,14 @@ func BuildSources(cfg *FileConfig, kc *kube.Client, idp KeycloakReader) ([]Sourc
 			sources = append(sources, &keycloakMappersSource{sc: sc, idp: idp})
 		case "keycloak-realm":
 			sources = append(sources, &keycloakRealmSource{sc: sc, idp: idp})
+		case "forgejo-tokens":
+			if sc.URL == "" || sc.PasswordFile == "" || sc.SourceID <= 0 {
+				return nil, fmt.Errorf("source %d: forgejo-tokens needs url, passwordFile and sourceId", i)
+			}
+			if sc.Name == "" {
+				sc.Name = "squared_guard_token_owners"
+			}
+			sources = append(sources, &forgejoTokensSource{sc: sc, idp: idp})
 		case "forgejo-config":
 			if sc.URL == "" {
 				return nil, fmt.Errorf("source %d: forgejo-config needs url", i)
@@ -538,5 +555,56 @@ func (s *forgejoConfigSource) References(ctx context.Context) ([]Reference, []st
 		return nil, nil, fmt.Errorf("the answer of %s is not a report of the sign-in settings", s.sc.URL)
 	}
 	warnings, err := checkForgejoSignIn(rep, s.sc.IgnoreFields)
+	return nil, warnings, err
+}
+
+// forgejoTokensSource reads the owners of personal access tokens from a
+// view in the Forgejo database, and compares them with their Keycloak
+// users. See checkForgejoTokens and deploy/kind/forgejo-guard-view.sql.
+type forgejoTokensSource struct {
+	sc  SourceConfig
+	idp KeycloakReader
+}
+
+func (s *forgejoTokensSource) Name() string { return s.sc.Service + " access tokens" }
+
+func (s *forgejoTokensSource) References(ctx context.Context) ([]Reference, []string, error) {
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	conn, err := connectDatabase(ctx, s.sc)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer conn.Close(context.Background())
+	// The administrator group of the Keycloak source: Forgejo sets the
+	// administrator flag from it at each Keycloak sign-in.
+	var adminGroup string
+	err = conn.QueryRow(ctx, "SELECT coalesce(admin_group, '') FROM squared_guard_auth_sources WHERE id = $1 AND type = $2",
+		s.sc.SourceID, forgejoOAuthType).Scan(&adminGroup)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil, fmt.Errorf("Forgejo has no OAuth2 authentication source with the ID %d (sourceId)", s.sc.SourceID)
+	}
+	if err != nil {
+		return nil, nil, fmt.Errorf("read squared_guard_auth_sources: %w", err)
+	}
+	rows, err := conn.Query(ctx, `SELECT user_name, login_source, login_name, is_admin, is_active, prohibit_login, tokens, last_used_unix
+		FROM `+pgx.Identifier{s.sc.Name}.Sanitize()+" ORDER BY user_name")
+	if err != nil {
+		return nil, nil, fmt.Errorf("read %s (run forgejo-guard-view.sql again after a Forgejo upgrade): %w", s.sc.Name, err)
+	}
+	var owners []forgejoTokenOwner
+	for rows.Next() {
+		var o forgejoTokenOwner
+		var lastUsed int64
+		if err := rows.Scan(&o.UserName, &o.LoginSource, &o.LoginName, &o.IsAdmin, &o.IsActive, &o.ProhibitLogin, &o.Tokens, &lastUsed); err != nil {
+			return nil, nil, err
+		}
+		o.LastUsed = time.Unix(lastUsed, 0)
+		owners = append(owners, o)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, nil, err
+	}
+	warnings, err := checkForgejoTokens(ctx, owners, s.sc.SourceID, adminGroup, keycloakUserStateFrom(s.idp))
 	return nil, warnings, err
 }

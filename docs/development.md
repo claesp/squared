@@ -236,7 +236,9 @@ all `*.localhost` names.
    `dev@e2e-intruder.test` and with the name and address of the local
    Forgejo administrator, and checks that neither gets an existing
    account. It checks that the Forgejo sign-in page has no password form
-   and that `dev` cannot set a Forgejo password.
+   and that `dev` cannot set a Forgejo password. It makes a Forgejo token
+   for `dev`, disables `dev` in Keycloak, then makes `dev` a Forgejo
+   administrator, and checks that the guard reports both.
 6. Makes a tenant, adds `dev` as developer, and waits until `dev` has the
    Harbor project and can read the Forgejo repository.
 7. Pushes the example image as `dev` with the Harbor CLI secret.

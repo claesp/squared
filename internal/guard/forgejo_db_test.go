@@ -24,11 +24,7 @@ func TestForgejoDatabaseSource(t *testing.T) {
 	storetest.Must(t, err)
 	defer admin.Close(ctx)
 
-	// The columns of the Forgejo table that the view uses.
-	_, err = admin.Exec(ctx, `CREATE TABLE login_source (
-		id bigserial PRIMARY KEY, type integer NOT NULL, name text NOT NULL,
-		is_active boolean NOT NULL, cfg text)`)
-	storetest.Must(t, err)
+	makeForgejoTables(t, admin)
 	keycloak := forgejo15()
 	keycloak["RestrictedGroup"] = "/guests"
 	keycloak["GroupTeamMap"] = `{"/ops": {"squared": ["operators"]}}`
@@ -91,4 +87,17 @@ func TestForgejoDatabaseSource(t *testing.T) {
 	if got := groupsOf(refs); !slices.Equal(got, []string{"/old admins"}) {
 		t.Fatalf("groups with the error = %q", got)
 	}
+}
+
+// makeForgejoTables makes the Forgejo tables with the columns that the
+// views of deploy/kind/forgejo-guard-view.sql use.
+func makeForgejoTables(t *testing.T, conn *pgx.Conn) {
+	t.Helper()
+	_, err := conn.Exec(context.Background(), `
+		CREATE TABLE login_source (id bigserial PRIMARY KEY, type integer NOT NULL, name text NOT NULL, is_active boolean NOT NULL, cfg text);
+		CREATE TABLE "user" (id bigserial PRIMARY KEY, name text NOT NULL, type integer NOT NULL, login_source bigint NOT NULL,
+			login_name text NOT NULL, is_admin boolean NOT NULL, is_active boolean NOT NULL, prohibit_login boolean NOT NULL, passwd text);
+		CREATE TABLE access_token (id bigserial PRIMARY KEY, uid bigint NOT NULL, name text NOT NULL, token_hash text,
+			token_salt text, token_last_eight text, scope text, created_unix bigint, updated_unix bigint);`)
+	storetest.Must(t, err)
 }

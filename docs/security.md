@@ -329,9 +329,33 @@ controls that it uses. Read [architecture.md](architecture.md) first.
   user ...`). If you turn on the web form for a short time, the guard
   reports an error until you turn it off. The end-to-end test checks that
   the sign-in page has no password form and that `dev` cannot set a
-  password. Limits: the guard does not see passwords that Keycloak users
-  set before this setting, nor the personal access tokens of users; both
-  work without Keycloak. SSH is off in the development environment.
+  password. Limit: the guard does not see passwords that Keycloak users
+  set before this setting; they work without Keycloak. SSH is off in the
+  development environment.
+- **Personal access tokens of Forgejo.** A user can make tokens in the
+  Forgejo settings, and Forgejo has no setting to prevent this. A token
+  works for the API and Git without Keycloak until somebody deletes it.
+  Thus a token can outlive the Keycloak user, and it keeps the Forgejo
+  administrator flag, which Forgejo changes only at a Keycloak sign-in.
+  The guard reads the view `squared_guard_token_owners` of
+  [`forgejo-guard-view.sql`](../deploy/kind/forgejo-guard-view.sql): the
+  users of OAuth2 sources that have tokens, with the number of tokens and
+  the last use, never the tokens, their hashes or their last characters,
+  and no local account. It compares each owner of the Keycloak source with
+  the Keycloak user:
+
+  | Owner | Result |
+  |---|---|
+  | The Keycloak user does not exist | Error |
+  | Keycloak disabled the user | Error |
+  | A Forgejo administrator who is not a direct member of the administrator group of the source (for example `/squared-admins`) | Error |
+  | A user of another OAuth2 source | Warning: the guard cannot check it |
+  | The Forgejo account is not active or cannot sign in | No message: Forgejo refuses all its requests |
+
+  To correct an error, delete the tokens, or block the Forgejo account
+  ("prohibit sign-in"). The guard does not change Forgejo. The end-to-end
+  test makes a token for `dev`, disables `dev` in Keycloak, and then makes
+  `dev` a Forgejo administrator, and checks the errors.
 
 ### Passwords and tokens of Squared
 

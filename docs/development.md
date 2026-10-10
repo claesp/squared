@@ -225,8 +225,9 @@ all `*.localhost` names.
    command line, which writes the same table as the web interface. Then it
    renames the field `AdminGroup` in the database, as an upgrade could, and
    checks that the guard reports it and keeps the protection. It writes
-   `ACCOUNT_LINKING = auto` into `app.ini` of the running Forgejo pod and
-   checks that the guard reports it. It does the
+   `ACCOUNT_LINKING = auto`, and then
+   `ALLOW_ONLY_EXTERNAL_REGISTRATION = false`, into `app.ini` of the
+   running Forgejo pod and checks that the guard reports them. It does the
    same for Harbor: it changes the administrator group through the Harbor
    API, then renames the key `oidc_admin_group` in the database.
 5. Signs in to Argo CD, Harbor and Forgejo through Keycloak as both users,

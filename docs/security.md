@@ -281,21 +281,39 @@ controls that it uses. Read [architecture.md](architecture.md) first.
   `e2e-intruder` with the address `dev@e2e-intruder.test`, and as a
   Keycloak user `forgejo-admin` with the address of the local
   administrator, and checks that neither gets an existing account.
-- **The guard checks `ACCOUNT_LINKING`.** The setting is only in
-  `app.ini`; Forgejo has no API for it and reads the file only at its
+- **The guard checks the sign-in and registration settings of Forgejo.**
+  Forgejo accounts must come only from Keycloak. The settings are only in
+  `app.ini`; Forgejo has no API for them and reads the file only at its
   start. The sidecar `squared forgejo-config` in the Forgejo pod reads the
-  section `[oauth2_client]` (no secrets) at the start of the pod and at
-  each request, and serves only that section; only the namespace of the
-  guard can connect to it. The guard reports an error if Forgejo uses
-  `auto` now or will use it after the next start, if the section changed
-  after the start (then the running Forgejo can differ from the file), or
-  if the section has a key that Forgejo 15 does not have (for example
-  `account_linking`: Forgejo reads key names with the exact case). The
-  sidecar runs as the Forgejo user with the configuration directory
-  read-only, never stops because of the file, and has no readiness probe,
-  so that it cannot stop Forgejo. The end-to-end test writes
-  `ACCOUNT_LINKING = auto` into the file of the running pod and checks the
-  error.
+  sections `[oauth2_client]`, `[openid]` and `[service]`, and the key
+  `INSTALL_LOCK` of `[security]`, at the start of the pod and at each
+  request. `[service]` has secrets (for example `RECAPTCHA_SECRET`), thus
+  the sidecar serves its key names, but only the values of the sign-in
+  and registration keys. Only the namespace of the guard can connect to
+  the sidecar. The guard uses the defaults of Forgejo 15 for missing keys:
+
+  | Setting (now or after the next start of Forgejo) | Result |
+  |---|---|
+  | `ACCOUNT_LINKING = auto`: a sign-in gets the account with the same name or address | Error |
+  | Local registration is open: `DISABLE_REGISTRATION` and `ALLOW_ONLY_EXTERNAL_REGISTRATION` are false (the defaults) | Error |
+  | `ENABLE_OPENID_SIGNIN` is on (the default before the installation): people sign in with OpenID 2.0 addresses that they add to their accounts, without Keycloak, also after Keycloak disabled them | Error |
+  | `ENABLE_OPENID_SIGNUP` is on: anybody with an OpenID 2.0 provider can make an account | Error |
+  | `ENABLE_REVERSE_PROXY_AUTHENTICATION` or `..._API` is on: Forgejo accepts the user name in a header from every client | Error |
+  | A section changed after the start: the running Forgejo can differ from the file | Error |
+  | An unknown key in `[oauth2_client]` or `[openid]`, or in `[service]` with a name like registration, sign-in, login, auth, link, proxy, OpenID, account or password | Error, until an operator adds `<section>.<key>` to `ignoreFields` |
+  | Another unknown key in `[service]` | Warning, until an operator adds it to `ignoreFields` |
+  | `ACCOUNT_LINKING = login` (the default): a person who knows the password of a local account can link it | Warning |
+  | `ENABLE_AUTO_REGISTRATION` is off or `ALLOW_ONLY_INTERNAL_REGISTRATION` is on: a Keycloak user without an account gets a page to link a local account with its password | Warning |
+
+  Forgejo reads key names with the exact case, thus `account_linking` is
+  an unknown key. The sidecar runs as the Forgejo user with the
+  configuration directory read-only, never stops because of the file, and
+  has no readiness probe, so that it cannot stop Forgejo. The end-to-end
+  test writes `ACCOUNT_LINKING = auto`, and then
+  `ALLOW_ONLY_EXTERNAL_REGISTRATION = false`, into the file of the running
+  pod and checks the errors. The local accounts (the administrator and
+  the bots) can still sign in with a password (`ENABLE_INTERNAL_SIGNIN`);
+  the guard does not check this, because they are necessary.
 
 ### Passwords and tokens of Squared
 

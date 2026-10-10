@@ -79,9 +79,9 @@ gitea:
     repository:
       DEFAULT_PRIVATE: private
 
-# The guard checks the sign-in settings in app.ini (ACCOUNT_LINKING).
-# Forgejo has no API for them, thus this sidecar serves the section
-# [oauth2_client], and only that section: other sections can have secrets.
+# The guard checks the sign-in and registration settings in app.ini.
+# Forgejo has no API for them, thus this sidecar serves them, and never a
+# secret (see "squared forgejo-config" in docs/configuration.md).
 # It runs as the Forgejo user, because app.ini has the mode 0600, and it
 # mounts only the directory of app.ini, read-only. It has no readiness
 # probe and never stops because of app.ini, so that it cannot make the pod

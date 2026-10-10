@@ -42,34 +42,65 @@ ACCOUNT_LINKING = auto
 	}
 }
 
-func TestSectionReporter(t *testing.T) {
+func TestConfigReporter(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "app.ini")
-	if err := os.WriteFile(path, []byte("[security]\nSECRET_KEY = s3cret\n[oauth2_client]\nACCOUNT_LINKING = disabled\n"), 0o600); err != nil {
-		t.Fatal(err)
+	write := func(content string) {
+		t.Helper()
+		if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+			t.Fatal(err)
+		}
 	}
-	r := NewSectionReporter(path, "oauth2_client")
-	if err := os.WriteFile(path, []byte("[oauth2_client]\nACCOUNT_LINKING = auto\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	write(`[security]
+INSTALL_LOCK = true
+SECRET_KEY = s3cret-key
+INTERNAL_TOKEN = s3cret-token
+[service]
+DISABLE_REGISTRATION = false
+ALLOW_ONLY_EXTERNAL_REGISTRATION = true
+RECAPTCHA_SECRET = s3cret-captcha
+[oauth2_client]
+ACCOUNT_LINKING = disabled
+[openid]
+ENABLE_OPENID_SIGNIN = false
+[database]
+PASSWD = s3cret-db
+`)
+	r := NewConfigReporter(path)
+	write("[oauth2_client]\nACCOUNT_LINKING = auto\n")
 	rec := httptest.NewRecorder()
-	r.ServeHTTP(rec, httptest.NewRequest("GET", "/oauth2-client", nil))
-	var rep SectionReport
+	r.ServeHTTP(rec, httptest.NewRequest("GET", "/sign-in", nil))
+	var rep ConfigReport
 	if err := json.Unmarshal(rec.Body.Bytes(), &rep); err != nil {
 		t.Fatal(err)
 	}
-	if rep.Start["ACCOUNT_LINKING"] != "disabled" || rep.Now["ACCOUNT_LINKING"] != "auto" || rep.Error != "" {
-		t.Fatalf("report = %+v", rep)
+	want := map[string]map[string]string{
+		"oauth2_client": {"ACCOUNT_LINKING": "disabled"},
+		"openid":        {"ENABLE_OPENID_SIGNIN": "false"},
+		"service": {"DISABLE_REGISTRATION": "false", "ALLOW_ONLY_EXTERNAL_REGISTRATION": "true",
+			"RECAPTCHA_SECRET": HiddenValue}, // The name, not the value.
+		"security": {"INSTALL_LOCK": "true"}, // Only this key.
+	}
+	for section, values := range want {
+		if !maps.Equal(rep.Start[section], values) {
+			t.Errorf("start [%s] = %v, want %v", section, rep.Start[section], values)
+		}
+	}
+	if _, ok := rep.Start["database"]; ok {
+		t.Error("the report has the section [database]")
+	}
+	if rep.Now["oauth2_client"]["ACCOUNT_LINKING"] != "auto" || len(rep.Now["service"]) != 0 || rep.Error != "" {
+		t.Fatalf("now = %v, error %q", rep.Now, rep.Error)
 	}
 	if strings.Contains(rec.Body.String(), "s3cret") {
-		t.Fatal("the report has another section")
+		t.Fatalf("the report has a secret: %s", rec.Body.String())
 	}
 }
 
-func TestSectionReporterWithoutFile(t *testing.T) {
-	r := NewSectionReporter(filepath.Join(t.TempDir(), "missing.ini"), "oauth2_client")
+func TestConfigReporterWithoutFile(t *testing.T) {
+	r := NewConfigReporter(filepath.Join(t.TempDir(), "missing.ini"))
 	rec := httptest.NewRecorder()
-	r.ServeHTTP(rec, httptest.NewRequest("GET", "/oauth2-client", nil))
-	var rep SectionReport
+	r.ServeHTTP(rec, httptest.NewRequest("GET", "/sign-in", nil))
+	var rep ConfigReport
 	if err := json.Unmarshal(rec.Body.Bytes(), &rep); err != nil {
 		t.Fatal(err)
 	}

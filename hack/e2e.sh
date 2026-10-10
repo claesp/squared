@@ -320,6 +320,21 @@ guard_reports_keycloak() {
   wait_for "the guard has no errors after the Keycloak change is undone" 60 guard_clean
 }
 
+# guard_reports_app_ini LINE NEW PATTERN replaces the line LINE with NEW in
+# app.ini of the running Forgejo, as "kubectl exec" can, waits until the
+# guard reports an error that matches the pattern (jq regex), checks that
+# the protection of /squared-admins stays, and puts the line back.
+guard_reports_app_ini() {
+  local line="$1" new="$2" pattern="$3" ini=/data/gitea/conf/app.ini
+  forgejo_sh() { k -n forgejo exec deploy/forgejo -c forgejo -- sh -c "$1"; }
+  forgejo_sh "grep -qx '$line' $ini && sed -i 's/^$line\$/$new/' $ini" || die "app.ini of Forgejo has no line '$line'"
+  guard_reports() { guard_status | jq -e --arg p "$pattern" '[.errors[]? | select(test($p))] | length > 0' >/dev/null; }
+  wait_for "the guard reports '$new' in app.ini" 60 guard_reports
+  [[ "$(worker_may_add_dev squared-admins)" == 403 ]] || die "the protection of /squared-admins is gone after the app.ini change"
+  forgejo_sh "sed -i 's/^$new\$/$line/' $ini"
+  wait_for "the guard has no errors after app.ini is back" 60 guard_clean
+}
+
 check_guard() {
   local st service group="e2e-ops-$TENANT" policy
   # All four services refer to the administrator group.
@@ -421,21 +436,13 @@ YAML
   wait_for "the guard has no errors after the field is back" 60 guard_clean
   log "the guard reports renamed Forgejo fields and keeps the protection"
 
-  # ACCOUNT_LINKING = auto in app.ini, as "kubectl exec" can write it.
+  # Unsafe sign-in settings in app.ini, as "kubectl exec" can write them.
   # Forgejo reads the file only at its start, thus the guard reports the
-  # value for the next start and the change of the file.
-  local ini=/data/gitea/conf/app.ini
-  forgejo_sh() { k -n forgejo exec deploy/forgejo -c forgejo -- sh -c "$1"; }
-  forgejo_sh "grep -qx 'ACCOUNT_LINKING = disabled' $ini && sed -i 's/^ACCOUNT_LINKING = disabled\$/ACCOUNT_LINKING = auto/' $ini" \
-    || die "app.ini of Forgejo has no line 'ACCOUNT_LINKING = disabled'"
-  guard_reports_linking() {
-    guard_status | jq -e '[.errors[]? | select(test("ACCOUNT_LINKING is auto after the next start") and test("changed after the start"))] | length > 0' >/dev/null
-  }
-  wait_for "the guard reports ACCOUNT_LINKING = auto in app.ini" 60 guard_reports_linking
-  [[ "$(worker_may_add_dev squared-admins)" == 403 ]] || die "the protection of /squared-admins is gone after the app.ini change"
-  forgejo_sh "sed -i 's/^ACCOUNT_LINKING = auto\$/ACCOUNT_LINKING = disabled/' $ini"
-  wait_for "the guard has no errors after app.ini is back" 60 guard_clean
-  log "the guard checks ACCOUNT_LINKING of Forgejo"
+  # values for the next start.
+  guard_reports_app_ini 'ACCOUNT_LINKING = disabled' 'ACCOUNT_LINKING = auto' 'ACCOUNT_LINKING is auto: [^;]*[(]after the next start[)]'
+  guard_reports_app_ini 'ALLOW_ONLY_EXTERNAL_REGISTRATION = true' 'ALLOW_ONLY_EXTERNAL_REGISTRATION = false' \
+    'local registration is open[^;]*[(]after the next start[)]'
+  log "the guard checks the sign-in and registration settings of Forgejo"
 
   # A change of the administrator group in Harbor, through the API as in
   # the web interface.

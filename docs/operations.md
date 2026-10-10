@@ -185,9 +185,10 @@ to the configuration of the guard, and add its Keycloak client to
    - A warning about a new field without group meaning: check the Forgejo
      release notes. If the field gives no rights, add it to
      `ignoreFields` of the source.
-   - An error about an unknown key in `[oauth2_client]`: Forgejo added or
-     renamed a sign-in setting. Check that it cannot link accounts by the
-     name or the address, then add it to `ignoreFields` of the source
+   - An error or a warning about an unknown key in `[oauth2_client]`,
+     `[openid]` or `[service]`: Forgejo added or renamed a setting. Check
+     that it cannot make accounts or link accounts without Keycloak, then
+     add `<section>.<key>` to `ignoreFields` of the source
      `forgejo-config`, or update the list in
      [`internal/guard/forgejoconfig.go`](../internal/guard/forgejoconfig.go).
 3. Run the end-to-end test against a test environment with the new

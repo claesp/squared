@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -26,6 +27,7 @@ type fakeForgejo struct {
 	repos   map[string][]fakeCommit // "org/repo" to commits, the newest last
 	commits int
 	users   map[string]string // user name to email
+	links   map[string]string // user name to "<source ID>/<login name>"
 	teams   map[int64]*fakeTeam
 }
 
@@ -53,7 +55,7 @@ type fakeCommit struct {
 }
 
 func newFakeForgejo() *fakeForgejo {
-	return &fakeForgejo{repos: map[string][]fakeCommit{}, users: map[string]string{}, teams: map[int64]*fakeTeam{}}
+	return &fakeForgejo{repos: map[string][]fakeCommit{}, users: map[string]string{}, links: map[string]string{}, teams: map[int64]*fakeTeam{}}
 }
 
 func (f *fakeForgejo) head(repo string) fakeCommit {
@@ -336,10 +338,26 @@ func (f *fakeForgejo) serveTeams(w http.ResponseWriter, r *http.Request, parts [
 			return true
 		}
 		writeJSON(w, map[string]string{"login": parts[1], "email": email})
+	case r.Method == http.MethodGet && len(parts) == 2 && parts[0] == "admin" && parts[1] == "users":
+		// Forgejo filters by the source and the exact login name.
+		want := r.URL.Query().Get("source_id") + "/" + r.URL.Query().Get("login_name")
+		list := []map[string]any{}
+		for name, link := range f.links {
+			if link == want {
+				source, login, _ := strings.Cut(link, "/")
+				id, _ := strconv.ParseInt(source, 10, 64)
+				list = append(list, map[string]any{"login": name, "source_id": id, "login_name": login})
+			}
+		}
+		writeJSON(w, list)
 	case r.Method == http.MethodPost && len(parts) == 2 && parts[0] == "admin" && parts[1] == "users":
-		var in struct{ Username, Email, Password string }
+		var in struct {
+			Username, Email, Password string
+			SourceID                  int64  `json:"source_id"`
+			LoginName                 string `json:"login_name"`
+		}
 		json.NewDecoder(r.Body).Decode(&in)
-		if in.Password == "" {
+		if in.Password == "" && in.SourceID == 0 {
 			http.Error(w, "password required", http.StatusUnprocessableEntity)
 			return true
 		}
@@ -347,7 +365,20 @@ func (f *fakeForgejo) serveTeams(w http.ResponseWriter, r *http.Request, parts [
 			http.Error(w, "name is reserved", http.StatusUnprocessableEntity)
 			return true
 		}
+		if _, ok := f.users[in.Username]; ok {
+			http.Error(w, `{"message": "user already exists [name: `+in.Username+`]"}`, http.StatusUnprocessableEntity)
+			return true
+		}
+		for _, email := range f.users {
+			if strings.EqualFold(email, in.Email) {
+				http.Error(w, `{"message": "e-mail already in use [email: `+in.Email+`]"}`, http.StatusUnprocessableEntity)
+				return true
+			}
+		}
 		f.users[in.Username] = in.Email
+		if in.SourceID > 0 {
+			f.links[in.Username] = fmt.Sprintf("%d/%s", in.SourceID, in.LoginName)
+		}
 		w.WriteHeader(http.StatusCreated)
 	default:
 		return false
@@ -507,6 +538,16 @@ func (k *fakeKeycloak) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			list = append(list, map[string]string{"id": id, "email": r.URL.Query().Get("email")})
 		}
 		writeJSON(w, list)
+	case parts[0] == "users" && len(parts) == 2 && r.Method == http.MethodGet:
+		// The fake user name is the first part of the email address.
+		for email, id := range k.users {
+			if id == parts[1] {
+				name, _, _ := strings.Cut(email, "@")
+				writeJSON(w, map[string]string{"id": id, "username": name, "email": email})
+				return
+			}
+		}
+		http.NotFound(w, r)
 	case parts[0] == "users" && len(parts) == 4 && parts[2] == "groups":
 		m, ok := k.members[parts[3]]
 		if !ok {

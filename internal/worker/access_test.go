@@ -1,12 +1,14 @@
 package worker
 
 import (
+	"errors"
 	"net/http/httptest"
 	"slices"
 	"testing"
 
 	"squared/internal/core"
 	"squared/internal/domain"
+	"squared/internal/forgejo"
 	"squared/internal/harbor"
 	"squared/internal/keycloak"
 	"squared/internal/store/storetest"
@@ -17,10 +19,11 @@ func TestAccessSync(t *testing.T) {
 	kc := newFakeKeycloak(map[string]string{
 		"admin@example.com":  "kc-admin",
 		"viewer@example.com": "kc-viewer",
+		"dev@example.com":    "kc-dev",
 	})
 	kcSrv := httptest.NewServer(kc)
 	t.Cleanup(kcSrv.Close)
-	e.w.EnableAccessSync(keycloak.New(kcSrv.URL, "squared", "squared-worker", "worker-secret", kcSrv.Client()))
+	e.w.EnableAccessSync(keycloak.New(kcSrv.URL, "squared", "squared-worker", "worker-secret", kcSrv.Client()), 7)
 	id := e.tenantID(t)
 	run := func(kind domain.TaskKind) {
 		t.Helper()
@@ -41,14 +44,20 @@ func TestAccessSync(t *testing.T) {
 		t.Fatalf("Harbor members: %v", got)
 	}
 	team := e.git.team("tenant-acme")
-	// "admin" is a reserved name in Forgejo, thus the user is "admin-2".
-	if team == nil || !team.repos["squared/tenant-acme"] || !team.members["admin-2"] {
-		t.Fatalf("Forgejo team: %+v", team)
+	// "admin" is a reserved name in Forgejo, thus the user is "admin-2". The
+	// account belongs to the Keycloak user: source 7, login name kc-admin.
+	if team == nil || !team.repos["squared/tenant-acme"] || !team.members["admin-2"] || e.git.links["admin-2"] != "7/kc-admin" {
+		t.Fatalf("Forgejo team: %+v, links %v", team, e.git.links)
 	}
 
 	// A developer who signed in with Keycloak, and a viewer without an
 	// account in Squared before. A user without a Keycloak account gets
-	// the Forgejo access, but no Keycloak group.
+	// no Keycloak group and no Forgejo account: only Keycloak users can
+	// sign in to Forgejo. A local Forgejo account with the name "dev" does
+	// not get the access of the Keycloak user dev.
+	e.git.mu.Lock()
+	e.git.users["dev"] = "local-dev@example.com"
+	e.git.mu.Unlock()
 	_, err := e.svc.SignInIdentity(e.ctx, core.Identity{Issuer: "http://kc", Subject: "kc-dev", Email: "dev@example.com", EmailVerified: true, Name: "Dev"}, "web")
 	storetest.Must(t, err)
 	_, err = e.svc.CreateUser(e.ctx, e.owner, core.NewUser{Email: "viewer@example.com", Name: "Viewer", Password: "viewer password 1"})
@@ -65,8 +74,9 @@ func TestAccessSync(t *testing.T) {
 	if got := kc.groupMembers("tenant-acme-viewer"); !slices.Equal(got, []string{"kc-viewer"}) {
 		t.Fatalf("viewer group: %v", got)
 	}
-	if !team.members["dev"] || !team.members["viewer"] || !team.members["nokc"] || e.git.users["dev"] != "dev@example.com" {
-		t.Fatalf("Forgejo team members: %v", team.members)
+	if team.members["dev"] || !team.members["dev-2"] || !team.members["viewer"] || team.members["nokc"] ||
+		e.git.links["dev-2"] != "7/kc-dev" || e.git.users["dev-2"] != "dev@example.com" {
+		t.Fatalf("Forgejo team members: %v, links %v", team.members, e.git.links)
 	}
 
 	// Squared is the source: a member that somebody added by hand goes.
@@ -96,7 +106,7 @@ func TestAccessSync(t *testing.T) {
 	if got := kc.groupMembers("tenant-acme-viewer"); !slices.Equal(got, []string{"kc-dev"}) {
 		t.Fatalf("viewer group after the changes: %v", got)
 	}
-	if team.members["nokc"] || team.members["viewer"] || !team.members["dev"] {
+	if team.members["nokc"] || team.members["viewer"] || !team.members["dev-2"] {
 		t.Fatalf("Forgejo team after the changes: %v", team.members)
 	}
 
@@ -106,6 +116,30 @@ func TestAccessSync(t *testing.T) {
 	run(domain.TaskTenantDelete)
 	if kc.groupMembers("tenant-acme-owner") != nil || e.git.team("tenant-acme") != nil || len(e.harbor.roles("acme")) != 0 {
 		t.Fatal("access objects stay after the removal of the tenant")
+	}
+}
+
+// TestAccessSyncDoesNotTakeAccounts checks that the worker never gives a
+// Forgejo account that has the email address of a member, but belongs to
+// nobody in Keycloak, to that member.
+func TestAccessSyncDoesNotTakeAccounts(t *testing.T) {
+	e := setup(t)
+	kc := newFakeKeycloak(map[string]string{"admin@example.com": "kc-admin"})
+	kcSrv := httptest.NewServer(kc)
+	t.Cleanup(kcSrv.Close)
+	e.w.EnableAccessSync(keycloak.New(kcSrv.URL, "squared", "squared-worker", "worker-secret", kcSrv.Client()), 7)
+	e.git.mu.Lock()
+	e.git.users["boss"] = "admin@example.com" // A local account with the address.
+	e.git.mu.Unlock()
+	err := e.w.Handle(e.ctx, domain.Task{Kind: domain.TaskTenantSync, TenantID: e.tenantID(t)}, 1)
+	if !errors.Is(err, forgejo.ErrEmailInUse) {
+		t.Fatalf("err = %v, want ErrEmailInUse", err)
+	}
+	if team := e.git.team("tenant-acme"); team != nil && team.members["boss"] {
+		t.Fatal("the local account got the access of the member")
+	}
+	if _, ok := e.git.links["boss"]; ok {
+		t.Fatal("the local account was linked to the member")
 	}
 }
 

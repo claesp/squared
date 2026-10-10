@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"squared/internal/domain"
+	"squared/internal/forgejo"
 	"squared/internal/gitops"
 	"squared/internal/harbor"
 	"squared/internal/keycloak"
@@ -16,8 +17,11 @@ import (
 
 // EnableAccessSync makes the worker copy the members of each tenant to
 // Keycloak groups, Harbor project members and a Forgejo team. Without it,
-// the worker does not change access in these systems.
-func (w *Worker) EnableAccessSync(kc *keycloak.Client) { w.keycloak = kc }
+// the worker does not change access in these systems. forgejoSource is the
+// ID of the Keycloak authentication source in Forgejo.
+func (w *Worker) EnableAccessSync(kc *keycloak.Client, forgejoSource int64) {
+	w.keycloak, w.forgejoSource = kc, forgejoSource
+}
 
 // harborRoles maps the roles of a tenant to Harbor project roles. Owners
 // get "maintainer", not "project admin": Squared manages the members, thus
@@ -41,6 +45,10 @@ func (w *Worker) teamName(slug string) string {
 type accessMember struct {
 	user *domain.User
 	role domain.Role
+	// keycloakID is the ID of the Keycloak user, or "" if the user has no
+	// Keycloak account. Such a user gets the access later, when the
+	// account exists.
+	keycloakID string
 }
 
 // syncAccess makes the access in Keycloak, Harbor and Forgejo agree with
@@ -66,9 +74,20 @@ func (w *Worker) syncAccess(ctx context.Context, t *domain.Tenant) error {
 		if err != nil {
 			return err
 		}
-		if !u.Disabled {
-			members = append(members, accessMember{user: u, role: m.Role})
+		if u.Disabled {
+			continue
 		}
+		// A user who signed in with Keycloak has the Keycloak user ID as
+		// subject. For other users, Keycloak finds the user by the email
+		// address, which only administrators can set.
+		id := u.OIDCSubject
+		if id == "" {
+			id, err = w.keycloak.UserIDByEmail(ctx, u.Email)
+			if err != nil && !errors.Is(err, keycloak.ErrUserNotFound) {
+				return err
+			}
+		}
+		members = append(members, accessMember{user: u, role: m.Role, keycloakID: id})
 	}
 	if err := w.syncKeycloakGroups(ctx, t, members); err != nil {
 		return fmt.Errorf("keycloak: %w", err)
@@ -90,24 +109,9 @@ func (w *Worker) syncKeycloakGroups(ctx context.Context, t *domain.Tenant, membe
 		}
 		want := map[string]bool{}
 		for _, m := range members {
-			if m.role != role {
-				continue
+			if m.role == role && m.keycloakID != "" {
+				want[m.keycloakID] = true
 			}
-			// A user who signed in with Keycloak has the Keycloak user ID
-			// as subject. For other users, Keycloak finds the user by the
-			// email address. A user without a Keycloak account gets the
-			// access later, when the account exists.
-			id := m.user.OIDCSubject
-			if id == "" {
-				id, err = w.keycloak.UserIDByEmail(ctx, m.user.Email)
-				if errors.Is(err, keycloak.ErrUserNotFound) {
-					continue
-				}
-				if err != nil {
-					return err
-				}
-			}
-			want[id] = true
 		}
 		have, err := w.keycloak.Members(ctx, g.ID)
 		if err != nil {
@@ -183,9 +187,24 @@ func (w *Worker) syncForgejoTeam(ctx context.Context, t *domain.Tenant, members 
 	if err := w.forgejo.AddTeamRepo(ctx, team.ID, g.Org, gitops.TenantRepo(t.Slug)); err != nil {
 		return err
 	}
+	// The account of a member belongs to the Keycloak user: Forgejo finds
+	// it at the sign-in by the Keycloak user ID, not by the name or the
+	// email address. A member without a Keycloak account cannot sign in
+	// to Forgejo, thus gets no account.
 	want := map[string]bool{}
 	for _, m := range members {
-		name, err := w.forgejo.EnsureUser(ctx, m.user.Email, m.user.Name)
+		if m.keycloakID == "" {
+			continue
+		}
+		ku, err := w.keycloak.UserByID(ctx, m.keycloakID)
+		if errors.Is(err, keycloak.ErrUserNotFound) {
+			continue
+		}
+		if err != nil {
+			return err
+		}
+		name, err := w.forgejo.EnsureLinkedUser(ctx, forgejo.LinkedUser{SourceID: w.forgejoSource, Subject: ku.ID,
+			Username: ku.Username, Email: ku.Email, FullName: m.user.Name})
 		if err != nil {
 			return err
 		}

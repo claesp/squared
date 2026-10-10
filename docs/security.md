@@ -153,11 +153,11 @@ controls that it uses. Read [architecture.md](architecture.md) first.
   (`oidc-hardcoded-claim-mapper`), a user attribute, realm roles (the
   built-in scope `microprofile-jwt` does this), or even a value from the
   sign-in request (`oidc-claims-param-value-idtoken-mapper`). The same is
-  true for the email address: Squared and Forgejo link a new sign-in to
-  an existing account with the same address, and Squared does this only
-  if `email_verified` is true. A mapper that writes `email` from another
-  attribute, which the user can perhaps change, gives the account of
-  another person. The guard reads the mappers of the clients that the
+  true for the email address: Squared links a new sign-in to an existing
+  account with the same address if `email_verified` is true, and the
+  worker finds the Keycloak user of a tenant member by the address. A
+  mapper that writes `email` from another attribute, which the user can
+  perhaps change, gives the account of another person. The guard reads the mappers of the clients that the
   services use, with the mappers of their default and optional client
   scopes:
 
@@ -184,10 +184,9 @@ controls that it uses. Read [architecture.md](architecture.md) first.
   turns into audiences; give the service clients no client roles.
 - **Keycloak realm email settings.** A correct `email` mapper helps only
   if a person can get only an address that the person owns, or that an
-  administrator gave. Forgejo links a first sign-in to an existing
-  account with the same user name (the first part of the address) or the
-  same address, and it does not look at `email_verified`. Squared links
-  by a verified address. Keycloak permits users to change their own
+  administrator gave. Squared links a new sign-in to an existing user by
+  a verified address, and the worker finds the Keycloak user of a tenant
+  member by the address. Keycloak permits users to change their own
   address by default; `hack/kind-up.sh` permits it only to
   administrators. The guard reads the realm settings:
 
@@ -264,10 +263,24 @@ controls that it uses. Read [architecture.md](architecture.md) first.
 - **Rights of the worker in Forgejo.** The Forgejo bot of the worker is a
   Forgejo administrator, because it makes the accounts of members. Protect
   its token as well as the database password.
-- Forgejo links a Keycloak sign-in to an existing account with the same
-  email address (`ACCOUNT_LINKING = auto`). The local accounts of the
-  development environment thus have addresses in the domain
-  `local.invalid`, which no Keycloak user has.
+- **Forgejo accounts belong to Keycloak user IDs.** Forgejo finds the
+  account of a Keycloak sign-in by the authentication source and the
+  Keycloak user ID (`sub`), which nobody can choose. The worker makes the
+  account of each tenant member with that ID before the first sign-in.
+  `ACCOUNT_LINKING` is `disabled`: with `auto`, Forgejo 15 gives a first
+  sign-in the existing account with the same user name, which is the
+  first part of the address with `USERNAME = email`, or with the same
+  address, and it does not look at `email_verified`. Then the Keycloak
+  user `forgejo-admin@example.com` would get the local administrator
+  account `forgejo-admin`, and `alice@a.example` and `alice@b.example`
+  would share one account. Now a sign-in whose user name or address
+  belongs to another account fails. The worker never takes an existing
+  account: if a Forgejo account that belongs to nobody in Keycloak has the
+  address of a member, the access sync fails with a clear error, and an
+  administrator must check that account. The end-to-end test signs in as
+  `e2e-intruder` with the address `dev@e2e-intruder.test`, and as a
+  Keycloak user `forgejo-admin` with the address of the local
+  administrator, and checks that neither gets an existing account.
 
 ### Passwords and tokens of Squared
 

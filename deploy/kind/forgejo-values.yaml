@@ -52,11 +52,15 @@ gitea:
       ENABLE_OPENID_SIGNUP: false
     oauth2_client:
       ENABLE_AUTO_REGISTRATION: true
-      # The user name is the first part of the email address.
-      USERNAME: email
-      # The Squared worker makes the accounts of tenant members before
-      # their first sign-in. Forgejo links them by the email address.
-      ACCOUNT_LINKING: auto
+      # The user name is the Keycloak user name (preferred_username),
+      # which is unique and which only administrators can change.
+      USERNAME: nickname
+      # Forgejo finds the account of a Keycloak user by the Keycloak user
+      # ID (sub). The Squared worker makes the accounts of tenant members
+      # with that ID before their first sign-in. Never link by the name or
+      # the email address: Forgejo would then give an existing account,
+      # for example the local administrator, to another person.
+      ACCOUNT_LINKING: disabled
       UPDATE_AVATAR: false
     # PostgreSQL (deploy/kind/forgejo-db.yaml). The guard reads the
     # authentication sources from a view in this database, also after a

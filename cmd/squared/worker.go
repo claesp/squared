@@ -61,10 +61,17 @@ func runWorker(ctx context.Context, log *slog.Logger) error {
 	}
 	keycloakURL := env.String("SQUARED_KEYCLOAK_URL", "")
 	var keycloakRealm, keycloakClient, keycloakSecret string
+	var forgejoSource int
 	if keycloakURL != "" {
 		keycloakRealm = env.Required("SQUARED_KEYCLOAK_REALM")
 		keycloakClient = env.Required("SQUARED_KEYCLOAK_CLIENT_ID")
 		keycloakSecret = env.Secret("SQUARED_KEYCLOAK_CLIENT_SECRET", true)
+		// Forgejo has no API for its authentication sources, thus the ID
+		// comes from the configuration ("gitea admin auth list").
+		forgejoSource = env.Int("SQUARED_FORGEJO_AUTH_SOURCE_ID", 0)
+		if forgejoSource <= 0 {
+			return errors.New("SQUARED_FORGEJO_AUTH_SOURCE_ID is necessary with SQUARED_KEYCLOAK_URL: the ID of the Keycloak authentication source in Forgejo")
+		}
 	}
 	kubeCfg, kubeErr := kubeConfig(&env)
 	st, err := openStore(ctx, &env)
@@ -85,8 +92,8 @@ func runWorker(ctx context.Context, log *slog.Logger) error {
 	hb := harbor.New(harborURL, harborUser, harborPassword, httpClient)
 	w := worker.New(cfg, st, fj, hb, kc, log)
 	if keycloakURL != "" {
-		w.EnableAccessSync(keycloak.New(keycloakURL, keycloakRealm, keycloakClient, keycloakSecret, httpClient))
-		log.Info("tenant access sync is on", "keycloak", keycloakURL, "realm", keycloakRealm)
+		w.EnableAccessSync(keycloak.New(keycloakURL, keycloakRealm, keycloakClient, keycloakSecret, httpClient), int64(forgejoSource))
+		log.Info("tenant access sync is on", "keycloak", keycloakURL, "realm", keycloakRealm, "forgejoAuthSource", forgejoSource)
 	}
 
 	// The shared objects are necessary before the first task. Retry until

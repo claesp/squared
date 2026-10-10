@@ -204,6 +204,29 @@ func (c *Client) UserIDByEmail(ctx context.Context, email string) (string, error
 	return "", ErrUserNotFound
 }
 
+// User is a Keycloak user.
+type User struct {
+	ID        string `json:"id"`
+	Username  string `json:"username"`
+	Email     string `json:"email"`
+	FirstName string `json:"firstName"`
+	LastName  string `json:"lastName"`
+}
+
+// UserByID returns the user with an ID. It returns ErrUserNotFound if the
+// user does not exist.
+func (c *Client) UserByID(ctx context.Context, id string) (*User, error) {
+	var u User
+	err := c.rest.Do(ctx, http.MethodGet, "/users/"+url.PathEscape(id), nil, &u)
+	if rest.HasStatus(err, http.StatusNotFound) {
+		return nil, ErrUserNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("read user %s: %w", id, err)
+	}
+	return &u, nil
+}
+
 // GroupByPath returns the group with a full path, for example
 // "/squared-admins", or nil if it does not exist.
 func (c *Client) GroupByPath(ctx context.Context, path string) (*Group, error) {

@@ -112,6 +112,13 @@ ensure_forgejo_token() {
 
 setup_forgejo() {
   wait_http "${FORGEJO_URL}/api/healthz"
+  # The worker makes the accounts of tenant members for the authentication
+  # source keycloak, by its ID. Forgejo has no API for the sources.
+  local source_id want
+  source_id="$(k -n forgejo exec deploy/forgejo -c forgejo -- gitea admin auth list | awk '$2 == "keycloak" {print $1}')"
+  want="$(sed -n 's/.*SQUARED_FORGEJO_AUTH_SOURCE_ID=\([0-9]*\).*/\1/p' "$ROOT/deploy/kubernetes/kind/kustomization.yaml")"
+  [[ -n "$source_id" && "$source_id" == "$want" ]] \
+    || die "the Forgejo authentication source keycloak has the ID '$source_id', but SQUARED_FORGEJO_AUTH_SOURCE_ID is '$want'"
   ensure_forgejo_user squared-bot
   ensure_forgejo_user argocd-reader
   # The worker makes Forgejo accounts for tenant members, thus the bot is a
@@ -233,8 +240,9 @@ SQL
 }
 
 # setup_keycloak_email lets only administrators set the email addresses.
-# Squared and Forgejo link a new sign-in to an existing account with the
-# same address, thus a user must not choose an address. The guard checks
+# Squared links a new sign-in to an existing account with the same
+# address, and the worker finds tenant members by it, thus a user must not
+# choose an address. The guard checks
 # this and the other email settings of the realm.
 setup_keycloak_email() {
   log "letting only administrators change email addresses in Keycloak"

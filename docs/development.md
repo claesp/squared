@@ -153,7 +153,7 @@ if the realm does not exist. The realm has:
 | Client `squared-guard` | Service account of the guard. It has `manage-realm` and keeps the permission `protected-groups` up to date. It reads the client mappers with `view-clients` and the identity providers with `view-identity-providers`. |
 | Client `squared-worker` | Service account of the worker. It manages the groups `tenant-<tenant>-<role>`. `hack/kind-up.sh` limits it with fine-grained admin permissions. |
 | Role `squared-protected-group-admin` | Nobody has it. Only its holders could manage the protected groups. |
-| User profile | Only administrators can change the attribute `email` (`setup_keycloak_email` in `hack/kind-up.sh`), because Squared and Forgejo link accounts by the address. |
+| User profile | Only administrators can change the attribute `email` (`setup_keycloak_email` in `hack/kind-up.sh`), because Squared links accounts by the address and the worker finds members by it. |
 | Group `squared-admins` | Administrators of Squared, Argo CD, Harbor and Forgejo. |
 | User `platform-admin` (`platform-admin@squared.test`) | Member of `squared-admins`. Password in `.dev/keycloak-admin-user-password`. |
 | User `dev` (`dev@squared.test`) | A normal user. Password in `.dev/keycloak-dev-user-password`. |
@@ -223,7 +223,11 @@ all `*.localhost` names.
    same for Harbor: it changes the administrator group through the Harbor
    API, then renames the key `oidc_admin_group` in the database.
 5. Signs in to Argo CD, Harbor and Forgejo through Keycloak as both users,
-   and checks the administrator rights in each service.
+   and checks the administrator rights in each service. Then it signs in
+   to Forgejo as two new Keycloak users with the address
+   `dev@e2e-intruder.test` and with the name and address of the local
+   Forgejo administrator, and checks that neither gets an existing
+   account.
 6. Makes a tenant, adds `dev` as developer, and waits until `dev` has the
    Harbor project and can read the Forgejo repository.
 7. Pushes the example image as `dev` with the Harbor CLI secret.

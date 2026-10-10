@@ -1,12 +1,13 @@
 // Package forgejo is a client for the parts of the Forgejo API that the
-// worker uses: organizations, repositories and file changes.
+// worker uses: organizations, repositories, file changes, teams and the
+// accounts of team members.
 package forgejo
 
 import (
 	"context"
-	"crypto/rand"
 	"crypto/sha1"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -358,11 +359,11 @@ func (c *Client) RemoveTeamMember(ctx context.Context, teamID int64, user string
 	return err
 }
 
-// UserNameFor returns the Forgejo user name for an email address: the part
-// before "@", with characters that Forgejo does not accept changed to "-".
-// Forgejo uses the same rule at the first sign-in (USERNAME = email).
-func UserNameFor(email string) string {
-	local, _, _ := strings.Cut(strings.ToLower(email), "@")
+// UserNameFor returns a Forgejo user name for a user name of the identity
+// provider (or an email address: then the part before "@"), with
+// characters that Forgejo does not accept changed to "-".
+func UserNameFor(name string) string {
+	local, _, _ := strings.Cut(strings.ToLower(name), "@")
 	var b strings.Builder
 	for _, r := range local {
 		switch {
@@ -372,7 +373,7 @@ func UserNameFor(email string) string {
 			b.WriteRune('-')
 		}
 	}
-	name := strings.Trim(b.String(), ".-_")
+	name = strings.Trim(b.String(), ".-_")
 	if name == "" {
 		name = "user"
 	}
@@ -382,52 +383,74 @@ func UserNameFor(email string) string {
 	return name
 }
 
-// EnsureUser returns the name of the user with an email address. If no such
-// user exists, it makes one with a random password that nobody knows. At
-// the first sign-in with the identity provider, Forgejo links the account
-// by the email address (ACCOUNT_LINKING = auto). The caller needs
-// administrator rights.
-func (c *Client) EnsureUser(ctx context.Context, email, fullName string) (string, error) {
-	base := UserNameFor(email)
+// LinkedUser is a Forgejo account that belongs to a user of an OAuth2
+// authentication source, for example Keycloak.
+type LinkedUser struct {
+	SourceID int64  // ID of the authentication source in Forgejo.
+	Subject  string // The subject (sub) of the user at the identity provider.
+	Username string // Wanted user name; Forgejo gets UserNameFor(Username).
+	Email    string
+	FullName string
+}
+
+// ErrEmailInUse tells that Forgejo has an account with the email address
+// that belongs to no user of the authentication source, or to another one.
+var ErrEmailInUse = errors.New("forgejo: the email address belongs to another account")
+
+// EnsureLinkedUser returns the name of the account of a user of an OAuth2
+// authentication source. If the account does not exist, it makes one that
+// belongs to the source and the subject, without a password. At the
+// sign-in, Forgejo finds the account by the subject, never by the name or
+// by the email address. The function never takes an existing account: if
+// another account has the email address, it returns ErrEmailInUse. The
+// caller needs administrator rights.
+func (c *Client) EnsureLinkedUser(ctx context.Context, u LinkedUser) (string, error) {
+	if u.SourceID <= 0 || u.Subject == "" {
+		return "", errors.New("forgejo: a linked user needs a source ID and a subject")
+	}
+	var found []struct {
+		Login     string `json:"login"`
+		SourceID  int64  `json:"source_id"`
+		LoginName string `json:"login_name"`
+	}
+	path := fmt.Sprintf("/admin/users?source_id=%d&login_name=%s&limit=50", u.SourceID, url.QueryEscape(u.Subject))
+	if err := c.rest.Do(ctx, http.MethodGet, path, nil, &found); err != nil {
+		return "", fmt.Errorf("find user %s: %w", u.Subject, err)
+	}
+	for _, f := range found {
+		if f.SourceID == u.SourceID && f.LoginName == u.Subject {
+			return f.Login, nil
+		}
+	}
+
+	base := UserNameFor(u.Username)
 	for i := 1; i <= 20; i++ {
 		name := base
 		if i > 1 {
 			name = fmt.Sprintf("%s-%d", base, i)
 		}
-		var u struct {
-			Email string `json:"email"`
-		}
-		err := c.rest.Do(ctx, http.MethodGet, "/users/"+url.PathEscape(name), nil, &u)
-		if err == nil {
-			if strings.EqualFold(u.Email, email) {
-				return name, nil
-			}
-			continue // The name belongs to a different person.
-		}
-		if !rest.HasStatus(err, http.StatusNotFound) {
-			return "", fmt.Errorf("find user %s: %w", name, err)
-		}
 		in := map[string]any{
 			"username":             name,
-			"email":                email,
-			"full_name":            fullName,
-			"password":             randomPassword(),
+			"email":                u.Email,
+			"full_name":            u.FullName,
+			"source_id":            u.SourceID,
+			"login_name":           u.Subject,
 			"must_change_password": false,
 			"send_notify":          false,
 			"visibility":           "private",
 		}
-		err = c.rest.Do(ctx, http.MethodPost, "/admin/users", in, nil)
-		if rest.HasStatus(err, http.StatusUnprocessableEntity) {
-			continue // A reserved name, for example "admin". Try the next name.
+		err := c.rest.Do(ctx, http.MethodPost, "/admin/users", in, nil)
+		var se *rest.StatusError
+		if errors.As(err, &se) && se.Code == http.StatusUnprocessableEntity {
+			if strings.Contains(se.Body, "e-mail already in use") {
+				return "", fmt.Errorf("%w: %s; an administrator must check that account", ErrEmailInUse, u.Email)
+			}
+			continue // The name is taken or reserved, for example "admin".
 		}
 		if err != nil {
 			return "", fmt.Errorf("make user %s: %w", name, err)
 		}
 		return name, nil
 	}
-	return "", fmt.Errorf("no free user name for %s", email)
-}
-
-func randomPassword() string {
-	return "Sq-" + rand.Text() + rand.Text()
+	return "", fmt.Errorf("no free user name for %s", u.Username)
 }

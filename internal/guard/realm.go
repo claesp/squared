@@ -10,10 +10,10 @@ import (
 
 // checkRealmEmail checks that a person can get only an email address that
 // the person owns, or that an administrator gave. Squared links a new
-// sign-in to an existing account with the same verified address. Forgejo
-// links by the address (and by its first part) without a check of the
-// verification. Thus an address that a person can choose gives the account
-// of another person. ignore are identity providers and user federation
+// sign-in to an existing account with the same verified address, and the
+// worker finds the Keycloak user of a tenant member by the address. Thus
+// an address that a person can choose gives the account or the access of
+// another person. ignore are identity providers and user federation
 // providers that an operator checked.
 func checkRealmEmail(r keycloak.RealmEmail, ignore []string) ([]string, error) {
 	var warnings, problems []string
@@ -50,7 +50,7 @@ func checkRealmEmail(r keycloak.RealmEmail, ignore []string) ([]string, error) {
 		}
 	}
 	if len(problems) > 0 {
-		return warnings, fmt.Errorf("the email settings of the Keycloak realm let a person choose an address: %s. Squared and Forgejo link accounts by the address. The guard keeps the current protection",
+		return warnings, fmt.Errorf("the email settings of the Keycloak realm let a person choose an address: %s. Squared links accounts by the address, and the worker gives tenant access by it. The guard keeps the current protection",
 			strings.Join(problems, "; "))
 	}
 	return warnings, nil

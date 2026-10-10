@@ -82,6 +82,7 @@ OIDC is enabled when `SQUARED_OIDC_ISSUER` is set.
 | `SQUARED_KEYCLOAK_REALM` | (necessary with Keycloak) | Realm of the groups. |
 | `SQUARED_KEYCLOAK_CLIENT_ID` | (necessary with Keycloak) | Client with a service account (client credentials grant). |
 | `SQUARED_KEYCLOAK_CLIENT_SECRET` (secret) | (necessary with Keycloak) | Secret of that client. |
+| `SQUARED_FORGEJO_AUTH_SOURCE_ID` | (necessary with Keycloak) | ID of the Keycloak authentication source in Forgejo (`forgejo admin auth list`). The worker makes the Forgejo accounts of tenant members for this source and their Keycloak user IDs. Forgejo has no API for the sources. |
 | `SQUARED_TENANT_GROUP_PREFIX` | `tenant-` | Start of the group names `<prefix><tenant>-<role>` and of the Forgejo team names `<prefix><tenant>`. |
 | `SQUARED_WORKER_CONCURRENCY` | `4` | Number of tasks in progress at the same time. |
 | `SQUARED_WORKER_MAX_ATTEMPTS` | `15` | Attempts before a task goes to the dead queue. |

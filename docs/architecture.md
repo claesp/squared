@@ -296,8 +296,10 @@ reconcile run):
   changes members.
 - **Forgejo.** A team `tenant-<tenant>` has read access to the tenant
   repository. The worker makes the Forgejo account of each member before
-  the first Forgejo sign-in; Forgejo links it by the verified email
-  address at that sign-in. All roles get read access only: Squared is the
+  the first Forgejo sign-in. The account belongs to the Keycloak user ID
+  (`sub`) of the member; Forgejo finds it by that ID at the sign-in,
+  never by the name or the email address. A member without a Keycloak
+  account gets no Forgejo account. All roles get read access only: Squared is the
   only writer of the manifests (D1), and a manual commit would not change
   a deployment (D3).
 - **Changes by hand** in these systems do not stay: the next sync removes

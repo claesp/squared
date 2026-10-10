@@ -50,9 +50,10 @@ type claimRule struct {
 }
 
 // claimRules returns the rules for the group claims and for the email
-// claims. Squared and Forgejo link a new sign-in to an existing account
-// with the same email address, and Squared does this only if
-// email_verified is true. Thus these claims must come from the user: a
+// claims. Squared links a new sign-in to an existing account with the
+// same email address if email_verified is true, and the worker finds the
+// Keycloak user of a member by the address. Thus these claims must come
+// from the user: a
 // fixed value, another attribute (which the user can perhaps change), or
 // a value from the sign-in request gives the account of another person.
 func claimRules(groupClaims []string) []claimRule {

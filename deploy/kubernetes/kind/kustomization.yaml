@@ -81,6 +81,10 @@ configMapGenerator:
       - SQUARED_GIT_ORG=squared
       - SQUARED_FORGEJO_URL=http://forgejo.localhost:30300
       - SQUARED_FORGEJO_TOKEN_FILE=/etc/squared/secrets/forgejo-token
+      # ID of the authentication source "keycloak" in Forgejo. The worker
+      # makes the accounts of tenant members for this source. Forgejo has
+      # no API for the sources; hack/kind-up.sh checks the value.
+      - SQUARED_FORGEJO_AUTH_SOURCE_ID=1
       - SQUARED_ARGOCD_REPO_URL=http://forgejo.localhost:30300
       - SQUARED_ARGOCD_NAMESPACE=argocd
       - SQUARED_HARBOR_URL=http://harbor.harbor.svc.cluster.local

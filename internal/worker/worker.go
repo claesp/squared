@@ -43,7 +43,10 @@ type Worker struct {
 	harbor   *harbor.Client
 	kube     *kube.Client
 	keycloak *keycloak.Client // nil: no access sync.
-	log      *slog.Logger
+	// forgejoSource is the ID of the Keycloak authentication source in
+	// Forgejo. The accounts of tenant members belong to it.
+	forgejoSource int64
+	log           *slog.Logger
 }
 
 // New returns a Worker.

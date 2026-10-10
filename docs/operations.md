@@ -100,8 +100,16 @@ For the copy of tenant members (decision D13 in the architecture):
    API. See [security.md](security.md) for the reasons.
 3. Set the `SQUARED_KEYCLOAK_*` variables of the worker.
 4. In Forgejo, make the bot of the worker an administrator and give its
-   token the scope `write:admin`. Set `ACCOUNT_LINKING = auto` in
-   `[oauth2_client]`.
+   token the scope `write:admin`. In `[oauth2_client]`, set
+   `ACCOUNT_LINKING = disabled` and `USERNAME = nickname`. Set
+   `SQUARED_FORGEJO_AUTH_SOURCE_ID` of the worker to the ID of the Keycloak
+   authentication source (`forgejo admin auth list`).
+5. If Forgejo has accounts from an earlier version of Squared, which
+   Forgejo linked by the email address, give each of them its Keycloak
+   user ID: `PATCH /api/v1/admin/users/<name>` with `source_id` and
+   `login_name` (the Keycloak user ID). Check each account by hand. Until
+   then, the access sync of the tenant fails with "the email address
+   belongs to another account".
 
 The files in [`deploy/kind`](../deploy/kind) and the functions
 `setup_harbor` and `install_charts` in

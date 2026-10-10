@@ -141,6 +141,45 @@ check_sso() {
   log "$user signs in to Argo CD, Harbor and Forgejo with one Keycloak session (administrator: $admin)"
 }
 
+# check_forgejo_linking signs in to Forgejo as two new Keycloak users who
+# try to get existing Forgejo accounts:
+#   - e2e-intruder has the address dev@e2e-intruder.test. Forgejo must not
+#     give it the account "dev" (the first part of the address).
+#   - forgejo-admin has the user name and the address of the local Forgejo
+#     administrator. The sign-in must fail.
+# Forgejo must find accounts only by the Keycloak user ID.
+check_forgejo_linking() {
+  local at kc_api="${KEYCLOAK_URL}/admin/realms/squared" pw="$WORK/intruder-password" source_id user email sub out got
+  at="$(curl -fsS "${KEYCLOAK_URL}/realms/master/protocol/openid-connect/token" -d grant_type=password -d client_id=admin-cli \
+    -d username=admin --data-urlencode "password=$(secret keycloak-admin-password)" | jq -r .access_token)"
+  openssl rand -base64 24 | tr -d '/+=\n' > "$pw"
+  source_id="$(k -n forgejo exec deploy/forgejo -c forgejo -- gitea admin auth list | awk '$2 == "keycloak" {print $1}')"
+  fj_admin() { curl -fsS -u "forgejo-admin:$(secret forgejo-admin-password)" "${FORGEJO_URL}/api/v1$1" "${@:2}"; }
+  for user in e2e-intruder forgejo-admin; do
+    email="dev@e2e-intruder.test"
+    [[ "$user" == forgejo-admin ]] && email="$(fj_admin /users/forgejo-admin | jq -r .email)"
+    curl -fsS -X POST -H "Authorization: Bearer $at" -H 'Content-Type: application/json' "$kc_api/users" \
+      -d "$(jq -n --arg u "$user" --arg e "$email" --rawfile p "$pw" '{username: $u, email: $e, emailVerified: true, enabled: true,
+        firstName: "E2e", lastName: "Intruder", credentials: [{type: "password", value: $p, temporary: false}]}')" >/dev/null
+    sub="$(curl -fsS -H "Authorization: Bearer $at" "$kc_api/users?username=$user&exact=true" | jq -r '.[0].id')"
+    out="$("$SSO" -user "$user" -password-file "$pw" "login=${FORGEJO_URL}/user/oauth2/keycloak" "get=${FORGEJO_URL}/")" \
+      || die "the Keycloak sign-in of $user failed"
+    got="$(fj_admin "/admin/users?source_id=$source_id&login_name=$sub" | jq -r '[.[].login] | join(",")')"
+    if [[ "$user" == e2e-intruder ]]; then
+      [[ "$got" == e2e-intruder ]] || die "Forgejo: the Keycloak user e2e-intruder has the account '$got', not its own"
+      jq -s -e '.[1].body | contains("Dashboard")' <<<"$out" >/dev/null || die "Forgejo: e2e-intruder is not signed in"
+      fj_admin /admin/users/e2e-intruder -X DELETE >/dev/null
+    else
+      [[ -z "$got" ]] || die "Forgejo: the Keycloak user forgejo-admin got the account '$got'"
+      jq -s -e '.[1].body | contains("Dashboard") | not' <<<"$out" >/dev/null \
+        || die "Forgejo: the Keycloak user forgejo-admin is signed in to an existing account"
+    fi
+    curl -fsS -X DELETE -H "Authorization: Bearer $at" "$kc_api/users/$sub" >/dev/null
+  done
+  [[ "$(fj_admin /users/dev | jq -r .email)" == dev@squared.test ]] || die "Forgejo: the account dev changed"
+  log "Forgejo finds accounts by the Keycloak user ID, not by the user name or the email address"
+}
+
 # kc_token USER PASSWORD prints a Keycloak access token for the API. It
 # uses the password grant of the development client "squared-cli".
 # dev_access prints the HTTP status of the Harbor project and of the
@@ -445,6 +484,9 @@ check_guard
 step "sign in to Argo CD, Harbor and Forgejo with Keycloak"
 check_sso "$ADMIN_USER" "$DEV/keycloak-admin-user-password" true
 check_sso dev "$DEV/keycloak-dev-user-password" false
+
+step "Forgejo accounts belong to Keycloak users"
+check_forgejo_linking
 
 step "make tenant $TENANT"
 api POST /tenants "$(jq -n --arg s "$TENANT" --arg o "$ADMIN_EMAIL" \

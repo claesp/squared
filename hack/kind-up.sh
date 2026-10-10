@@ -232,6 +232,17 @@ ALTER ROLE squared_guard PASSWORD :'pw';
 SQL
 }
 
+# setup_keycloak_email lets only administrators set the email addresses.
+# Squared and Forgejo link a new sign-in to an existing account with the
+# same address, thus a user must not choose an address. The guard checks
+# this and the other email settings of the realm.
+setup_keycloak_email() {
+  log "letting only administrators change email addresses in Keycloak"
+  local profile
+  profile="$(kc GET /users/profile | jq '.attributes |= map(if .name == "email" then .permissions.edit = ["admin"] else . end)')"
+  kc PUT /users/profile "$profile" >/dev/null
+}
+
 # Groups that are protected from the start. After the start, the Squared
 # guard keeps the list up to date: it protects each group that a service
 # configuration gives rights to.
@@ -390,6 +401,7 @@ deploy_squared() {
 create_cluster
 configure_dns
 deploy_keycloak
+setup_keycloak_email
 setup_keycloak_permissions
 install_charts
 setup_forgejo

@@ -360,7 +360,8 @@
           "manage-realm",
           "view-users",
           "query-groups",
-          "view-clients"
+          "view-clients",
+          "view-identity-providers"
         ]
       }
     }

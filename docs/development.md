@@ -150,9 +150,10 @@ if the realm does not exist. The realm has:
 | Client `harbor` | Harbor. Confidential. |
 | Client `forgejo` | Forgejo. Confidential. |
 | Client `squared-cli` | Development only: the password grant for API tokens in the end-to-end test. |
-| Client `squared-guard` | Service account of the guard. It has `manage-realm` and keeps the permission `protected-groups` up to date. It reads the client mappers with `view-clients`. |
+| Client `squared-guard` | Service account of the guard. It has `manage-realm` and keeps the permission `protected-groups` up to date. It reads the client mappers with `view-clients` and the identity providers with `view-identity-providers`. |
 | Client `squared-worker` | Service account of the worker. It manages the groups `tenant-<tenant>-<role>`. `hack/kind-up.sh` limits it with fine-grained admin permissions. |
 | Role `squared-protected-group-admin` | Nobody has it. Only its holders could manage the protected groups. |
+| User profile | Only administrators can change the attribute `email` (`setup_keycloak_email` in `hack/kind-up.sh`), because Squared and Forgejo link accounts by the address. |
 | Group `squared-admins` | Administrators of Squared, Argo CD, Harbor and Forgejo. |
 | User `platform-admin` (`platform-admin@squared.test`) | Member of `squared-admins`. Password in `.dev/keycloak-admin-user-password`. |
 | User `dev` (`dev@squared.test`) | A normal user. Password in `.dev/keycloak-dev-user-password`. |
@@ -212,7 +213,9 @@ all `*.localhost` names.
    with a `g` line in the policies of an AppProject role, and checks that an
    unknown claim in the Argo CD `scopes` gives an error, and that Keycloak
    mappers that write `groups` on the client `argocd` and `email` from
-   another attribute on the client `forgejo` give errors. It does the same
+   another attribute on the client `forgejo` give errors. It also turns on
+   duplicate email addresses and lets users edit their address in the
+   realm, and checks the errors. It does the same
    with a change of the Forgejo administrator group through the Forgejo
    command line, which writes the same table as the web interface. Then it
    renames the field `AdminGroup` in the database, as an upgrade could, and

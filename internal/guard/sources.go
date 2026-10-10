@@ -47,6 +47,8 @@ type SourceConfig struct {
 	//                    that has only the group settings (URL, PasswordFile, Name)
 	//   keycloak-mappers the mappers of the Keycloak clients that the services use
 	//                    (Clients, Audiences, Claims). It gives no groups, only errors.
+	//   keycloak-realm   the email settings of the Keycloak realm. It gives no
+	//                    groups, only errors.
 	Type         string `json:"type"`
 	Service      string `json:"service"`
 	Namespace    string `json:"namespace,omitempty"`
@@ -65,7 +67,8 @@ type SourceConfig struct {
 	// IgnoreFields are new fields of a service configuration that an
 	// operator checked: they give no rights. The types argocd-rbac (keys),
 	// argocd-projects ("spec.<field>" or "roles.<field>"), forgejo-database,
-	// harbor-database and keycloak-mappers (mapper types) use it.
+	// harbor-database, keycloak-mappers (mapper types) and keycloak-realm
+	// (identity providers and user federation) use it.
 	IgnoreFields []string `json:"ignoreFields,omitempty"`
 }
 
@@ -87,14 +90,16 @@ func LoadFile(path string) (*FileConfig, error) {
 	return &cfg, nil
 }
 
-// ClientReader reads the mappers of the Keycloak clients.
-type ClientReader interface {
+// KeycloakReader reads the mappers of the Keycloak clients and the email
+// settings of the realm.
+type KeycloakReader interface {
 	Clients(ctx context.Context) ([]keycloak.ClientMappers, error)
 	ClientScopes(ctx context.Context) ([]keycloak.ClientScope, error)
+	RealmEmailSettings(ctx context.Context) (*keycloak.RealmEmail, error)
 }
 
 // BuildSources makes the sources of a configuration.
-func BuildSources(cfg *FileConfig, kc *kube.Client, idp ClientReader) ([]Source, error) {
+func BuildSources(cfg *FileConfig, kc *kube.Client, idp KeycloakReader) ([]Source, error) {
 	tenants := tenantGroups{prefix: cfg.TenantGroupPrefix, projectPrefix: cfg.ProjectPrefix}
 	var sources []Source
 	for i, sc := range cfg.Sources {
@@ -142,6 +147,8 @@ func BuildSources(cfg *FileConfig, kc *kube.Client, idp ClientReader) ([]Source,
 				sc.Claims = []string{"groups"}
 			}
 			sources = append(sources, &keycloakMappersSource{sc: sc, idp: idp})
+		case "keycloak-realm":
+			sources = append(sources, &keycloakRealmSource{sc: sc, idp: idp})
 		case "forgejo-init":
 			if sc.Key == "" {
 				sc.Key = "configure_gitea.sh"
@@ -463,7 +470,7 @@ func (s *harborDatabaseSource) References(ctx context.Context) ([]Reference, []s
 // services link accounts by the email address. See claimRules.
 type keycloakMappersSource struct {
 	sc  SourceConfig
-	idp ClientReader
+	idp KeycloakReader
 }
 
 func (s *keycloakMappersSource) Name() string { return s.sc.Service + " client mappers" }
@@ -479,5 +486,23 @@ func (s *keycloakMappersSource) References(ctx context.Context) ([]Reference, []
 	}
 	warnings, err := checkKeycloakMappers(clients, scopes, mapperRules{
 		Clients: s.sc.Clients, Audiences: s.sc.Audiences, Claims: s.sc.Claims, Ignore: s.sc.IgnoreFields})
+	return nil, warnings, err
+}
+
+// keycloakRealmSource checks that a person can get only an email address
+// that the person owns. See checkRealmEmail.
+type keycloakRealmSource struct {
+	sc  SourceConfig
+	idp KeycloakReader
+}
+
+func (s *keycloakRealmSource) Name() string { return s.sc.Service + " realm email settings" }
+
+func (s *keycloakRealmSource) References(ctx context.Context) ([]Reference, []string, error) {
+	settings, err := s.idp.RealmEmailSettings(ctx)
+	if err != nil {
+		return nil, nil, err
+	}
+	warnings, err := checkRealmEmail(*settings, s.sc.IgnoreFields)
 	return nil, warnings, err
 }

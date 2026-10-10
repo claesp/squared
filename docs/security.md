@@ -98,12 +98,15 @@ controls that it uses. Read [architecture.md](architecture.md) first.
   makes a missing group before anybody else can.
 - **Rights of the guard.** The guard has the realm-management roles
   `manage-realm` (no smaller role can change fine-grained admin
-  permissions), `view-users`, `query-groups` and `view-clients` (to read
-  the client mappers and to find the `admin-permissions` client), and the
+  permissions), `view-users`, `query-groups`, `view-clients` (to read
+  the client mappers and to find the `admin-permissions` client) and
+  `view-identity-providers` (to read the email trust of identity
+  providers), and the
   group permission of the worker (to make groups). Keycloak removes the
   client secrets from the answers unless the account can manage the
   client, and only an account that can manage a client can read its
-  secret: `view-clients` gives no secrets. It has no `manage-group-membership` on
+  secret: `view-clients` gives no secrets. It also removes the secrets of
+  identity providers and user federation from the answers. It has no `manage-group-membership` on
   users, thus it cannot change memberships. This is a strong account. The guard thus runs
   alone in the namespace `squared-guard`, accepts no connections, reads
   the configurations with read-only Kubernetes roles (named objects where
@@ -176,12 +179,29 @@ controls that it uses. Read [architecture.md](architecture.md) first.
   also when they are in no token: a later change of one flag would make
   them active. The end-to-end test adds a mapper that writes `groups` to
   the client `argocd`, and a mapper that writes `email` from the attribute
-  `nickname` to the client `forgejo`, and checks the errors. Limits: the
+  `nickname` to the client `forgejo`, and checks the errors. Limit: the
   guard does not read the client roles that `oidc-audience-resolve-mapper`
-  turns into audiences; give the service clients no client roles. It also
-  does not check the realm settings for email addresses: users must not
-  be able to set a verified address that they do not own, and two users
-  must not have the same address (the Keycloak default).
+  turns into audiences; give the service clients no client roles.
+- **Keycloak realm email settings.** A correct `email` mapper helps only
+  if a person can get only an address that the person owns, or that an
+  administrator gave. Forgejo links a first sign-in to an existing
+  account with the same user name (the first part of the address) or the
+  same address, and it does not look at `email_verified`. Squared links
+  by a verified address. Keycloak permits users to change their own
+  address by default; `hack/kind-up.sh` permits it only to
+  administrators. The guard reads the realm settings:
+
+  | Setting | Result |
+  |---|---|
+  | `duplicateEmailsAllowed` is on | Error |
+  | The attribute `email` of the user profile has `user` in `permissions.edit` | Error |
+  | `registrationAllowed` is on and `verifyEmail` is off | Error |
+  | `registrationEmailAsUsername` and `editUsernameAllowed` are on | Error |
+  | An identity provider or user federation with `trustEmail` on | Error, until an operator adds its alias or name to `ignoreFields` |
+  | Another identity provider or user federation | Warning, until an operator adds its alias or name to `ignoreFields` |
+
+  The end-to-end test turns on `duplicateEmailsAllowed`, and lets users
+  edit their address, and checks the errors.
 - **Argo CD configuration.** Argo CD reads its RBAC only from the
   ConfigMap `argocd-rbac-cm` and from the AppProjects. The guard reads the
   same objects through the Kubernetes API, thus it sees all changes, also

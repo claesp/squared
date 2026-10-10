@@ -263,6 +263,24 @@ guard_reports_mapper() {
   wait_for "the guard has no errors after the mapper is removed" 60 guard_clean
 }
 
+# guard_reports_keycloak PATH CHANGE RESTORE PATTERN puts CHANGE to a path
+# of the Keycloak admin API of the realm, waits until the guard reports an
+# error that matches the pattern (jq regex), checks that the protection of
+# /squared-admins stays, and puts RESTORE.
+guard_reports_keycloak() {
+  local path="$1" change="$2" restore="$3" pattern="$4" at
+  at="$(curl -fsS "${KEYCLOAK_URL}/realms/master/protocol/openid-connect/token" -d grant_type=password -d client_id=admin-cli \
+    -d username=admin --data-urlencode "password=$(secret keycloak-admin-password)" | jq -r .access_token)"
+  curl -fsS -X PUT -H "Authorization: Bearer $at" -H 'Content-Type: application/json' \
+    "${KEYCLOAK_URL}/admin/realms/squared$path" -d "$change" >/dev/null
+  guard_reports() { guard_status | jq -e --arg p "$pattern" '[.errors[]? | select(test($p))] | length > 0' >/dev/null; }
+  wait_for "the guard reports the change of $pattern" 60 guard_reports
+  [[ "$(worker_may_add_dev squared-admins)" == 403 ]] || die "the protection of /squared-admins is gone after the Keycloak change"
+  curl -fsS -X PUT -H "Authorization: Bearer $at" -H 'Content-Type: application/json' \
+    "${KEYCLOAK_URL}/admin/realms/squared$path" -d "$restore" >/dev/null
+  wait_for "the guard has no errors after the Keycloak change is undone" 60 guard_clean
+}
+
 check_guard() {
   local st service group="e2e-ops-$TENANT" policy
   # All four services refer to the administrator group.
@@ -325,6 +343,20 @@ YAML
     config: {"claim.name": "email", "user.attribute": "nickname", "id.token.claim": "false", "access.token.claim": "false",
       "userinfo.token.claim": "false"}}')" forgejo 'mapper "e2e-guard" \(type oidc-usermodel-attribute-mapper\) writes the email claim email'
   log "the guard checks the group and email mappers of the Keycloak service clients"
+
+  # Realm settings that let a person choose an email address. Keycloak
+  # turns off the sign-in with the address when it permits duplicates, thus
+  # the restore turns it on again.
+  guard_reports_keycloak "" '{"duplicateEmailsAllowed": true}' '{"duplicateEmailsAllowed": false, "loginWithEmailAllowed": true}' \
+    'duplicateEmailsAllowed is on'
+  local profile at
+  at="$(curl -fsS "${KEYCLOAK_URL}/realms/master/protocol/openid-connect/token" -d grant_type=password -d client_id=admin-cli \
+    -d username=admin --data-urlencode "password=$(secret keycloak-admin-password)" | jq -r .access_token)"
+  profile="$(curl -fsS -H "Authorization: Bearer $at" "${KEYCLOAK_URL}/admin/realms/squared/users/profile")"
+  guard_reports_keycloak /users/profile \
+    "$(jq '.attributes |= map(if .name == "email" then .permissions.edit = ["admin", "user"] else . end)' <<<"$profile")" \
+    "$profile" 'users can change their address'
+  log "the guard checks the email settings of the Keycloak realm"
 
   # A change of the administrator group in Forgejo, as in the web
   # interface. The Forgejo command line writes the same database table.

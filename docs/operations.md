@@ -119,9 +119,12 @@ permission `protected-groups` up to date. To install it in production:
 
 1. Make a confidential client `squared-guard` with only "service
    accounts" on. Give its service account the client roles `manage-realm`,
-   `view-users`, `query-groups` and `view-clients` of `realm-management`.
-   With `view-clients` the guard reads the client mappers and finds the
-   `admin-permissions` client. It gives no client secrets.
+   `view-users`, `query-groups`, `view-clients` and
+   `view-identity-providers` of `realm-management`. With `view-clients`
+   the guard reads the client mappers and finds the `admin-permissions`
+   client; with `view-identity-providers` it reads the email trust of the
+   identity providers. Keycloak gives it no secrets. In the user profile
+   of the realm, permit only `admin` to edit the attribute `email`.
 2. Make a user policy for this service account, and an aggregated policy
    with the decision strategy "Affirmative" that contains the policies of
    the worker and of the guard. Use the aggregated policy in the permission

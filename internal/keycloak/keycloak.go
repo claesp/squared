@@ -12,6 +12,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -367,4 +368,107 @@ func (c *Client) ClientScopes(ctx context.Context) ([]ClientScope, error) {
 		return nil, fmt.Errorf("list client scopes: %w", err)
 	}
 	return scopes, nil
+}
+
+// RealmEmail are the realm settings that decide which email addresses the
+// users can have.
+type RealmEmail struct {
+	DuplicateEmailsAllowed      bool
+	RegistrationAllowed         bool
+	RegistrationEmailAsUsername bool
+	EditUsernameAllowed         bool
+	VerifyEmail                 bool
+	// EmailEditableByUser tells that the user profile permits users to
+	// change their own address.
+	EmailEditableByUser bool
+	IdentityProviders   []IdentityProvider
+	UserFederation      []UserFederation
+}
+
+// IdentityProvider is an identity provider of the realm (brokering).
+type IdentityProvider struct {
+	Alias      string
+	Enabled    bool
+	TrustEmail bool
+}
+
+// UserFederation is a user storage provider, for example LDAP.
+type UserFederation struct {
+	Name       string
+	ProviderID string
+	TrustEmail bool
+}
+
+// RealmEmailSettings reads the email settings of the realm. It needs
+// view-realm (or manage-realm) and view-identity-providers. Keycloak
+// removes the secrets of identity providers and user federation from the
+// answers, and this function reads only the fields above.
+func (c *Client) RealmEmailSettings(ctx context.Context) (*RealmEmail, error) {
+	var realm struct {
+		DuplicateEmailsAllowed      bool `json:"duplicateEmailsAllowed"`
+		RegistrationAllowed         bool `json:"registrationAllowed"`
+		RegistrationEmailAsUsername bool `json:"registrationEmailAsUsername"`
+		EditUsernameAllowed         bool `json:"editUsernameAllowed"`
+		VerifyEmail                 bool `json:"verifyEmail"`
+	}
+	if err := c.rest.Do(ctx, http.MethodGet, "", nil, &realm); err != nil {
+		return nil, fmt.Errorf("read realm: %w", err)
+	}
+	out := &RealmEmail{
+		DuplicateEmailsAllowed:      realm.DuplicateEmailsAllowed,
+		RegistrationAllowed:         realm.RegistrationAllowed,
+		RegistrationEmailAsUsername: realm.RegistrationEmailAsUsername,
+		EditUsernameAllowed:         realm.EditUsernameAllowed,
+		VerifyEmail:                 realm.VerifyEmail,
+	}
+
+	var profile struct {
+		Attributes []struct {
+			Name        string `json:"name"`
+			Permissions struct {
+				Edit []string `json:"edit"`
+			} `json:"permissions"`
+		} `json:"attributes"`
+	}
+	if err := c.rest.Do(ctx, http.MethodGet, "/users/profile", nil, &profile); err != nil {
+		return nil, fmt.Errorf("read user profile: %w", err)
+	}
+	found := false
+	for _, a := range profile.Attributes {
+		if a.Name == "email" {
+			found = true
+			out.EmailEditableByUser = slices.Contains(a.Permissions.Edit, "user")
+		}
+	}
+	if !found {
+		return nil, errors.New("the user profile has no attribute email")
+	}
+
+	var idps []struct {
+		Alias      string `json:"alias"`
+		Enabled    bool   `json:"enabled"`
+		TrustEmail bool   `json:"trustEmail"`
+	}
+	if err := c.rest.Do(ctx, http.MethodGet, "/identity-provider/instances?first=0&max=1000", nil, &idps); err != nil {
+		return nil, fmt.Errorf("list identity providers: %w", err)
+	}
+	for _, p := range idps {
+		out.IdentityProviders = append(out.IdentityProviders, IdentityProvider{Alias: p.Alias, Enabled: p.Enabled, TrustEmail: p.TrustEmail})
+	}
+
+	var feds []struct {
+		Name       string `json:"name"`
+		ProviderID string `json:"providerId"`
+		Config     struct {
+			TrustEmail []string `json:"trustEmail"`
+		} `json:"config"`
+	}
+	if err := c.rest.Do(ctx, http.MethodGet, "/components?type="+url.QueryEscape("org.keycloak.storage.UserStorageProvider"), nil, &feds); err != nil {
+		return nil, fmt.Errorf("list user federation: %w", err)
+	}
+	for _, f := range feds {
+		out.UserFederation = append(out.UserFederation, UserFederation{Name: f.Name, ProviderID: f.ProviderID,
+			TrustEmail: slices.Contains(f.Config.TrustEmail, "true")})
+	}
+	return out, nil
 }

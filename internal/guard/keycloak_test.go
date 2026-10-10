@@ -142,6 +142,7 @@ func TestCheckKeycloakMappersIgnoreAndWarnings(t *testing.T) {
 type stubClients struct {
 	clients []keycloak.ClientMappers
 	scopes  []keycloak.ClientScope
+	realm   keycloak.RealmEmail
 }
 
 func (s stubClients) Clients(context.Context) ([]keycloak.ClientMappers, error) {
@@ -149,6 +150,10 @@ func (s stubClients) Clients(context.Context) ([]keycloak.ClientMappers, error) 
 }
 func (s stubClients) ClientScopes(context.Context) ([]keycloak.ClientScope, error) {
 	return s.scopes, nil
+}
+
+func (s stubClients) RealmEmailSettings(context.Context) (*keycloak.RealmEmail, error) {
+	return &s.realm, nil
 }
 
 func TestKeycloakMappersSource(t *testing.T) {

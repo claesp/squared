@@ -103,6 +103,13 @@ func makeForgejoTables(t *testing.T, conn *pgx.Conn) {
 			content text, type integer NOT NULL, created_unix bigint, updated_unix bigint);
 		CREATE TABLE repository (id bigserial PRIMARY KEY, owner_id bigint NOT NULL, owner_name text NOT NULL, name text NOT NULL);
 		CREATE TABLE deploy_key (id bigserial PRIMARY KEY, key_id bigint NOT NULL, repo_id bigint NOT NULL, name text NOT NULL,
-			fingerprint text, mode integer NOT NULL, created_unix bigint, updated_unix bigint);`)
+			fingerprint text, mode integer NOT NULL, created_unix bigint, updated_unix bigint);
+		CREATE TABLE team (id bigserial PRIMARY KEY, org_id bigint NOT NULL, name text NOT NULL, authorize integer NOT NULL,
+			includes_all_repositories boolean NOT NULL);
+		CREATE TABLE team_user (id bigserial PRIMARY KEY, org_id bigint NOT NULL, team_id bigint NOT NULL, uid bigint NOT NULL);
+		CREATE TABLE team_unit (id bigserial PRIMARY KEY, org_id bigint NOT NULL, team_id bigint NOT NULL, type integer NOT NULL,
+			access_mode integer NOT NULL);
+		CREATE TABLE team_repo (id bigserial PRIMARY KEY, org_id bigint NOT NULL, team_id bigint NOT NULL, repo_id bigint NOT NULL);
+		CREATE TABLE collaboration (id bigserial PRIMARY KEY, repo_id bigint NOT NULL, user_id bigint NOT NULL, mode integer NOT NULL);`)
 	storetest.Must(t, err)
 }

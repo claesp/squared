@@ -1,6 +1,6 @@
 -- Access of the Squared guard to the authentication sources of Forgejo,
--- to the owners of personal access tokens and SSH keys, and to the deploy
--- keys of the repositories.
+-- to the owners of personal access tokens and SSH keys, to the deploy keys
+-- of the repositories, and to the team and collaborator access.
 --
 -- Forgejo has no API for its authentication sources. A change in the
 -- Forgejo web interface is only in the table login_source. The column cfg
@@ -119,3 +119,39 @@ LEFT JOIN public_key k ON k.id = d.key_id;
 
 REVOKE ALL ON squared_guard_deploy_keys FROM PUBLIC;
 GRANT SELECT ON squared_guard_deploy_keys TO squared_guard;
+
+-- The users who have access to the code of the repositories of an
+-- organization through a team or as collaborators. The guard checks that
+-- only the users that Squared expects can push to the GitOps
+-- repositories. Access mode: 1 read, 2 write, 3 admin, 4 owner. A team
+-- with admin or owner access has it for all units; else the access to the
+-- code is in team_unit (type 1). repos is "*" for a team with all
+-- repositories of the organization. Forgejo site administrators are not in
+-- the view.
+DROP VIEW IF EXISTS squared_guard_repo_access;
+
+CREATE VIEW squared_guard_repo_access WITH (security_barrier) AS
+SELECT o.name                                   AS org_name,
+       'team'                                   AS kind,
+       t.name                                   AS via,
+       u.name                                   AS user_name,
+       CASE WHEN t.authorize >= 3 THEN t.authorize
+            ELSE coalesce((SELECT max(tu.access_mode) FROM team_unit tu WHERE tu.team_id = t.id AND tu.type = 1), 0)
+       END                                      AS mode,
+       CASE WHEN t.includes_all_repositories THEN '*'
+            ELSE coalesce((SELECT string_agg(r.name, ',' ORDER BY r.name)
+                           FROM team_repo tr JOIN repository r ON r.id = tr.repo_id
+                           WHERE tr.team_id = t.id), '')
+       END                                      AS repos
+FROM team t
+JOIN "user" o ON o.id = t.org_id
+JOIN team_user tm ON tm.team_id = t.id
+JOIN "user" u ON u.id = tm.uid
+UNION ALL
+SELECT r.owner_name, 'collaborator', r.name, u.name, c.mode, r.name
+FROM collaboration c
+JOIN repository r ON r.id = c.repo_id
+JOIN "user" u ON u.id = c.user_id;
+
+REVOKE ALL ON squared_guard_repo_access FROM PUBLIC;
+GRANT SELECT ON squared_guard_repo_access TO squared_guard;

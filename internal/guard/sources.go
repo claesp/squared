@@ -58,6 +58,10 @@ type SourceConfig struct {
 	//   forgejo-deploy-keys  the deploy keys of the repositories of the organization Org,
 	//                    in the Forgejo database (URL, PasswordFile, Name, Org). No
 	//                    groups, only errors.
+	//   forgejo-writers  the users with access to the code of the repositories of the
+	//                    organization Org through teams or as collaborators, in the
+	//                    Forgejo database (URL, PasswordFile, Name, Org, Writers). No
+	//                    groups, only errors.
 	//   forgejo-config   the sign-in and registration settings in the Forgejo app.ini,
 	//                    from the sidecar "squared forgejo-config" (URL). No groups,
 	//                    only errors.
@@ -79,16 +83,20 @@ type SourceConfig struct {
 	// SourceID is for forgejo-credentials: the ID of the Keycloak authentication
 	// source in Forgejo.
 	SourceID int64 `json:"sourceId,omitempty"`
-	// Org is for forgejo-deploy-keys: the Forgejo organization of the
+	// Org is for forgejo-deploy-keys and forgejo-writers: the Forgejo organization of the
 	// GitOps repositories (default "squared", as SQUARED_GIT_ORG).
 	Org string `json:"org,omitempty"`
+	// Writers is for forgejo-writers: the users that may push to the
+	// repositories of Org, for example the bot of the worker.
+	Writers []string `json:"writers,omitempty"`
 	// IgnoreFields are new fields of a service configuration that an
 	// operator checked: they give no rights. The types argocd-rbac (keys),
 	// argocd-projects ("spec.<field>" or "roles.<field>"), forgejo-database,
 	// harbor-database, keycloak-mappers (mapper types), keycloak-realm
 	// (identity providers and user federation), forgejo-config
-	// ("<section>.<key>") and forgejo-deploy-keys ("<repository>/<key name>")
-	// use it.
+	// ("<section>.<key>"), forgejo-deploy-keys ("<repository>/<key name>")
+	// and forgejo-writers ("team:<team>/<user>" or
+	// "collaborator:<repository>/<user>") use it.
 	IgnoreFields []string `json:"ignoreFields,omitempty"`
 }
 
@@ -190,6 +198,17 @@ func BuildSources(cfg *FileConfig, kc *kube.Client, idp KeycloakReader) ([]Sourc
 				sc.Org = "squared"
 			}
 			sources = append(sources, &forgejoDeployKeysSource{sc: sc})
+		case "forgejo-writers":
+			if sc.URL == "" || sc.PasswordFile == "" || len(sc.Writers) == 0 {
+				return nil, fmt.Errorf("source %d: forgejo-writers needs url, passwordFile and writers", i)
+			}
+			if sc.Name == "" {
+				sc.Name = "squared_guard_repo_access"
+			}
+			if sc.Org == "" {
+				sc.Org = "squared"
+			}
+			sources = append(sources, &forgejoWritersSource{sc: sc})
 		case "forgejo-config":
 			if sc.URL == "" {
 				return nil, fmt.Errorf("source %d: forgejo-config needs url", i)
@@ -665,5 +684,42 @@ func (s *forgejoDeployKeysSource) References(ctx context.Context) ([]Reference, 
 		return nil, nil, err
 	}
 	warnings, err := checkForgejoDeployKeys(keys, s.sc.Org, s.sc.IgnoreFields)
+	return nil, warnings, err
+}
+
+// forgejoWritersSource reads the team and collaborator access to the code
+// of the repositories from a view in the Forgejo database. See
+// checkForgejoWriters and deploy/kind/forgejo-guard-view.sql.
+type forgejoWritersSource struct {
+	sc SourceConfig
+}
+
+func (s *forgejoWritersSource) Name() string { return s.sc.Service + " repository access" }
+
+func (s *forgejoWritersSource) References(ctx context.Context) ([]Reference, []string, error) {
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	conn, err := connectDatabase(ctx, s.sc)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer conn.Close(context.Background())
+	rows, err := conn.Query(ctx, `SELECT org_name, kind, via, user_name, mode, repos
+		FROM `+pgx.Identifier{s.sc.Name}.Sanitize()+" ORDER BY org_name, kind, via, user_name")
+	if err != nil {
+		return nil, nil, fmt.Errorf("read %s (run forgejo-guard-view.sql again after a Forgejo upgrade): %w", s.sc.Name, err)
+	}
+	var access []forgejoRepoAccess
+	for rows.Next() {
+		var a forgejoRepoAccess
+		if err := rows.Scan(&a.Org, &a.Kind, &a.Via, &a.User, &a.Mode, &a.Repos); err != nil {
+			return nil, nil, err
+		}
+		access = append(access, a)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, nil, err
+	}
+	warnings, err := checkForgejoWriters(access, s.sc.Org, s.sc.Writers, s.sc.IgnoreFields)
 	return nil, warnings, err
 }

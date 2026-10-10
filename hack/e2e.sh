@@ -528,6 +528,28 @@ YAML
   wait_for "the guard has no errors after the deploy key is removed" 60 guard_clean
   log "the guard checks the deploy keys of the GitOps repositories"
 
+  # Write access for argocd-reader, which may only read: as a collaborator,
+  # then through a new team.
+  guard_reports_writer() {
+    local pattern="$1"
+    guard_reports() { guard_status | jq -e --arg p "$pattern" '[.errors[]? | select(test($p))] | length > 0' >/dev/null; }
+    wait_for "the guard reports: $pattern" 60 guard_reports
+    [[ "$(worker_may_add_dev squared-admins)" == 403 ]] || die "the protection of /squared-admins is gone after the access change"
+  }
+  fj_admin /repos/squared/platform/collaborators/argocd-reader -X PUT -H 'Content-Type: application/json' -d '{"permission": "write"}' >/dev/null
+  guard_reports_writer 'user argocd-reader is a collaborator of squared/platform and can push'
+  fj_admin /repos/squared/platform/collaborators/argocd-reader -X DELETE >/dev/null
+  wait_for "the guard has no errors after the collaborator is removed" 60 guard_clean
+  local team_id
+  team_id="$(fj_admin /orgs/squared/teams -X POST -H 'Content-Type: application/json' \
+    -d '{"name": "e2e-writers", "permission": "write", "units": ["repo.code"], "includes_all_repositories": true}' | jq -r .id)"
+  [[ "$team_id" =~ ^[0-9]+$ ]] || die "cannot make a Forgejo team"
+  fj_admin "/teams/$team_id/members/argocd-reader" -X PUT >/dev/null
+  guard_reports_writer 'user argocd-reader is in the team e2e-writers of squared [(]all repositories[)] and can push'
+  fj_admin "/teams/$team_id" -X DELETE >/dev/null
+  wait_for "the guard has no errors after the team is removed" 60 guard_clean
+  log "the guard checks the team and collaborator access to the GitOps repositories"
+
   # A change of the administrator group in Harbor, through the API as in
   # the web interface.
   local hgroup="e2e-harbor-$TENANT"

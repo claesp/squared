@@ -376,8 +376,30 @@ controls that it uses. Read [architecture.md](architecture.md) first.
   all manifests). An operator can accept a key with `<repository>/<key
   name>` in `ignoreFields`. The guard checks the keys also when SSH is
   off. The end-to-end test adds a deploy key with write access to
-  `squared/platform` and checks the error. Other writers, for example a
-  team or a collaborator with write access, are not in this check.
+  `squared/platform` and checks the error.
+- **Teams and collaborators of the GitOps repositories.** The same rule
+  applies to people: only the bot of the worker (`squared-bot`, in the team
+  Owners) may push. The tenant teams and the team `readers` of Argo CD
+  give read access. The guard reads the view `squared_guard_repo_access`
+  of [`forgejo-guard-view.sql`](../deploy/kind/forgejo-guard-view.sql):
+  the members of each team of the organization with the access of the team
+  to the code (a team with admin or owner access has it for all units) and
+  its repositories, and the collaborators of each repository with their
+  access.
+
+  | Access | Result |
+  |---|---|
+  | A team or a collaboration gives write, admin or owner access to a user who is not in `writers` | Error |
+  | A collaboration gives read access | Warning: the person reads outside the membership in Squared |
+  | A team gives read access | No message: the tenant teams do this |
+
+  An operator can accept an access with `team:<team>/<user>` or
+  `collaborator:<repository>/<user>` in `ignoreFields`. Forgejo site
+  administrators can write to all repositories; they are not in this
+  check, but the guard checks that their administrator flag comes from
+  the Keycloak group (see the credentials above). The end-to-end test gives
+  `argocd-reader` write access as a collaborator of `squared/platform`, and
+  then through a new team, and checks the errors.
 
 ### Passwords and tokens of Squared
 

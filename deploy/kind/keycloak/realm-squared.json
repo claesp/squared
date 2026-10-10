@@ -13,7 +13,9 @@
   "accessTokenLifespan": 300,
   "ssoSessionIdleTimeout": 3600,
   "groups": [
-    {"name": "squared-admins"}
+    {
+      "name": "squared-admins"
+    }
   ],
   "clients": [
     {
@@ -30,13 +32,24 @@
       "directAccessGrantsEnabled": false,
       "serviceAccountsEnabled": false,
       "frontchannelLogout": false,
-      "redirectUris": ["http://localhost:30080/auth/callback"],
-      "webOrigins": ["http://localhost:30080"],
+      "redirectUris": [
+        "http://localhost:30080/auth/callback"
+      ],
+      "webOrigins": [
+        "http://localhost:30080"
+      ],
       "attributes": {
         "pkce.code.challenge.method": "S256",
         "post.logout.redirect.uris": "http://localhost:30080/login"
       },
-      "defaultClientScopes": ["basic", "profile", "email", "roles", "web-origins", "acr"],
+      "defaultClientScopes": [
+        "basic",
+        "profile",
+        "email",
+        "roles",
+        "web-origins",
+        "acr"
+      ],
       "protocolMappers": [
         {
           "name": "groups",
@@ -72,7 +85,13 @@
       "standardFlowEnabled": false,
       "implicitFlowEnabled": false,
       "directAccessGrantsEnabled": true,
-      "defaultClientScopes": ["basic", "profile", "email", "roles", "acr"],
+      "defaultClientScopes": [
+        "basic",
+        "profile",
+        "email",
+        "roles",
+        "acr"
+      ],
       "protocolMappers": [
         {
           "name": "groups",
@@ -97,19 +116,173 @@
           }
         }
       ]
+    },
+    {
+      "clientId": "argocd",
+      "name": "Argo CD",
+      "description": "Argo CD web interface. Members of squared-admins are Argo CD administrators.",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "clientAuthenticatorType": "client-secret",
+      "secret": "${ARGOCD_CLIENT_SECRET}",
+      "standardFlowEnabled": true,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": false,
+      "frontchannelLogout": false,
+      "redirectUris": [
+        "http://localhost:30081/auth/callback",
+        "http://localhost:8085/auth/callback"
+      ],
+      "webOrigins": [
+        "http://localhost:30081"
+      ],
+      "attributes": {
+        "pkce.code.challenge.method": "S256",
+        "post.logout.redirect.uris": "http://localhost:30081/*"
+      },
+      "defaultClientScopes": [
+        "basic",
+        "profile",
+        "email",
+        "roles",
+        "web-origins",
+        "acr"
+      ],
+      "protocolMappers": [
+        {
+          "name": "groups",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-group-membership-mapper",
+          "config": {
+            "claim.name": "groups",
+            "full.path": "false",
+            "id.token.claim": "true",
+            "access.token.claim": "true",
+            "userinfo.token.claim": "true"
+          }
+        }
+      ]
+    },
+    {
+      "clientId": "harbor",
+      "name": "Harbor",
+      "description": "Harbor registry. Members of squared-admins are Harbor administrators.",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "clientAuthenticatorType": "client-secret",
+      "secret": "${HARBOR_CLIENT_SECRET}",
+      "standardFlowEnabled": true,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": false,
+      "frontchannelLogout": false,
+      "redirectUris": [
+        "http://localhost:30002/c/oidc/callback"
+      ],
+      "webOrigins": [
+        "http://localhost:30002"
+      ],
+      "attributes": {
+        "post.logout.redirect.uris": "http://localhost:30002/*"
+      },
+      "defaultClientScopes": [
+        "basic",
+        "profile",
+        "email",
+        "roles",
+        "web-origins",
+        "acr"
+      ],
+      "protocolMappers": [
+        {
+          "name": "groups",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-group-membership-mapper",
+          "config": {
+            "claim.name": "groups",
+            "full.path": "false",
+            "id.token.claim": "true",
+            "access.token.claim": "true",
+            "userinfo.token.claim": "true"
+          }
+        }
+      ],
+      "optionalClientScopes": [
+        "offline_access"
+      ]
+    },
+    {
+      "clientId": "forgejo",
+      "name": "Forgejo",
+      "description": "Forgejo Git server. Members of squared-admins are Forgejo administrators.",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "clientAuthenticatorType": "client-secret",
+      "secret": "${FORGEJO_CLIENT_SECRET}",
+      "standardFlowEnabled": true,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": false,
+      "frontchannelLogout": false,
+      "redirectUris": [
+        "http://forgejo.localhost:30300/user/oauth2/keycloak/callback"
+      ],
+      "webOrigins": [
+        "http://forgejo.localhost:30300"
+      ],
+      "attributes": {
+        "post.logout.redirect.uris": "http://forgejo.localhost:30300/*"
+      },
+      "defaultClientScopes": [
+        "basic",
+        "profile",
+        "email",
+        "roles",
+        "web-origins",
+        "acr"
+      ],
+      "protocolMappers": [
+        {
+          "name": "groups",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-group-membership-mapper",
+          "config": {
+            "claim.name": "groups",
+            "full.path": "false",
+            "id.token.claim": "true",
+            "access.token.claim": "true",
+            "userinfo.token.claim": "true"
+          }
+        }
+      ]
     }
   ],
   "users": [
     {
       "id": "0b8c8a39-6f34-4b8e-9d47-1c2f6a5e0a01",
-      "username": "admin",
-      "email": "admin@squared.test",
+      "username": "platform-admin",
+      "email": "platform-admin@squared.test",
       "emailVerified": true,
       "firstName": "Platform",
       "lastName": "Administrator",
       "enabled": true,
-      "credentials": [{"type": "password", "value": "${ADMIN_USER_PASSWORD}", "temporary": false}],
-      "groups": ["/squared-admins"]
+      "credentials": [
+        {
+          "type": "password",
+          "value": "${ADMIN_USER_PASSWORD}",
+          "temporary": false
+        }
+      ],
+      "groups": [
+        "/squared-admins"
+      ],
+      "realmRoles": [
+        "default-roles-squared"
+      ]
     },
     {
       "id": "0b8c8a39-6f34-4b8e-9d47-1c2f6a5e0a02",
@@ -119,8 +292,17 @@
       "firstName": "Dana",
       "lastName": "Developer",
       "enabled": true,
-      "credentials": [{"type": "password", "value": "${DEV_USER_PASSWORD}", "temporary": false}],
-      "groups": []
+      "credentials": [
+        {
+          "type": "password",
+          "value": "${DEV_USER_PASSWORD}",
+          "temporary": false
+        }
+      ],
+      "groups": [],
+      "realmRoles": [
+        "default-roles-squared"
+      ]
     }
   ]
 }

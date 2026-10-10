@@ -43,6 +43,22 @@ controls that it uses. Read [architecture.md](architecture.md) first.
   the Keycloak session ends earlier. Use a short session time if this is a
   problem. Disable the user in Squared to end all sessions at once.
 
+### Sign-in to Argo CD, Harbor and Forgejo
+
+- All three services use the Keycloak realm, each with a confidential
+  client. Argo CD also uses PKCE.
+- Only members of `squared-admins` get administrator rights. Argo CD gives
+  other users no rights (`policy.default` is empty). Harbor and Forgejo
+  make an account for other users, but give no access to projects or
+  repositories.
+- Forgejo makes accounts only from Keycloak sign-ins
+  (`ALLOW_ONLY_EXTERNAL_REGISTRATION`). It does not link a Keycloak
+  identity to an existing local account.
+- The local administrator accounts (`admin` in Argo CD and Harbor,
+  `forgejo-admin` in Forgejo) stay for emergencies and automation. Keep
+  their passwords in a secret store, and use them only when Keycloak is not
+  available.
+
 ### Passwords and tokens of Squared
 
 - **Passwords** are hashed with Argon2id (19 MiB memory, 2 iterations, 1
@@ -144,7 +160,8 @@ commit has the revision and the user.
 
 1. Run Keycloak with TLS, a production database and `start` (not
    `start-dev`). Remove the `squared-cli` client with the password grant.
-2. Turn on a second factor in Keycloak for the administrator group.
+2. Turn on a second factor in Keycloak for the administrator group. It
+   then protects Squared, Argo CD, Harbor and Forgejo.
 3. Put TLS in front of the server (ingress or load balancer). Set
    `SQUARED_HSTS=true` and `SQUARED_TRUST_PROXY=true` if a proxy sets
    `X-Forwarded-For`.

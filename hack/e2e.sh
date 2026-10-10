@@ -2,21 +2,23 @@
 # End-to-end test against the Kind development environment.
 #
 # The test signs in to the web interface through the Keycloak login form,
-# makes an API token, checks Keycloak access tokens for the API, makes a
-# tenant, pushes an image to Harbor, deploys the image, changes it, rolls
+# makes an API token, checks Keycloak access tokens for the API, checks
+# single sign-on and administrator rights in Argo CD, Harbor and Forgejo,
+# makes a tenant, pushes an image to Harbor, deploys the image, changes it, rolls
 # it back and removes it. It also checks that pods of other namespaces
 # cannot connect to the tenant. At the end it removes the tenant. Set
 # KEEP_TENANT=1 to keep the tenant for inspection. Run hack/kind-up.sh
 # first.
 source "$(dirname "$0")/lib.sh"
 
-need curl jq podman kubectl
+need curl jq podman kubectl go
 
 TENANT="e2e$(date +%s | tail -c 6)"
 NS="${TENANT}-dev"
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
-ADMIN_EMAIL="admin@squared.test"
+ADMIN_USER="platform-admin"
+ADMIN_EMAIL="platform-admin@squared.test"
 ADMIN_PASSWORD="$(secret keycloak-admin-user-password)"
 DEV_PASSWORD="$(secret keycloak-dev-user-password)"
 
@@ -92,18 +94,51 @@ probe_phase() { k -n "${TENANT}-outside" get pod probe -o jsonpath='{.status.pha
 
 probe_done() { [[ "$(probe_phase)" == "Succeeded" || "$(probe_phase)" == "Failed" ]]; }
 
-# kc_signin USER PASSWORD JAR signs in to Squared through the Keycloak
-# login form, like a browser: Squared sends the browser to Keycloak,
-# Keycloak shows its form, and after the form Keycloak sends the browser
-# back to the callback of Squared.
+# The helper hack/ssoclient signs in through the Keycloak form like a
+# browser. Curl cannot do it, because it refuses the Secure cookies of
+# Keycloak on keycloak.localhost.
+SSO="$WORK/ssoclient"
+(cd "$ROOT" && go build -o "$SSO" ./hack/ssoclient) || die "cannot build hack/ssoclient"
+
+# kc_signin USER PASSWORD_FILE JAR signs in to Squared through Keycloak and
+# writes the Squared session cookie to JAR for curl.
 kc_signin() {
-  local user="$1" password="$2" jar="$3" action final
-  curl -sS -L -c "$jar" -b "$jar" -o "$WORK/kc.html" "${SQUARED_URL}/auth/login"
-  action="$(grep -o 'action="[^"]*login-actions/authenticate[^"]*"' "$WORK/kc.html" | head -1 | sed 's/^action="//; s/"$//; s/&amp;/\&/g')"
-  [[ -n "$action" ]] || die "the Keycloak login form is missing"
-  final="$(curl -sS -L -c "$jar" -b "$jar" -o /dev/null -w '%{url_effective}' \
-    --data-urlencode "username=$user" --data-urlencode "password=$password" "$action")"
-  [[ "$final" == "${SQUARED_URL}/" ]] || die "sign-in of $user ended at $final"
+  local out
+  out="$("$SSO" -user "$1" -password-file "$2" "login=${SQUARED_URL}/auth/login" "cookies=${SQUARED_URL}/,$3")" \
+    || die "sign-in of $1 to Squared failed"
+  [[ "$(head -1 <<<"$out" | jq -r .final)" == "${SQUARED_URL}/" ]] || die "sign-in of $1 ended at $(head -1 <<<"$out" | jq -r .final)"
+}
+
+# check_sso USER PASSWORD_FILE ADMIN signs in to Argo CD, Harbor and
+# Forgejo in one browser session. It checks that only the first service
+# shows the Keycloak form, and that the user is an administrator in each
+# service if ADMIN is "true", and not an administrator if it is "false".
+check_sso() {
+  local user="$1" admin="$3" out got
+  out="$("$SSO" -user "$user" -password-file "$2" \
+    "login=http://localhost:30081/auth/login?return_url=http%3A%2F%2Flocalhost%3A30081%2Fapplications" \
+    "get=http://localhost:30081/api/v1/session/userinfo" \
+    "get=http://localhost:30081/api/v1/account/can-i/applications/sync/*/*" \
+    "login=${HARBOR_URL}/c/oidc/login?redirect_url=%2Fharbor%2Fprojects" \
+    "get=${HARBOR_URL}/api/v2.0/users/current" \
+    "login=${FORGEJO_URL}/user/oauth2/keycloak" \
+    "get=${FORGEJO_URL}/")" || die "single sign-on of $user failed"
+  [[ "$(jq -s -c '[.[] | select(.login) | .form]' <<<"$out")" == "[true,false,false]" ]] \
+    || die "single sign-on: Keycloak asked $user for the password more than one time"
+  jq -s -e '.[1].body.loggedIn == true' <<<"$out" >/dev/null || die "Argo CD: $user is not signed in"
+  got="$(jq -s -r '.[2].body.value' <<<"$out")"
+  [[ "$got" == "$([[ "$admin" == true ]] && echo yes || echo no)" ]] || die "Argo CD: '$user can sync applications' is $got"
+  # Harbor gives administrator rights from the group in admin_role_in_auth.
+  got="$(jq -s -r '.[4].body | "\(.username) \(.sysadmin_flag or .admin_role_in_auth)"' <<<"$out")"
+  [[ "$got" == "$user $admin" ]] || die "Harbor: user and administrator flag are '$got'"
+  # Forgejo does not accept the browser session for its API. Check that
+  # the session works on the dashboard, then read the account that the
+  # sign-in made with the local administrator account.
+  jq -s -e '.[6].status == 200 and (.[6].body | contains("Dashboard"))' <<<"$out" >/dev/null \
+    || die "Forgejo: $user is not signed in"
+  got="$(curl -fsS -u "forgejo-admin:$(secret forgejo-admin-password)" "${FORGEJO_URL}/api/v1/users/$user" | jq -r '"\(.login) \(.is_admin)"')"
+  [[ "$got" == "$user $admin" ]] || die "Forgejo: user and administrator flag are '$got'"
+  log "$user signs in to Argo CD, Harbor and Forgejo with one Keycloak session (administrator: $admin)"
 }
 
 # kc_token USER PASSWORD prints a Keycloak access token for the API. It
@@ -116,7 +151,7 @@ kc_token() {
 
 step "sign in to the web interface with Keycloak and make an API token"
 JAR="$WORK/cookies"
-kc_signin admin "$ADMIN_PASSWORD" "$JAR"
+kc_signin "$ADMIN_USER" "$DEV/keycloak-admin-user-password" "$JAR"
 CSRF="$(curl -sS -c "$JAR" -b "$JAR" "${SQUARED_URL}/account" | sed -n 's/.*name="csrf" value="\([^"]*\)".*/\1/p' | head -1)"
 [[ -n "$CSRF" ]] || die "sign-in failed"
 TOKEN="$(curl -sS -c "$JAR" -b "$JAR" --data-urlencode "csrf=$CSRF" --data-urlencode "name=e2e $TENANT" \
@@ -125,9 +160,9 @@ TOKEN="$(curl -sS -c "$JAR" -b "$JAR" --data-urlencode "csrf=$CSRF" --data-urlen
 api GET /me | jq -e '.admin == true' >/dev/null
 
 step "use Keycloak access tokens for the API"
-ADMIN_JWT="$(kc_token admin "$ADMIN_PASSWORD")"
+ADMIN_JWT="$(kc_token "$ADMIN_USER" "$ADMIN_PASSWORD")"
 DEV_JWT="$(kc_token dev "$DEV_PASSWORD")"
-curl -fsS -H "Authorization: Bearer $ADMIN_JWT" "${SQUARED_URL}/api/v1/me" | jq -e '.admin == true and .email == "admin@squared.test"' >/dev/null \
+curl -fsS -H "Authorization: Bearer $ADMIN_JWT" "${SQUARED_URL}/api/v1/me" | jq -e '.admin == true and .email == "platform-admin@squared.test"' >/dev/null \
   || die "the access token of the administrator does not give administrator rights"
 curl -fsS -H "Authorization: Bearer $DEV_JWT" "${SQUARED_URL}/api/v1/me" | jq -e '.admin == false and .email == "dev@squared.test"' >/dev/null \
   || die "the access token of the developer gives the wrong rights"
@@ -135,6 +170,10 @@ code="$(curl -sS -o /dev/null -w '%{http_code}' -X POST -H "Authorization: Beare
   -d '{"slug": "forbidden", "name": "No", "owner": "dev@squared.test", "environments": ["dev"]}' "${SQUARED_URL}/api/v1/tenants")"
 [[ "$code" == "403" ]] || die "a user without the administrator group made a tenant (status $code)"
 log "the administrator group in Keycloak controls the administrator rights"
+
+step "sign in to Argo CD, Harbor and Forgejo with Keycloak"
+check_sso "$ADMIN_USER" "$DEV/keycloak-admin-user-password" true
+check_sso dev "$DEV/keycloak-dev-user-password" false
 
 step "make tenant $TENANT"
 api POST /tenants "$(jq -n --arg s "$TENANT" --arg o "$ADMIN_EMAIL" \

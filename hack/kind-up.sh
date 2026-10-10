@@ -25,13 +25,37 @@ server = "http://localhost:30002"
 TOML'
 }
 
+# configure_dns makes the names keycloak.localhost and forgejo.localhost
+# point to the services inside the cluster. The services have the same
+# ports as their NodePorts, thus each address works inside and outside
+# the cluster.
+configure_dns() {
+  local corefile block
+  corefile="$(k -n kube-system get configmap coredns -o jsonpath='{.data.Corefile}')"
+  if grep -q 'keycloak.localhost' <<<"$corefile"; then
+    return
+  fi
+  log "adding keycloak.localhost and forgejo.localhost to CoreDNS"
+  block='    rewrite stop {\n        name exact keycloak.localhost keycloak.keycloak.svc.cluster.local\n        answer name keycloak.keycloak.svc.cluster.local keycloak.localhost\n    }\n    rewrite stop {\n        name exact forgejo.localhost forgejo-http.forgejo.svc.cluster.local\n        answer name forgejo-http.forgejo.svc.cluster.local forgejo.localhost\n    }'
+  corefile="$(sed "s|^    ready\$|    ready\n${block}|" <<<"$corefile")"
+  k -n kube-system patch configmap coredns --type merge \
+    --patch "$(jq -n --arg c "$corefile" '{data: {Corefile: $c}}')" >/dev/null
+  k -n kube-system rollout restart deployment/coredns >/dev/null
+  k -n kube-system rollout status deployment/coredns --timeout 2m >/dev/null
+}
+
 install_charts() {
   log "installing Argo CD $ARGOCD_CHART_VERSION"
   helm --kube-context "$CONTEXT" upgrade --install argocd argo-cd \
     --repo https://argoproj.github.io/argo-helm --version "$ARGOCD_CHART_VERSION" \
     --namespace argocd --create-namespace \
-    --values "$ROOT/deploy/kind/argocd-values.yaml" --wait --timeout 10m >/dev/null
+    --values "$ROOT/deploy/kind/argocd-values.yaml" \
+    --set-string "configs.secret.extra.oidc\\.keycloak\\.clientSecret=$(secret keycloak-argocd-client-secret)" \
+    --wait --timeout 10m >/dev/null
 
+  k create namespace forgejo --dry-run=client -o yaml | k apply -f - >/dev/null
+  k -n forgejo create secret generic forgejo-oauth --from-literal=key=forgejo \
+    --from-literal="secret=$(secret keycloak-forgejo-client-secret)" --dry-run=client -o yaml | k apply -f - >/dev/null
   log "installing Forgejo $FORGEJO_CHART_VERSION"
   helm --kube-context "$CONTEXT" upgrade --install forgejo oci://code.forgejo.org/forgejo-helm/forgejo \
     --version "$FORGEJO_CHART_VERSION" --namespace forgejo --create-namespace \
@@ -119,17 +143,49 @@ deploy_keycloak() {
     --from-literal="squared-client-secret=$(secret keycloak-squared-client-secret)" \
     --from-literal="admin-user-password=$(secret keycloak-admin-user-password)" \
     --from-literal="dev-user-password=$(secret keycloak-dev-user-password)" \
+    --from-literal="argocd-client-secret=$(secret keycloak-argocd-client-secret)" \
+    --from-literal="harbor-client-secret=$(secret keycloak-harbor-client-secret)" \
+    --from-literal="forgejo-client-secret=$(secret keycloak-forgejo-client-secret)" \
     --dry-run=client -o yaml | k apply -f - >/dev/null
   k apply -k "$ROOT/deploy/kind/keycloak" >/dev/null
   k -n keycloak rollout status deployment/keycloak --timeout 10m >/dev/null
   wait_http "${KEYCLOAK_URL}/realms/squared/.well-known/openid-configuration"
 }
 
+# setup_harbor makes Keycloak the authentication of Harbor. Harbor permits
+# this change only while it has no users other than "admin". The local
+# "admin" account stays for the worker and for emergencies. Members of the
+# Keycloak group squared-admins are Harbor administrators.
+setup_harbor() {
+  wait_http "${HARBOR_URL}/api/v2.0/ping"
+  local mode
+  mode="$(curl -fsS -u "admin:$(secret harbor-admin-password)" "${HARBOR_URL}/api/v2.0/configurations" | jq -r .auth_mode.value)"
+  if [[ "$mode" == "oidc_auth" ]]; then
+    return
+  fi
+  log "configuring Harbor sign-in with Keycloak"
+  curl -fsS -u "admin:$(secret harbor-admin-password)" -X PUT -H 'Content-Type: application/json' \
+    -H 'X-Requested-With: squared' "${HARBOR_URL}/api/v2.0/configurations" -d "$(jq -n \
+      --arg secret "$(secret keycloak-harbor-client-secret)" '{
+        auth_mode: "oidc_auth",
+        oidc_name: "Keycloak",
+        oidc_endpoint: "http://keycloak.localhost:30180/realms/squared",
+        oidc_client_id: "harbor",
+        oidc_client_secret: $secret,
+        oidc_scope: "openid,profile,email,offline_access",
+        oidc_user_claim: "preferred_username",
+        oidc_groups_claim: "groups",
+        oidc_admin_group: "squared-admins",
+        oidc_auto_onboard: true,
+        oidc_verify_cert: false
+      }')" >/dev/null || die "cannot configure Harbor sign-in"
+}
+
 setup_argocd() {
   log "configuring Argo CD"
   k -n argocd create secret generic squared-forgejo \
     --from-literal=type=git \
-    --from-literal=url=http://forgejo-http.forgejo.svc.cluster.local:3000/squared \
+    --from-literal=url=http://forgejo.localhost:30300/squared \
     --from-literal=username=argocd-reader \
     --from-literal="password=$(cat "${DEV}/forgejo-argocd-reader-token")" \
     --dry-run=client -o yaml | k label --local -f - argocd.argoproj.io/secret-type=repo-creds -o yaml | k apply -f - >/dev/null
@@ -160,9 +216,11 @@ deploy_squared() {
 }
 
 create_cluster
-install_charts
+configure_dns
 deploy_keycloak
+install_charts
 setup_forgejo
+setup_harbor
 setup_argocd
 deploy_squared
 
@@ -170,13 +228,21 @@ cat <<INFO
 
 The development environment is ready.
 
-  Squared   ${SQUARED_URL}   sign in with Keycloak:
-              admin@squared.test / $(secret keycloak-admin-user-password)   (platform administrator)
-              dev@squared.test / $(secret keycloak-dev-user-password)   (user)
+Squared, Argo CD, Harbor and Forgejo use Keycloak for sign-in:
+  Squared   ${SQUARED_URL}
+  Argo CD   http://localhost:30081
+  Harbor    ${HARBOR_URL}
+  Forgejo   ${FORGEJO_URL}
+
+Keycloak users:
+  platform-admin / $(secret keycloak-admin-user-password)   (member of squared-admins)
+  dev / $(secret keycloak-dev-user-password)   (no administrator rights)
+
+Local emergency accounts:
   Keycloak  ${KEYCLOAK_URL}   admin / $(secret keycloak-admin-password)   (administration console)
-  Forgejo   ${FORGEJO_URL}   forgejo-admin / $(secret forgejo-admin-password)
-  Harbor    ${HARBOR_URL}   admin / $(secret harbor-admin-password)
-  Argo CD   http://localhost:30081   admin / $(k -n argocd get secret argocd-initial-admin-secret -o jsonpath='{.data.password}' | base64 -d)
+  Forgejo   forgejo-admin / $(secret forgejo-admin-password)
+  Harbor    admin / $(secret harbor-admin-password)
+  Argo CD   admin / $(k -n argocd get secret argocd-initial-admin-secret -o jsonpath='{.data.password}' | base64 -d)
 
 The passwords are also in ${DEV}/.
 INFO

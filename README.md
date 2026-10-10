@@ -16,9 +16,9 @@ through [RabbitMQ](https://www.rabbitmq.com).
 - **Multi-tenancy.** Each tenant gets its own namespaces, Git repository,
   Harbor project and Argo CD project, with quotas, network isolation and the
   "restricted" Pod Security Standard.
-- **Single sign-on with Keycloak.** OpenID Connect authorization code flow
-  with PKCE. A Keycloak group gives platform administrator rights. The API
-  also accepts Keycloak access tokens.
+- **Single sign-on with Keycloak** for Squared, Argo CD, Harbor and
+  Forgejo. One Keycloak group gives administrator rights in all of them.
+  The Squared API also accepts Keycloak access tokens.
 - **Users and roles.** Platform administrators, and owners, developers and
   viewers in each tenant. Sessions with CSRF protection, personal API
   tokens, and optional local passwords (Argon2id).
@@ -47,7 +47,10 @@ make e2e       # deploys an example application from end to end
 ```
 
 Then open http://localhost:30080, select **Sign in with Keycloak** and sign
-in as `admin`. The password is in `.dev/keycloak-admin-user-password`.
+in as `platform-admin`. The password is in
+`.dev/keycloak-admin-user-password`. The same Keycloak session also signs
+you in to Argo CD (http://localhost:30081), Harbor (http://localhost:30002)
+and Forgejo (http://forgejo.localhost:30300).
 
 ## Build and test
 

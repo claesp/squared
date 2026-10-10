@@ -1,11 +1,29 @@
-# Argo CD for development (chart argo/argo-cd).
+# Argo CD for development (chart argo/argo-cd). The Keycloak client secret
+# comes from hack/kind-up.sh.
 configs:
   params:
     server.insecure: true
   cm:
+    url: http://localhost:30081
     # Forgejo sends a webhook after each push. The poll interval is only a
     # fallback.
     timeout.reconciliation: 60s
+    # Sign-in with Keycloak. Argo CD reads the client secret from the key
+    # oidc.keycloak.clientSecret of the secret argocd-secret.
+    oidc.config: |
+      name: Keycloak
+      issuer: http://keycloak.localhost:30180/realms/squared
+      clientID: argocd
+      clientSecret: $oidc.keycloak.clientSecret
+      enablePKCEAuthentication: true
+      requestedScopes: ["openid", "profile", "email"]
+  rbac:
+    # Members of the Keycloak group squared-admins are administrators.
+    # Other users have no rights: tenants use Squared, not Argo CD.
+    policy.default: ""
+    policy.csv: |
+      g, squared-admins, role:admin
+    scopes: "[groups]"
 dex:
   enabled: false
 notifications:
@@ -14,3 +32,25 @@ server:
   service:
     type: NodePort
     nodePortHttp: 30081
+repoServer:
+  # Git uses curl, and curl connects to 127.0.0.1 for all *.localhost
+  # names without DNS. This forwarder makes forgejo.localhost:30300 work in
+  # the repository server.
+  extraContainers:
+    - name: forgejo-forwarder
+      image: docker.io/alpine/socat:1.8.1.3@sha256:fb3862c949af7c79996d0e514ee96128644d840835ed5368eeecb14a869de361
+      args:
+        - TCP-LISTEN:30300,bind=127.0.0.1,fork,reuseaddr
+        - TCP:forgejo-http.forgejo.svc.cluster.local:30300
+      resources:
+        requests: { cpu: 10m, memory: 16Mi }
+        limits: { memory: 64Mi }
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65534
+        allowPrivilegeEscalation: false
+        readOnlyRootFilesystem: true
+        capabilities:
+          drop: ["ALL"]
+        seccompProfile:
+          type: RuntimeDefault

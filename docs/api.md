@@ -26,7 +26,7 @@ Example with the development environment (the password grant of the
 `squared-cli` client exists only there):
 
 ```bash
-TOKEN=$(curl -s http://localhost:30180/realms/squared/protocol/openid-connect/token \
+TOKEN=$(curl -s http://keycloak.localhost:30180/realms/squared/protocol/openid-connect/token \
   -d grant_type=password -d client_id=squared-cli -d scope=openid \
   -d username=dev --data-urlencode "password=$(cat .dev/keycloak-dev-user-password)" | jq -r .access_token)
 curl -H "Authorization: Bearer $TOKEN" http://localhost:30080/api/v1/me

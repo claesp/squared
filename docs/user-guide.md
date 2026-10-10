@@ -20,7 +20,8 @@ Change it on the **Account** page.
 ## Roles
 
 Members of the Keycloak group `squared-admins` are platform
-administrators. A platform administrator adds tenants. A tenant owner can
+administrators. They can also sign in to Argo CD, Harbor and Forgejo with
+the same Keycloak account, as administrators. A platform administrator adds tenants. A tenant owner can
 add only users that exist in Squared: ask the user to sign in one time
 first, or ask an administrator to add the user. In a tenant, each member
 has one role:

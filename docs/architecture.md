@@ -252,6 +252,21 @@ Squared (`sqp_...`) and access tokens of Keycloak with the audience
 `squared-api`. Keycloak tokens are short-lived, thus scripts that can get
 tokens from Keycloak do not need a long-lived secret from Squared.
 
+### D12: One identity provider for the complete platform
+
+Argo CD, Harbor and Forgejo also sign users in with Keycloak. Each service
+has its own client in the realm, and each client has the groups claim. The
+Keycloak group `squared-admins` gives administrator rights in all four
+services. Other users get an account in Harbor and Forgejo at their first
+sign-in, but no access to projects or repositories, and no rights in Argo
+CD: tenants work only through Squared.
+
+Thus one Keycloak account and one second factor protect all platform
+tools, and removing a person from the group removes all administrator
+rights at the next sign-in. Each service keeps one local administrator
+account for emergencies and for automation (the Squared worker uses the
+local Harbor account and a Forgejo token).
+
 ## Data model
 
 ```

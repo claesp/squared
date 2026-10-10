@@ -63,6 +63,23 @@ Then set the `SQUARED_OIDC_*` variables (see
 [configuration.md](configuration.md)) and put the client secret in the
 secret of the server.
 
+### Argo CD, Harbor and Forgejo
+
+Make one confidential client for each service, each with the groups
+mapper of step 2. Then configure the services:
+
+| Service | Redirect URI | Configuration |
+|---|---|---|
+| Argo CD | `https://<argocd>/auth/callback` (and `http://localhost:8085/auth/callback` for the CLI) | `oidc.config` in `argocd-cm`; the client secret in `argocd-secret` (`oidc.keycloak.clientSecret`); `g, squared-admins, role:admin` in `argocd-rbac-cm`. |
+| Harbor | `https://<harbor>/c/oidc/callback` | **Configuration > Authentication** or `PUT /api/v2.0/configurations` with `auth_mode: oidc_auth`, `oidc_groups_claim: groups`, `oidc_admin_group: squared-admins`. Harbor permits this change only before users other than `admin` exist. Add the scope `offline_access` to the client, for the CLI secrets of users. |
+| Forgejo | `https://<forgejo>/user/oauth2/keycloak/callback` | An authentication source of type OpenID Connect with group claim `groups` and administrator group `squared-admins`. Set `ALLOW_ONLY_EXTERNAL_REGISTRATION=true` and `ENABLE_AUTO_REGISTRATION=true`. |
+
+The files in [`deploy/kind`](../deploy/kind) and the functions
+`setup_harbor` and `install_charts` in
+[`hack/kind-up.sh`](../hack/kind-up.sh) are complete examples. Each
+service must reach the issuer address of Keycloak, the same address as
+the browser uses.
+
 If Keycloak is not available, users cannot sign in, but existing sessions
 continue. The sign-in page then tells the user to try again later.
 

@@ -7,7 +7,7 @@ computer.
 
 | Tool | Version | Use |
 |---|---|---|
-| Go | 1.27 (the `toolchain` line in `go.mod` selects the exact version) | Build and test |
+| Go | 1.27 (the `toolchain` line in `go.mod` selects the exact version) | Build, test, and the sign-in helper of the end-to-end test |
 | Podman | 5 or later | Images and the Kind node |
 | Kind | 0.33 or later | Local Kubernetes cluster |
 | kubectl | same minor version as the cluster | Cluster access |
@@ -87,25 +87,41 @@ make kind-down    # remove the cluster
 again. At the end it shows the addresses and the passwords. The passwords
 are also in `.dev/` (Git ignores this directory).
 
-| Service | Address | User |
+| Service | Address | Sign-in |
 |---|---|---|
-| Squared | http://localhost:30080 | Sign in with Keycloak as `admin` (administrator) or `dev` (user) |
-| Keycloak | http://localhost:30180 | `admin` (administration console, realm `master`) |
-| Forgejo | http://localhost:30300 | `forgejo-admin` |
-| Harbor | http://localhost:30002 | `admin` |
-| Argo CD | http://localhost:30081 | `admin` |
+| Squared | http://localhost:30080 | Keycloak |
+| Argo CD | http://localhost:30081 | Keycloak, or the local `admin` account |
+| Harbor | http://localhost:30002 | Keycloak, or the local `admin` account |
+| Forgejo | http://forgejo.localhost:30300 | Keycloak, or the local `forgejo-admin` account |
+| Keycloak | http://keycloak.localhost:30180 | `admin` (administration console, realm `master`) |
 
-Forgejo has the address of its service inside the cluster as `ROOT_URL`.
-Argo CD and the worker use the same address. This is necessary for the
-push webhook: Argo CD compares the repository address in the webhook with
-the address of the application. Do not use a `*.localhost` name inside
-the cluster: git and curl resolve such names to the loopback address
-without DNS.
+Sign in with the Keycloak user `platform-admin` (an administrator in all
+four services) or `dev` (no administrator rights). One Keycloak session
+signs you in to all services: after the first sign-in, the other services
+do not ask for the password again. The local accounts are for emergencies
+and for the scripts.
 
-Because of this, Forgejo shows a warning on `http://localhost:30300` that
-the address is not the configured address. The warning is expected and
-Forgejo works. Use the `forgejo-admin` account to see the repositories:
-tenant members have no Forgejo accounts in the development environment.
+### Addresses
+
+Two services have a `*.localhost` name. Browsers and curl resolve all
+`*.localhost` names to the loopback address without any setup. Inside the
+cluster, CoreDNS rewrites `keycloak.localhost` and `forgejo.localhost` to
+the services, and the services have the same ports as their NodePorts.
+Thus each of these addresses is the same inside and outside the cluster.
+This is necessary:
+
+- The issuer of the Keycloak tokens must be the same for the browser and
+  for the services that check the tokens.
+- The redirect address of Forgejo after the Keycloak sign-in comes from
+  `ROOT_URL`, thus the browser must be able to open `ROOT_URL`.
+- Argo CD compares the repository address in the push webhook of Forgejo
+  (from `ROOT_URL`) with the address of its applications.
+
+Git in the Argo CD repository server uses curl. Curl connects to
+127.0.0.1 for all `*.localhost` names and does not ask DNS. A small
+forwarder sidecar (`socat`) in the repository server thus listens on
+127.0.0.1:30300 and forwards to the Forgejo service. All other clients are
+Go programs, which ask DNS.
 
 The Kind node pulls images from Harbor at `localhost:30002` over plain
 HTTP. The script writes a containerd `hosts.toml` file in the node for
@@ -121,24 +137,32 @@ if the realm does not exist. The realm has:
 
 | Object | Purpose |
 |---|---|
-| Client `squared` | The web interface. Confidential, authorization code flow with PKCE. |
+| Client `squared` | Squared. Confidential, authorization code flow with PKCE. Access tokens get the audience `squared-api`. |
+| Client `argocd` | Argo CD. Confidential, with PKCE. |
+| Client `harbor` | Harbor. Confidential. |
+| Client `forgejo` | Forgejo. Confidential. |
 | Client `squared-cli` | Development only: the password grant for API tokens in the end-to-end test. |
-| Group `squared-admins` | Platform administrators of Squared. |
-| User `admin` (`admin@squared.test`) | Member of `squared-admins`. Password in `.dev/keycloak-admin-user-password`. |
+| Group `squared-admins` | Administrators of Squared, Argo CD, Harbor and Forgejo. |
+| User `platform-admin` (`platform-admin@squared.test`) | Member of `squared-admins`. Password in `.dev/keycloak-admin-user-password`. |
 | User `dev` (`dev@squared.test`) | A normal user. Password in `.dev/keycloak-dev-user-password`. |
 
-The realm file has placeholders for the client secret and the passwords.
-Keycloak takes the values from the secret `keycloak`, which
-`hack/kind-up.sh` makes. The users have fixed IDs, thus a new import after
-a restart gives the same identities.
+All clients have a `groups` claim with the group names. The realm file
+has placeholders for the client secrets and the passwords. Keycloak takes
+the values from the secret `keycloak`, which `hack/kind-up.sh` makes. The
+users have fixed IDs, thus a new import after a restart gives the same
+identities.
 
-The browser uses Keycloak at `http://localhost:30180`, and this is the
-issuer in the tokens. The Squared server cannot use that address inside
-the cluster. It does discovery at the Keycloak service
-(`SQUARED_OIDC_DISCOVERY_URL`). Keycloak has
-`KC_HOSTNAME_BACKCHANNEL_DYNAMIC=true`, thus the token and key endpoints in
-that discovery document use the service address, and the issuer stays
-`http://localhost:30180/realms/squared`.
+The administrator user is not called `admin`, because Forgejo reserves
+that name and Harbor has a local `admin` account.
+
+How each service uses Keycloak:
+
+| Service | Configuration | Administrator rights | Other users |
+|---|---|---|---|
+| Squared | `SQUARED_OIDC_*` in the Kind overlay | `SQUARED_OIDC_ADMIN_GROUP` | Tenant roles in Squared. |
+| Argo CD | `oidc.config` and RBAC in `deploy/kind/argocd-values.yaml` | `g, squared-admins, role:admin` | No rights. Tenants use Squared. |
+| Harbor | `setup_harbor` in `hack/kind-up.sh` (Harbor API) | `oidc_admin_group` | Account at first sign-in, no project membership. |
+| Forgejo | `gitea.oauth` in `deploy/kind/forgejo-values.yaml` | `adminGroup` | Account at first sign-in, no repository access. |
 
 To add a user, open the administration console, select the realm
 `squared`, and add the user with a verified email address.
@@ -155,20 +179,29 @@ The Harbor project of a tenant exists after the tenant status is `ready`.
 
 ### What the end-to-end test does
 
+The test uses curl for most requests. For the sign-in through Keycloak it
+uses the small program [`hack/ssoclient`](../hack/ssoclient/main.go),
+which acts like a browser. Curl cannot do this step: Keycloak sets Secure
+cookies, and curl accepts them over plain HTTP only for `localhost`, not
+for `keycloak.localhost`. Browsers and the Go cookie jar accept them for
+all `*.localhost` names.
+
 `hack/e2e.sh`:
 
 1. Signs in through the Keycloak login form and makes an API token on the
    account page.
-2. Gets Keycloak access tokens for `admin` and `dev`, and checks their
-   rights in the API.
-3. Makes a tenant through the API and waits until it is `ready`.
-4. Pushes the example image to the Harbor project of the tenant.
-5. Deploys the image and checks the answer of the service.
-6. Checks that a pod in another namespace cannot connect to the service.
-7. Changes a value (revision 2) and checks the new answer.
-8. Rolls back to revision 1 (revision 3) and checks the old answer.
-9. Removes the deployment and checks that the objects are gone.
-10. Removes the tenant and checks that its Argo CD project is gone.
+2. Gets Keycloak access tokens for `platform-admin` and `dev`, and checks
+   their rights in the API.
+3. Signs in to Argo CD, Harbor and Forgejo through Keycloak as both users,
+   and checks the administrator rights in each service.
+4. Makes a tenant through the API and waits until it is `ready`.
+5. Pushes the example image to the Harbor project of the tenant.
+6. Deploys the image and checks the answer of the service.
+7. Checks that a pod in another namespace cannot connect to the service.
+8. Changes a value (revision 2) and checks the new answer.
+9. Rolls back to revision 1 (revision 3) and checks the old answer.
+10. Removes the deployment and checks that the objects are gone.
+11. Removes the tenant and checks that its Argo CD project is gone.
 
 Set `KEEP_TENANT=1` to keep the tenant after the test, so that you can
 examine it.

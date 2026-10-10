@@ -39,11 +39,9 @@ configMapGenerator:
       # Users sign in with Keycloak. Members of the Keycloak group
       # "squared-admins" are platform administrators.
       - SQUARED_LOCAL_LOGIN=false
-      - SQUARED_OIDC_ISSUER=http://localhost:30180/realms/squared
-      # The server cannot use localhost:30180 inside the cluster. It does
-      # discovery at the Keycloak service, which gives token and key
-      # endpoints at the service address.
-      - SQUARED_OIDC_DISCOVERY_URL=http://keycloak.keycloak.svc.cluster.local:8080/realms/squared
+      # CoreDNS resolves keycloak.localhost to the Keycloak service, thus
+      # the server and the browser use the same address.
+      - SQUARED_OIDC_ISSUER=http://keycloak.localhost:30180/realms/squared
       - SQUARED_OIDC_CLIENT_ID=squared
       - SQUARED_OIDC_CLIENT_SECRET_FILE=/etc/squared/secrets/oidc-client-secret
       - SQUARED_OIDC_REDIRECT_URL=http://localhost:30080/auth/callback
@@ -54,11 +52,11 @@ configMapGenerator:
       # cookies on localhost also without TLS.
       - SQUARED_COOKIE_SECURE=true
       - SQUARED_REGISTRY_HOST=localhost:30002
-      - SQUARED_GIT_PUBLIC_URL=http://localhost:30300
+      - SQUARED_GIT_PUBLIC_URL=http://forgejo.localhost:30300
       - SQUARED_GIT_ORG=squared
-      - SQUARED_FORGEJO_URL=http://forgejo-http.forgejo.svc.cluster.local:3000
+      - SQUARED_FORGEJO_URL=http://forgejo.localhost:30300
       - SQUARED_FORGEJO_TOKEN_FILE=/etc/squared/secrets/forgejo-token
-      - SQUARED_ARGOCD_REPO_URL=http://forgejo-http.forgejo.svc.cluster.local:3000
+      - SQUARED_ARGOCD_REPO_URL=http://forgejo.localhost:30300
       - SQUARED_ARGOCD_NAMESPACE=argocd
       - SQUARED_HARBOR_URL=http://harbor.harbor.svc.cluster.local
       - SQUARED_HARBOR_USER=admin

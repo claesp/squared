@@ -9,7 +9,7 @@ metadata:
 spec:
   description: Tenant namespaces, limits, RBAC and Argo CD objects that Squared makes
   sourceRepos:
-    - http://forgejo-http.forgejo.svc.cluster.local:3000/squared/platform.git
+    - http://forgejo.localhost:30300/squared/platform.git
   destinations:
     - server: https://kubernetes.default.svc
       namespace: "*"
@@ -42,7 +42,7 @@ metadata:
 spec:
   project: squared-platform
   source:
-    repoURL: http://forgejo-http.forgejo.svc.cluster.local:3000/squared/platform.git
+    repoURL: http://forgejo.localhost:30300/squared/platform.git
     targetRevision: main
     path: tenants
     directory:

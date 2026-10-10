@@ -420,6 +420,26 @@ controls that it uses. Read [architecture.md](architecture.md) first.
   test checks that the local Forgejo administrator cannot write to
   `squared/platform`, that a new tenant repository has the rule, and that
   the guard reports a rule that does not apply to administrators.
+- **Webhooks of the GitOps repositories.** A webhook sends the events of
+  a repository (commit messages, file names, authors) to its address, and
+  Forgejo makes the request from inside the cluster: a webhook can send
+  GitOps data out, or send requests to services in the cluster
+  (`ALLOWED_HOST_LIST` of the development environment permits
+  `*.svc.cluster.local`, for the webhook of Argo CD). The only webhook
+  that Squared expects is the webhook of the organization to Argo CD. The
+  guard reads the view `squared_guard_webhooks` of
+  [`forgejo-guard-view.sql`](../deploy/kind/forgejo-guard-view.sql): the
+  scope, the type, the state and the host of each webhook, and the
+  SHA-256 hash of its address. An address can have a secret (a token in
+  the path, or a user and a password), thus the view never has the
+  address, the secret or the authorization header. The guard compares the
+  hash with `webhooks`, which can have `sha256:<hex>` for an address with
+  a secret. A webhook of the organization or of one of its repositories,
+  or a system or default webhook (they apply to all repositories), with
+  another address is an error, also when it is inactive. A missing or
+  inactive webhook to an allowed address is a warning: Argo CD then sees
+  new commits only when it polls. The end-to-end test adds an inactive
+  webhook to `squared/platform` and checks the error.
 
 ### Passwords and tokens of Squared
 

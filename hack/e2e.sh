@@ -564,6 +564,17 @@ YAML
   wait_for "the guard has no errors after the rule is back" 60 guard_clean
   log "the guard checks the branch protection of the GitOps repositories"
 
+  # A webhook of the platform repository to an address that Squared does
+  # not expect. It is inactive, thus Forgejo sends nothing.
+  local hook_id
+  hook_id="$(fj_admin /repos/squared/platform/hooks -X POST -H 'Content-Type: application/json' -d '{"type": "gitea",
+    "config": {"url": "http://e2e-guard.invalid/hook", "content_type": "json"}, "events": ["push"], "active": false}' | jq -r .id)"
+  [[ "$hook_id" =~ ^[0-9]+$ ]] || die "cannot add a webhook to squared/platform"
+  guard_reports_writer 'a webhook of squared/platform [(]gitea, inactive[)] sends events to e2e-guard.invalid'
+  fj_admin "/repos/squared/platform/hooks/$hook_id" -X DELETE >/dev/null
+  wait_for "the guard has no errors after the webhook is removed" 60 guard_clean
+  log "the guard checks the webhooks of the GitOps repositories"
+
   # A change of the administrator group in Harbor, through the API as in
   # the web interface.
   local hgroup="e2e-harbor-$TENANT"

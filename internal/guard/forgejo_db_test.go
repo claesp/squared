@@ -115,6 +115,8 @@ func makeForgejoTables(t *testing.T, conn *pgx.Conn) {
 		CREATE TABLE team_unit (id bigserial PRIMARY KEY, org_id bigint NOT NULL, team_id bigint NOT NULL, type integer NOT NULL,
 			access_mode integer NOT NULL);
 		CREATE TABLE team_repo (id bigserial PRIMARY KEY, org_id bigint NOT NULL, team_id bigint NOT NULL, repo_id bigint NOT NULL);
-		CREATE TABLE collaboration (id bigserial PRIMARY KEY, repo_id bigint NOT NULL, user_id bigint NOT NULL, mode integer NOT NULL);`)
+		CREATE TABLE collaboration (id bigserial PRIMARY KEY, repo_id bigint NOT NULL, user_id bigint NOT NULL, mode integer NOT NULL);
+		CREATE TABLE webhook (id bigserial PRIMARY KEY, repo_id bigint NOT NULL, owner_id bigint NOT NULL, is_system_webhook boolean NOT NULL,
+			url text, secret text, header_authorization_encrypted text, is_active boolean NOT NULL, type varchar(16));`)
 	storetest.Must(t, err)
 }

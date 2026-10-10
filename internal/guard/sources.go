@@ -65,6 +65,9 @@ type SourceConfig struct {
 	//   forgejo-branches the protection of the default branch of the repositories of
 	//                    the organization Org, in the Forgejo database (URL,
 	//                    PasswordFile, Name, Org, Writers). No groups, only errors.
+	//   forgejo-webhooks the webhooks that see the repositories of the organization Org,
+	//                    in the Forgejo database (URL, PasswordFile, Name, Org,
+	//                    Webhooks). No groups, only errors.
 	//   forgejo-config   the sign-in and registration settings in the Forgejo app.ini,
 	//                    from the sidecar "squared forgejo-config" (URL). No groups,
 	//                    only errors.
@@ -86,12 +89,15 @@ type SourceConfig struct {
 	// SourceID is for forgejo-credentials: the ID of the Keycloak authentication
 	// source in Forgejo.
 	SourceID int64 `json:"sourceId,omitempty"`
-	// Org is for forgejo-deploy-keys, forgejo-writers and forgejo-branches: the Forgejo organization of the
+	// Org is for forgejo-deploy-keys, forgejo-writers, forgejo-branches and forgejo-webhooks: the Forgejo organization of the
 	// GitOps repositories (default "squared", as SQUARED_GIT_ORG).
 	Org string `json:"org,omitempty"`
 	// Writers is for forgejo-writers and forgejo-branches: the users that may push to the
 	// repositories of Org, for example the bot of the worker.
 	Writers []string `json:"writers,omitempty"`
+	// Webhooks is for forgejo-webhooks: the webhook addresses that Squared
+	// expects, or "sha256:<hex>" for an address with a secret.
+	Webhooks []string `json:"webhooks,omitempty"`
 	// IgnoreFields are new fields of a service configuration that an
 	// operator checked: they give no rights. The types argocd-rbac (keys),
 	// argocd-projects ("spec.<field>" or "roles.<field>"), forgejo-database,
@@ -224,6 +230,17 @@ func BuildSources(cfg *FileConfig, kc *kube.Client, idp KeycloakReader) ([]Sourc
 				sc.Org = "squared"
 			}
 			sources = append(sources, &forgejoBranchesSource{sc: sc})
+		case "forgejo-webhooks":
+			if sc.URL == "" || sc.PasswordFile == "" {
+				return nil, fmt.Errorf("source %d: forgejo-webhooks needs url and passwordFile", i)
+			}
+			if sc.Name == "" {
+				sc.Name = "squared_guard_webhooks"
+			}
+			if sc.Org == "" {
+				sc.Org = "squared"
+			}
+			sources = append(sources, &forgejoWebhooksSource{sc: sc})
 		case "forgejo-config":
 			if sc.URL == "" {
 				return nil, fmt.Errorf("source %d: forgejo-config needs url", i)
@@ -778,5 +795,41 @@ func (s *forgejoBranchesSource) References(ctx context.Context) ([]Reference, []
 		return nil, nil, err
 	}
 	warnings, err := checkForgejoBranches(rules, s.sc.Org, s.sc.Writers, s.sc.IgnoreFields, time.Now())
+	return nil, warnings, err
+}
+
+// forgejoWebhooksSource reads the webhooks from a view in the Forgejo
+// database. See checkForgejoWebhooks and deploy/kind/forgejo-guard-view.sql.
+type forgejoWebhooksSource struct {
+	sc SourceConfig
+}
+
+func (s *forgejoWebhooksSource) Name() string { return s.sc.Service + " webhooks" }
+
+func (s *forgejoWebhooksSource) References(ctx context.Context) ([]Reference, []string, error) {
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	conn, err := connectDatabase(ctx, s.sc)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer conn.Close(context.Background())
+	rows, err := conn.Query(ctx, `SELECT scope, owner_name, repo_name, type, active, url_sha256, url_host
+		FROM `+pgx.Identifier{s.sc.Name}.Sanitize()+" ORDER BY scope, owner_name, repo_name, url_host")
+	if err != nil {
+		return nil, nil, fmt.Errorf("read %s (run forgejo-guard-view.sql again after a Forgejo upgrade): %w", s.sc.Name, err)
+	}
+	var hooks []forgejoWebhook
+	for rows.Next() {
+		var h forgejoWebhook
+		if err := rows.Scan(&h.Scope, &h.Owner, &h.Repo, &h.Type, &h.Active, &h.URLSHA256, &h.URLHost); err != nil {
+			return nil, nil, err
+		}
+		hooks = append(hooks, h)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, nil, err
+	}
+	warnings, err := checkForgejoWebhooks(hooks, s.sc.Org, s.sc.Webhooks)
 	return nil, warnings, err
 }

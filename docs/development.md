@@ -232,7 +232,8 @@ all `*.localhost` names.
    gives `argocd-reader` write access as a collaborator, and then through a
    new team, and checks the errors. It checks that the local Forgejo
    administrator cannot write to `squared/platform`, and that the guard
-   reports a branch rule that does not apply to administrators. After the
+   reports a branch rule that does not apply to administrators, and a
+   webhook of `squared/platform` to an unexpected address. After the
    tenant is made, it checks that the tenant repository has the rule. It does the
    same for Harbor: it changes the administrator group through the Harbor
    API, then renames the key `oidc_admin_group` in the database.

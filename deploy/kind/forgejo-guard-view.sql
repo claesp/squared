@@ -1,7 +1,7 @@
 -- Access of the Squared guard to the authentication sources of Forgejo,
 -- to the owners of personal access tokens and SSH keys, to the deploy keys
--- of the repositories, to the team and collaborator access, and to the
--- protection of the default branches.
+-- of the repositories, to the team and collaborator access, to the
+-- protection of the default branches, and to the webhooks.
 --
 -- Forgejo has no API for its authentication sources. A change in the
 -- Forgejo web interface is only in the table login_source. The column cfg
@@ -18,7 +18,7 @@
 -- Run it as the owner of the Forgejo tables, after Forgejo made them. The
 -- password of the role is set separately. If an upgrade of Forgejo must
 -- change a column that a view uses, drop the views, upgrade, and run this
--- file again. The file works with PostgreSQL 13 and later.
+-- file again. The file works with PostgreSQL 13 and later (sha256 needs 11).
 
 DO $$
 BEGIN
@@ -201,3 +201,32 @@ LEFT JOIN p ON p.repo_id = r.id AND p.branch_name = r.default_branch;
 
 REVOKE ALL ON squared_guard_branch_rules FROM PUBLIC;
 GRANT SELECT ON squared_guard_branch_rules TO squared_guard;
+
+-- The webhooks: of a repository, of an owner (organization or user), and
+-- the system and default webhooks, which apply to all repositories. A
+-- webhook sends the events of a repository (commit messages, file names,
+-- authors) to its address, and Forgejo makes the request from inside the
+-- cluster. The address can have a secret (a token in the path, or a user
+-- and a password), thus the view has only its host and its SHA-256 hash,
+-- never the address, the secret or the authorization header. The guard
+-- compares the hash with the addresses that Squared expects.
+DROP VIEW IF EXISTS squared_guard_webhooks;
+
+CREATE VIEW squared_guard_webhooks WITH (security_barrier) AS
+SELECT CASE WHEN w.repo_id > 0 THEN 'repository'
+            WHEN w.owner_id > 0 THEN 'owner'
+            WHEN w.is_system_webhook THEN 'system'
+            ELSE 'default'
+       END                                                         AS scope,
+       coalesce(r.owner_name, o.name, '')                          AS owner_name,
+       coalesce(r.name, '')                                        AS repo_name,
+       w.type                                                      AS type,
+       w.is_active                                                 AS active,
+       encode(sha256(convert_to(w.url, 'UTF8')), 'hex')           AS url_sha256,
+       lower(coalesce(substring(w.url from '^[A-Za-z][A-Za-z0-9+.-]*://(?:[^@/?#]*@)?([^/:?#]+)'), '')) AS url_host
+FROM webhook w
+LEFT JOIN repository r ON w.repo_id > 0 AND r.id = w.repo_id
+LEFT JOIN "user" o ON w.repo_id = 0 AND w.owner_id > 0 AND o.id = w.owner_id;
+
+REVOKE ALL ON squared_guard_webhooks FROM PUBLIC;
+GRANT SELECT ON squared_guard_webhooks TO squared_guard;

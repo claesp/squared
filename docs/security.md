@@ -75,7 +75,7 @@ controls that it uses. Read [architecture.md](architecture.md) first.
   | Resources | Scopes | Effect |
   |---|---|---|
   | All users | `view`, `manage-group-membership` | Find users and change their group memberships. |
-  | All groups | `view`, `view-members`, `manage`, `manage-membership` | Make and remove groups, and change their members. |
+  | All groups | `view`, `view-members`, `manage`, `manage-membership` | Make and remove groups, and change their members. The same permission lets the guard make groups. |
   | Protected groups (`squared-admins`) | `view`, `manage`, `manage-membership`, only for holders of the realm role `squared-protected-group-admin` | A permission for a specific group replaces the permission for all groups. Nobody has the role, thus the worker can neither see nor change these groups, nor add or remove their members. |
 
   The worker can read users, and thus also the members of the protected
@@ -90,11 +90,33 @@ controls that it uses. Read [architecture.md](architecture.md) first.
   (`view-members`, `manage-membership-of-members` and so on), because these
   apply to the members themselves: the worker must be able to put an
   administrator into a tenant group.
-- **Protect each group that gives rights.** Keycloak cannot limit the
-  permission to groups that the worker made, thus the protection is a list
-  of groups. When you configure a service to give rights to a new group,
-  add the group to `PROTECTED_GROUPS` in `hack/kind-up.sh` (or to the
-  permission `protected-groups` in production).
+- **Automatic protection.** Keycloak cannot limit the permission to the
+  groups that the worker made, thus the protection is a list of groups.
+  The guard (decision D14 in the architecture) keeps the list up to date
+  from the configurations of the services. A group that a configuration
+  gives rights to is protected within one run (30 seconds), and the guard
+  makes a missing group before anybody else can.
+- **Rights of the guard.** The guard has the realm-management roles
+  `manage-realm` (no smaller role can change fine-grained admin
+  permissions), `view-users`, `query-groups` and `query-clients`, a
+  permission to see the `admin-permissions` client, and the group permission
+  of the worker (to make groups). It has no `manage-group-membership` on
+  users, thus it cannot change memberships. This is a strong account. The guard thus runs
+  alone in the namespace `squared-guard`, accepts no connections, reads
+  the configurations with read-only Kubernetes roles (named objects where
+  Kubernetes permits it) and a Harbor robot account that can only list
+  projects and members. Its code writes only the resources of one
+  permission and makes groups. Protect its secret like a Keycloak
+  administrator password.
+- **Limits of the guard.** It sees only the sources in its configuration.
+  Change the administrator group of Harbor in the ConfigMap `harbor-oidc`,
+  not in the Harbor web interface: a Harbor robot account cannot read the
+  Harbor configuration. Forgejo has no API for its authentication sources;
+  the guard reads the init script of the Helm chart, which Forgejo applies
+  at each start. A change in the Forgejo web interface is not visible to the
+  guard and is lost at the next start. The guard makes only top-level
+  groups. A group that becomes protected keeps the members that it had
+  before; the guard warns about them.
 - **Full group paths.** The groups claim has full paths, for example
   `/squared-admins`, and all services compare the full path. Short names
   are not unique: the worker can make a subgroup with the name

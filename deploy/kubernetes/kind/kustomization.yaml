@@ -7,6 +7,7 @@ resources:
   - ../base
   - postgres.yaml
   - rabbitmq.yaml
+  - guard-rbac.yaml
 images:
   - name: squared
     newName: localhost/squared
@@ -30,8 +31,26 @@ patches:
         path: /spec/replicas
         value: 1
 configMapGenerator:
+  # The guard reads the groups of the guard configuration below.
+  - name: squared-guard-config
+    namespace: squared-guard
+    files:
+      - guard.json
+  - name: squared-guard-env
+    namespace: squared-guard
+    literals:
+      - SQUARED_LOG_FORMAT=json
+      - SQUARED_KEYCLOAK_URL=http://keycloak.localhost:30180
+      - SQUARED_KEYCLOAK_REALM=squared
+      - SQUARED_KEYCLOAK_CLIENT_ID=squared-guard
+      - SQUARED_KEYCLOAK_CLIENT_SECRET_FILE=/etc/squared/secrets/keycloak-client-secret
+      - SQUARED_GUARD_INTERVAL=10s
+  # The guard finds this configuration by the label squared.dev/config.
   - name: squared-config
     namespace: squared
+    options:
+      labels:
+        squared.dev/config: "true"
     literals:
       - SQUARED_LOG_FORMAT=json
       - SQUARED_DATABASE_URL_FILE=/etc/squared/secrets/database-url

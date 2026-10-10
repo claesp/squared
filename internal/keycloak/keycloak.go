@@ -201,3 +201,114 @@ func (c *Client) UserIDByEmail(ctx context.Context, email string) (string, error
 	}
 	return "", ErrUserNotFound
 }
+
+// GroupByPath returns the group with a full path, for example
+// "/squared-admins", or nil if it does not exist.
+func (c *Client) GroupByPath(ctx context.Context, path string) (*Group, error) {
+	var g Group
+	parts := strings.Split(strings.Trim(path, "/"), "/")
+	for i := range parts {
+		parts[i] = url.PathEscape(parts[i])
+	}
+	err := c.rest.Do(ctx, http.MethodGet, "/group-by-path/"+strings.Join(parts, "/"), nil, &g)
+	if rest.HasStatus(err, http.StatusNotFound) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("find group %s: %w", path, err)
+	}
+	return &g, nil
+}
+
+// Permission is a scope permission of the admin-permissions client
+// (fine-grained admin permissions, version 2).
+type Permission struct {
+	ID               string   `json:"id"`
+	Name             string   `json:"name"`
+	Description      string   `json:"description,omitempty"`
+	ResourceType     string   `json:"resourceType"`
+	DecisionStrategy string   `json:"decisionStrategy,omitempty"`
+	Resources        []string `json:"resources"` // IDs of the users, groups or clients.
+	Scopes           []string `json:"scopes"`
+	Policies         []string `json:"policies"` // Policy names.
+}
+
+func (c *Client) authzPath(ctx context.Context) (string, error) {
+	var clients []struct {
+		ID string `json:"id"`
+	}
+	if err := c.rest.Do(ctx, http.MethodGet, "/clients?clientId=admin-permissions", nil, &clients); err != nil {
+		return "", fmt.Errorf("find admin-permissions client: %w", err)
+	}
+	if len(clients) != 1 {
+		return "", errors.New("the realm has no admin-permissions client; turn on admin permissions")
+	}
+	return "/clients/" + url.PathEscape(clients[0].ID) + "/authz/resource-server", nil
+}
+
+// GetPermission returns the scope permission with a name.
+func (c *Client) GetPermission(ctx context.Context, name string) (*Permission, error) {
+	base, err := c.authzPath(ctx)
+	if err != nil {
+		return nil, err
+	}
+	var found []Permission
+	if err := c.rest.Do(ctx, http.MethodGet, base+"/permission/scope?name="+url.QueryEscape(name), nil, &found); err != nil {
+		return nil, fmt.Errorf("find permission %s: %w", name, err)
+	}
+	var p *Permission
+	for i := range found {
+		if found[i].Name == name {
+			p = &found[i]
+		}
+	}
+	if p == nil {
+		return nil, fmt.Errorf("permission %s does not exist", name)
+	}
+	var full Permission
+	if err := c.rest.Do(ctx, http.MethodGet, base+"/permission/scope/"+url.PathEscape(p.ID), nil, &full); err != nil {
+		return nil, fmt.Errorf("read permission %s: %w", name, err)
+	}
+	p = &full
+	type named struct {
+		ID   string `json:"_id"`
+		Name string `json:"name"`
+	}
+	var resources, scopes, policies []named
+	if err := c.rest.Do(ctx, http.MethodGet, base+"/permission/"+url.PathEscape(p.ID)+"/resources", nil, &resources); err != nil {
+		return nil, err
+	}
+	if err := c.rest.Do(ctx, http.MethodGet, base+"/permission/"+url.PathEscape(p.ID)+"/scopes", nil, &scopes); err != nil {
+		return nil, err
+	}
+	if err := c.rest.Do(ctx, http.MethodGet, base+"/permission/"+url.PathEscape(p.ID)+"/associatedPolicies", nil, &policies); err != nil {
+		return nil, err
+	}
+	p.Resources, p.Scopes, p.Policies = nil, nil, nil
+	for _, r := range resources {
+		p.Resources = append(p.Resources, r.Name) // The resource name is the ID of the group.
+	}
+	for _, s := range scopes {
+		p.Scopes = append(p.Scopes, s.Name)
+	}
+	for _, s := range policies {
+		p.Policies = append(p.Policies, s.Name)
+	}
+	return p, nil
+}
+
+// SetPermissionResources sets the resources of a scope permission and
+// keeps its scopes and policies. It refuses an empty list, because a
+// permission without resources applies to all resources of its type.
+func (c *Client) SetPermissionResources(ctx context.Context, p *Permission, resources []string) error {
+	if len(resources) == 0 {
+		return errors.New("refused: a permission without resources applies to all resources")
+	}
+	base, err := c.authzPath(ctx)
+	if err != nil {
+		return err
+	}
+	update := *p
+	update.Resources = resources
+	return c.rest.Do(ctx, http.MethodPut, base+"/permission/scope/"+url.PathEscape(p.ID), update, nil)
+}

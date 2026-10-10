@@ -7,6 +7,7 @@ resources:
   - server.yaml
   - worker.yaml
   - networkpolicy.yaml
+  - guard.yaml
 labels:
   - pairs:
       app.kubernetes.io/part-of: squared

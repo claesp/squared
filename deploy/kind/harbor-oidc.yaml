@@ -1,0 +1,18 @@
+# The OIDC settings of Harbor, without the client secret. hack/kind-up.sh
+# applies them to Harbor through the API. The guard reads the
+# administrator group from here, because a Harbor robot account cannot read
+# the Harbor configuration. Change these settings here, not in the Harbor
+# web interface.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: harbor-oidc
+  namespace: harbor
+data:
+  oidc_name: Keycloak
+  oidc_endpoint: http://keycloak.localhost:30180/realms/squared
+  oidc_client_id: harbor
+  oidc_scope: openid,profile,email,offline_access
+  oidc_user_claim: preferred_username
+  oidc_groups_claim: groups
+  oidc_admin_group: /squared-admins

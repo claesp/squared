@@ -88,7 +88,8 @@ For the copy of tenant members (decision D13 in the architecture):
    - a permission for all users: `view`, `manage-group-membership`,
      policy `squared-worker`;
    - a permission for all groups: `view`, `view-members`, `manage`,
-     `manage-membership`, policy `squared-worker`;
+     `manage-membership`, policy `squared-worker` (the guard adds its
+     policy later, see below);
    - a permission for the specific groups that give rights (for example
      `squared-admins`), with the scopes `view`, `manage` and
      `manage-membership`, and only the role policy. Do not add the member
@@ -110,6 +111,38 @@ the browser uses.
 
 If Keycloak is not available, users cannot sign in, but existing sessions
 continue. The sign-in page then tells the user to try again later.
+
+## The guard
+
+The guard (decision D14 in the architecture) keeps the Keycloak
+permission `protected-groups` up to date. To install it in production:
+
+1. Make a confidential client `squared-guard` with only "service
+   accounts" on. Give its service account the client roles `manage-realm`,
+   `view-users`, `query-groups` and `query-clients` of `realm-management`,
+   and a permission with the scope `view` on the client
+   `admin-permissions`, so that the guard can find that client.
+2. Make a user policy for this service account, and an aggregated policy
+   with the decision strategy "Affirmative" that contains the policies of
+   the worker and of the guard. Use the aggregated policy in the permission
+   for all groups, instead of the policy of the worker. The guard can then
+   make missing groups. Do not make a second permission for all groups:
+   Keycloak grants a scope only if all permissions for the same resources
+   grant it, and admin permissions accept only that strategy, thus two such
+   permissions block each other.
+3. Make a Harbor robot account at system level with the permissions "list
+   projects" and "list members" of all projects.
+4. Write the configuration file (see [configuration.md](configuration.md))
+   with a source for each service that gives rights to groups.
+5. Give the service account of the guard read access to the objects of
+   the sources (see
+   [`deploy/kubernetes/kind/guard-rbac.yaml`](../deploy/kubernetes/kind/guard-rbac.yaml)).
+6. Run one replica. `GET /status` on port 8082 shows the protected groups,
+   the places that refer to them, the errors and the warnings of the last
+   run.
+
+When you add a service that gives rights to groups, add a source for it
+to the configuration of the guard.
 
 ## Health checks
 
@@ -135,6 +168,9 @@ monitoring system.
 | `squared_outbox_errors_total` | server | | Relay runs that failed. |
 | `squared_tasks_total` | worker | `kind`, `result` | Processed tasks. `result` is `done`, `retry` or `dead`. |
 | `squared_task_seconds` | worker | `kind` | Duration of task handlers (sum and count). |
+| `squared_guard_runs_total` | guard | `result` | Runs of the guard. `result` is `ok` or `error`. |
+| `squared_guard_changes_total` | guard | `change` | Groups that became protected (`protected`) or not protected (`released`). |
+| `squared_guard_warnings_total` | guard | `kind` | `members`: a new protected group has members. `short-name`: a configuration uses a short group name. |
 
 Useful alerts:
 
@@ -144,6 +180,10 @@ Useful alerts:
   tasks to RabbitMQ.
 - `sum(rate(squared_http_requests_total{status="5xx"}[5m])) > 0`: internal
   errors.
+- `increase(squared_guard_runs_total{result="error"}[5m]) > 0`: the guard
+  cannot read a source or update the permission.
+- `increase(squared_guard_warnings_total{kind="members"}[1h]) > 0`: a group
+  became protected with members; check them.
 
 ## Logs
 

@@ -57,7 +57,7 @@ It also records the important design decisions and the reasons for them.
                  +------------+  +---------+
 ```
 
-Squared is one Go binary with two roles:
+Squared is one Go binary with three roles:
 
 - **`squared serve`** has the web interface, the JSON API and the outbox
   relay. It reads and writes PostgreSQL and sends tasks to RabbitMQ. It has
@@ -65,6 +65,9 @@ Squared is one Go binary with two roles:
 - **`squared worker`** gets tasks from RabbitMQ and changes the external
   systems. It also copies the status of the Argo CD applications into
   PostgreSQL. The web interface reads the status from PostgreSQL.
+- **`squared guard`** keeps the Keycloak permission `protected-groups` up
+  to date from the configurations of the services (decision D14). It runs
+  alone, with its own credentials.
 
 Both roles use the same `core.Service` for business rules. Thus the web
 interface and the API have the same validation and the same permission
@@ -302,6 +305,46 @@ reconcile run):
 - **Timing.** Keycloak and Forgejo change within seconds. Harbor and Argo
   CD read the groups from the token at sign-in, thus a change applies at
   the next sign-in of the person.
+
+### D14: The guard protects the groups that give rights
+
+The worker can manage all Keycloak groups except the protected groups (see
+D13 and [security.md](security.md)). Keycloak cannot limit the permission
+of the worker to the groups that the worker made. Thus a separate process,
+`squared guard`, keeps the list of protected groups up to date:
+
+1. Every 30 seconds it reads the configuration of each service and finds
+   the groups that the configuration gives rights to:
+
+   | Service | Source |
+   |---|---|
+   | Argo CD | The `g` lines of the ConfigMap `argocd-rbac-cm`, and the roles of all AppProjects. |
+   | Harbor | The administrator group in the ConfigMap `harbor-oidc`, and the group members of all projects. |
+   | Forgejo | The administrator, restricted and team map groups in the init script of the Helm chart (Secret `forgejo-init`). Forgejo has no API for this. |
+   | Squared | `SQUARED_OIDC_ADMIN_GROUP` in the ConfigMap with the label `squared.dev/config`. |
+
+2. It ignores the tenant groups where Squared puts them: the role `member`
+   of the Argo CD project of the same tenant, and the Harbor project of the
+   same tenant. A tenant group at any other place is protected. The worker
+   then cannot change that group, and the access sync of the tenant fails
+   with a clear error.
+3. It makes a missing top-level group at once. Otherwise the worker could
+   make the group and add members before the configuration takes effect.
+4. It sets the resources of the permission `protected-groups` to exactly
+   these groups. A group that no configuration refers to anymore is not
+   protected anymore.
+
+Safety rules: if a source cannot be read, the guard adds groups but
+removes none in that run. It never sets an empty list, because a
+permission without resources applies to all groups. The configuration of
+the guard always has at least the administrator group. It warns when a
+group becomes protected that already has members.
+
+The guard needs the Keycloak role `manage-realm`: no smaller role can
+change fine-grained admin permissions. Thus the guard is a separate,
+small process with its own namespace and credentials, with read-only
+access to the configurations and no incoming connections. The worker
+cannot reach it or change its configuration.
 
 ## Data model
 

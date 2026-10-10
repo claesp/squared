@@ -96,3 +96,39 @@ OIDC is enabled when `SQUARED_OIDC_ISSUER` is set.
 The Kind overlay in
 [`deploy/kubernetes/kind/kustomization.yaml`](../deploy/kubernetes/kind/kustomization.yaml)
 is a complete example.
+
+## `squared guard`
+
+| Variable | Default | Description |
+|---|---|---|
+| `SQUARED_GUARD_CONFIG_FILE` | `/etc/squared/guard/guard.json` | The configuration file of the guard (see below). |
+| `SQUARED_GUARD_INTERVAL` | `30s` | Time between two runs. |
+| `SQUARED_HEALTH_LISTEN` | `:8082` | Address for `/healthz`, `/status` and `/metrics`. |
+| `SQUARED_KEYCLOAK_URL` | (necessary) | Base address of Keycloak. |
+| `SQUARED_KEYCLOAK_REALM` | (necessary) | Realm of the groups. |
+| `SQUARED_KEYCLOAK_CLIENT_ID` | (necessary) | Client of the guard, with a service account. |
+| `SQUARED_KEYCLOAK_CLIENT_SECRET` (secret) | (necessary) | Secret of that client. |
+| `SQUARED_KUBE_API_URL`, `SQUARED_KUBE_TOKEN_FILE`, `SQUARED_KUBE_CA_FILE` | | As for the worker. In a pod, the guard uses its service account. |
+
+The configuration file is JSON. The guard rejects unknown fields.
+[`deploy/kubernetes/kind/guard.json`](../deploy/kubernetes/kind/guard.json)
+is a complete example.
+
+| Field | Description |
+|---|---|
+| `permission` | The Keycloak scope permission with the protected groups. Default `protected-groups`. |
+| `groups` | Groups that are protected in all cases. At least one is necessary, for example `/squared-admins`. |
+| `tenantGroupPrefix` | The same as `SQUARED_TENANT_GROUP_PREFIX` of the worker. |
+| `projectPrefix` | The same as `SQUARED_PROJECT_PREFIX` of the worker. |
+| `sources` | The places to read. Each source has a `type`, a `service` name for messages, and the fields of its type. |
+
+| `type` | Fields | Groups |
+|---|---|---|
+| `argocd-rbac` | `namespace`, `name` | Subjects of the `g` lines in the keys `policy.csv` and `policy.*.csv`. |
+| `argocd-projects` | `namespace` | Groups of the roles of all AppProjects, except the tenant groups in the role `member` of their own tenant project. |
+| `harbor-members` | `url`, `user`, `passwordFile` | Group members of all projects, except the tenant groups in their own tenant project. A robot account with "list projects" and "list members" is enough. |
+| `configmap` | `namespace`, `name` or `selector`, `key` | Group paths in one key, separated by commas or white space. |
+| `forgejo-init` | `namespace`, `name`, `key` (default `configure_gitea.sh`) | `--admin-group`, `--restricted-group` and the keys of `--group-team-map` in the init script of the Forgejo Helm chart. |
+
+All groups are full paths, for example `/squared-admins`. The guard warns
+about a short name: it never matches the groups claim.

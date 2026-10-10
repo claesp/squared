@@ -246,3 +246,20 @@ func (c *Client) RemoveMember(ctx context.Context, project string, memberID int6
 	}
 	return err
 }
+
+// ProjectNames returns the names of all projects that the account can see.
+func (c *Client) ProjectNames(ctx context.Context) ([]string, error) {
+	var names []string
+	for page := 1; ; page++ {
+		var projects []Project
+		if err := c.rest.Do(ctx, http.MethodGet, fmt.Sprintf("/projects?page=%d&page_size=100", page), nil, &projects); err != nil {
+			return nil, fmt.Errorf("list projects: %w", err)
+		}
+		for _, p := range projects {
+			names = append(names, p.Name)
+		}
+		if len(projects) < 100 {
+			return names, nil
+		}
+	}
+}

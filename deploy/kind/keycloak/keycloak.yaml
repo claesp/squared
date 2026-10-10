@@ -67,6 +67,8 @@ spec:
               valueFrom: { secretKeyRef: { name: keycloak, key: forgejo-client-secret } }
             - name: SQUARED_WORKER_CLIENT_SECRET
               valueFrom: { secretKeyRef: { name: keycloak, key: squared-worker-client-secret } }
+            - name: SQUARED_GUARD_CLIENT_SECRET
+              valueFrom: { secretKeyRef: { name: keycloak, key: squared-guard-client-secret } }
           ports:
             - name: http
               containerPort: 8080

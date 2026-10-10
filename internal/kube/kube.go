@@ -200,3 +200,79 @@ func (c *Client) ApplicationExists(ctx context.Context, namespace, name string) 
 	}
 	return err == nil, err
 }
+
+// ConfigMap is the part of a ConfigMap that Squared reads.
+type ConfigMap struct {
+	Metadata struct {
+		Name string `json:"name"`
+	} `json:"metadata"`
+	Data map[string]string `json:"data"`
+}
+
+// GetConfigMap returns a ConfigMap.
+func (c *Client) GetConfigMap(ctx context.Context, namespace, name string) (*ConfigMap, error) {
+	var cm ConfigMap
+	path := "/api/v1/namespaces/" + url.PathEscape(namespace) + "/configmaps/" + url.PathEscape(name)
+	if err := c.rest.Do(ctx, http.MethodGet, path, nil, &cm); err != nil {
+		return nil, err
+	}
+	return &cm, nil
+}
+
+// ListConfigMaps returns the ConfigMaps of a namespace that have the labels
+// in selector.
+func (c *Client) ListConfigMaps(ctx context.Context, namespace, selector string) ([]ConfigMap, error) {
+	var out struct {
+		Items []ConfigMap `json:"items"`
+	}
+	path := "/api/v1/namespaces/" + url.PathEscape(namespace) + "/configmaps?labelSelector=" + url.QueryEscape(selector)
+	if err := c.rest.Do(ctx, http.MethodGet, path, nil, &out); err != nil {
+		return nil, err
+	}
+	return out.Items, nil
+}
+
+// GetSecretData returns the decoded data of a secret.
+func (c *Client) GetSecretData(ctx context.Context, namespace, name string) (map[string][]byte, error) {
+	var s struct {
+		Data map[string]string `json:"data"`
+	}
+	if err := c.rest.Do(ctx, http.MethodGet, secretPath(namespace, name), nil, &s); err != nil {
+		return nil, err
+	}
+	out := make(map[string][]byte, len(s.Data))
+	for k, v := range s.Data {
+		b, err := base64.StdEncoding.DecodeString(v)
+		if err != nil {
+			return nil, fmt.Errorf("secret %s/%s key %s: %w", namespace, name, k, err)
+		}
+		out[k] = b
+	}
+	return out, nil
+}
+
+// AppProject is the part of an Argo CD AppProject that Squared reads.
+type AppProject struct {
+	Metadata struct {
+		Name   string            `json:"name"`
+		Labels map[string]string `json:"labels"`
+	} `json:"metadata"`
+	Spec struct {
+		Roles []struct {
+			Name   string   `json:"name"`
+			Groups []string `json:"groups"`
+		} `json:"roles"`
+	} `json:"spec"`
+}
+
+// ListAppProjects returns the Argo CD projects in a namespace.
+func (c *Client) ListAppProjects(ctx context.Context, namespace string) ([]AppProject, error) {
+	var out struct {
+		Items []AppProject `json:"items"`
+	}
+	path := "/apis/argoproj.io/v1alpha1/namespaces/" + url.PathEscape(namespace) + "/appprojects"
+	if err := c.rest.Do(ctx, http.MethodGet, path, nil, &out); err != nil {
+		return nil, err
+	}
+	return out.Items, nil
+}

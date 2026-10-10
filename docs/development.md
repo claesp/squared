@@ -27,7 +27,7 @@ environment.
 ## Layout
 
 ```
-cmd/squared/            main package: serve, worker, migrate, check-catalog
+cmd/squared/            main package: serve, worker, guard, migrate, check-catalog
 internal/domain/        types, validation rules, errors
 internal/store/         PostgreSQL access and migrations
 internal/core/          business rules and permission checks
@@ -38,6 +38,8 @@ internal/web/           web interface (templates, CSS, handlers)
 internal/api/           JSON API
 internal/queue/         RabbitMQ publisher, consumer and outbox relay
 internal/worker/        task handlers and Argo CD status watcher
+internal/guard/         protection of the groups that give rights in services
+internal/keycloak/      Keycloak admin client (groups, permissions)
 internal/forgejo/       Forgejo client
 internal/harbor/        Harbor client
 internal/kube/          minimal Kubernetes client
@@ -142,6 +144,7 @@ if the realm does not exist. The realm has:
 | Client `harbor` | Harbor. Confidential. |
 | Client `forgejo` | Forgejo. Confidential. |
 | Client `squared-cli` | Development only: the password grant for API tokens in the end-to-end test. |
+| Client `squared-guard` | Service account of the guard. It has `manage-realm` and keeps the permission `protected-groups` up to date. |
 | Client `squared-worker` | Service account of the worker. It manages the groups `tenant-<tenant>-<role>`. `hack/kind-up.sh` limits it with fine-grained admin permissions. |
 | Role `squared-protected-group-admin` | Nobody has it. Only its holders could manage the protected groups. |
 | Group `squared-admins` | Administrators of Squared, Argo CD, Harbor and Forgejo. |
@@ -197,19 +200,22 @@ all `*.localhost` names.
    their rights in the API.
 3. Checks the limits of the Keycloak account of the worker, also that a
    subgroup named `squared-admins` gives no rights.
-4. Signs in to Argo CD, Harbor and Forgejo through Keycloak as both users,
+4. Checks that the guard sees `/squared-admins` in the configurations of
+   all four services, that a new group in the Argo CD RBAC is made and
+   protected, and that it is released when the line goes.
+5. Signs in to Argo CD, Harbor and Forgejo through Keycloak as both users,
    and checks the administrator rights in each service.
-5. Makes a tenant, adds `dev` as developer, and waits until `dev` has the
+6. Makes a tenant, adds `dev` as developer, and waits until `dev` has the
    Harbor project and can read the Forgejo repository.
-6. Pushes the example image as `dev` with the Harbor CLI secret.
-7. Deploys the image and checks the answer of the service.
-8. Checks that `dev` can read, but not sync, the application in Argo CD.
-9. Checks that a pod in another namespace cannot connect to the service.
-10. Changes a value (revision 2) and checks the new answer.
-11. Rolls back to revision 1 (revision 3) and checks the old answer.
-12. Removes `dev` from the tenant and checks that `dev` loses the access.
-13. Removes the deployment and checks that the objects are gone.
-14. Removes the tenant and checks that its Argo CD project is gone.
+7. Pushes the example image as `dev` with the Harbor CLI secret.
+8. Deploys the image and checks the answer of the service.
+9. Checks that `dev` can read, but not sync, the application in Argo CD.
+10. Checks that a pod in another namespace cannot connect to the service.
+11. Changes a value (revision 2) and checks the new answer.
+12. Rolls back to revision 1 (revision 3) and checks the old answer.
+13. Removes `dev` from the tenant and checks that `dev` loses the access.
+14. Removes the deployment and checks that the objects are gone.
+15. Removes the tenant and checks that its Argo CD project is gone.
 
 Set `KEEP_TENANT=1` to keep the tenant after the test, so that you can
 examine it.

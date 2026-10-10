@@ -1,0 +1,96 @@
+# The guard protects the Keycloak groups that the service configurations
+# give rights to (see internal/guard). It has its own namespace and
+# credentials, because the worker must not be able to change the
+# protection that limits the worker. It accepts no connections.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: squared-guard
+  labels:
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/enforce-version: latest
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: squared-guard
+  namespace: squared-guard
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: squared-guard
+  namespace: squared-guard
+  labels:
+    app.kubernetes.io/name: squared-guard
+spec:
+  replicas: 1
+  revisionHistoryLimit: 5
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: squared-guard
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: squared-guard
+    spec:
+      serviceAccountName: squared-guard
+      enableServiceLinks: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: guard
+          image: squared
+          args: ["guard"]
+          envFrom:
+            - configMapRef:
+                name: squared-guard-env
+          ports:
+            - name: health
+              containerPort: 8082
+          readinessProbe:
+            httpGet: { path: /healthz, port: health }
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: { path: /healthz, port: health }
+            periodSeconds: 10
+            failureThreshold: 6
+          resources:
+            requests: { cpu: 20m, memory: 32Mi }
+            limits: { memory: 128Mi }
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: config
+              mountPath: /etc/squared/guard
+              readOnly: true
+            - name: secrets
+              mountPath: /etc/squared/secrets
+              readOnly: true
+      volumes:
+        - name: config
+          configMap:
+            name: squared-guard-config
+        - name: secrets
+          secret:
+            secretName: squared-guard
+            defaultMode: 0440
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-ingress
+  namespace: squared-guard
+spec:
+  podSelector: {}
+  policyTypes: ["Ingress"]

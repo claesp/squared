@@ -277,6 +277,24 @@
         "basic",
         "roles"
       ]
+    },
+    {
+      "clientId": "squared-guard",
+      "name": "Squared guard",
+      "description": "Service account of the Squared guard. It keeps the permission protected-groups up to date. It needs manage-realm, because only that role can change fine-grained admin permissions.",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "clientAuthenticatorType": "client-secret",
+      "secret": "${SQUARED_GUARD_CLIENT_SECRET}",
+      "standardFlowEnabled": false,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": true,
+      "defaultClientScopes": [
+        "basic",
+        "roles"
+      ]
     }
   ],
   "users": [
@@ -330,6 +348,19 @@
         "realm-management": [
           "query-users",
           "query-groups"
+        ]
+      }
+    },
+    {
+      "username": "service-account-squared-guard",
+      "enabled": true,
+      "serviceAccountClientId": "squared-guard",
+      "clientRoles": {
+        "realm-management": [
+          "manage-realm",
+          "view-users",
+          "query-groups",
+          "query-clients"
         ]
       }
     }

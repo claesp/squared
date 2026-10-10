@@ -1,0 +1,15 @@
+{
+  "permission": "protected-groups",
+  "groups": ["/squared-admins"],
+  "tenantGroupPrefix": "tenant-",
+  "projectPrefix": "",
+  "sources": [
+    {"type": "argocd-rbac", "service": "Argo CD", "namespace": "argocd", "name": "argocd-rbac-cm"},
+    {"type": "argocd-projects", "service": "Argo CD", "namespace": "argocd"},
+    {"type": "harbor-members", "service": "Harbor", "url": "http://harbor.harbor.svc.cluster.local",
+     "user": "robot$squared-guard", "passwordFile": "/etc/squared/secrets/harbor-robot-password"},
+    {"type": "configmap", "service": "Harbor", "namespace": "harbor", "name": "harbor-oidc", "key": "oidc_admin_group"},
+    {"type": "configmap", "service": "Squared", "namespace": "squared", "selector": "squared.dev/config=true", "key": "SQUARED_OIDC_ADMIN_GROUP"},
+    {"type": "forgejo-init", "service": "Forgejo", "namespace": "forgejo", "name": "forgejo-init"}
+  ]
+}

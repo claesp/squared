@@ -23,6 +23,9 @@ through [RabbitMQ](https://www.rabbitmq.com).
   each tenant to Keycloak groups. They give access to the Harbor project
   (push or pull by role), read access to the Git repository and to the
   applications and logs in Argo CD.
+- **Automatic protection of administrator groups.** A separate guard reads
+  the configurations of Argo CD, Harbor, Forgejo and Squared, and protects
+  every group that they give rights to from changes by the worker.
 - **Users and roles.** Platform administrators, and owners, developers and
   viewers in each tenant. Sessions with CSRF protection, personal API
   tokens, and optional local passwords (Argon2id).

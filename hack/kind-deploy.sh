@@ -19,10 +19,12 @@ log "applying manifests"
 k apply -k "$ROOT/deploy/kubernetes/kind" >/dev/null
 # The image tag does not change, thus restart to use the new image.
 k -n squared rollout restart deployment/squared-server deployment/squared-worker >/dev/null
+k -n squared-guard rollout restart deployment/squared-guard >/dev/null
 k -n squared rollout status statefulset/postgres --timeout 5m >/dev/null
 k -n squared rollout status statefulset/rabbitmq --timeout 5m >/dev/null
 k -n squared rollout status deployment/squared-server --timeout 5m >/dev/null
 k -n squared rollout status deployment/squared-worker --timeout 5m >/dev/null
+k -n squared-guard rollout status deployment/squared-guard --timeout 5m >/dev/null
 # Wait until the old pods are gone. Until then, the service can still send
 # requests to an old pod that is stopping.
 for name in squared-server squared-worker; do

@@ -200,6 +200,64 @@ check_worker_limits() {
   log "the worker can change group members, but not users, the realm or protected groups"
 }
 
+# guard_status prints the status of the last run of the guard.
+guard_status() {
+  local pf out
+  k -n squared-guard port-forward deployment/squared-guard 18082:8082 >/dev/null 2>&1 &
+  pf=$!
+  for _ in $(seq 1 20); do
+    out="$(curl -fsS --max-time 2 http://127.0.0.1:18082/status 2>/dev/null)" && break
+    sleep 1
+  done
+  kill "$pf" 2>/dev/null || true
+  wait "$pf" 2>/dev/null || true
+  echo "$out"
+}
+
+# worker_may_add_dev GROUP prints the status code of the request of the
+# worker to add dev to a group.
+worker_may_add_dev() {
+  local a="${KEYCLOAK_URL}/admin/realms/squared" wt at dev gid
+  wt="$(curl -fsS -u "squared-worker:$(secret keycloak-squared-worker-client-secret)" \
+    "${KEYCLOAK_URL}/realms/squared/protocol/openid-connect/token" -d grant_type=client_credentials | jq -r .access_token)"
+  at="$(curl -fsS "${KEYCLOAK_URL}/realms/master/protocol/openid-connect/token" -d grant_type=password -d client_id=admin-cli \
+    -d username=admin --data-urlencode "password=$(secret keycloak-admin-password)" | jq -r .access_token)"
+  dev="$(curl -fsS -H "Authorization: Bearer $at" "$a/users?username=dev&exact=true" | jq -r '.[0].id')"
+  gid="$(curl -fsS -H "Authorization: Bearer $at" "$a/groups?search=$1&exact=true" | jq -r --arg n "$1" '.[] | select(.name == $n) | .id')"
+  [[ -n "$gid" ]] || { echo "missing"; return; }
+  curl -sS -o /dev/null -w '%{http_code}' -X PUT -H "Authorization: Bearer $wt" "$a/users/$dev/groups/$gid"
+  # Undo the change, if the worker could do it.
+  curl -sS -o /dev/null -X DELETE -H "Authorization: Bearer $at" "$a/users/$dev/groups/$gid"
+}
+
+check_guard() {
+  local st service group="e2e-ops-$TENANT" policy
+  # All four services refer to the administrator group.
+  guard_ran() { guard_status | jq -e '.protected | length > 0' >/dev/null 2>&1; }
+  wait_for "the guard has run" 60 guard_ran
+  st="$(guard_status)"
+  for service in "Argo CD" Harbor Forgejo Squared; do
+    jq -e --arg s "$service" '.protected[] | select(.path == "/squared-admins") | .references[] | select(.service == $s)' <<<"$st" >/dev/null \
+      || die "the guard does not see that $service gives rights to /squared-admins: $(jq -c '[.protected[] | {path, services: [.references[].service]}], .errors' <<<"$st")"
+  done
+  # A new line in the Argo CD RBAC makes the group and protects it.
+  policy="$(k -n argocd get configmap argocd-rbac-cm -o jsonpath='{.data.policy\.csv}')"
+  k -n argocd patch configmap argocd-rbac-cm --type merge \
+    -p "$(jq -n --arg p "$policy"$'\ng, /'"$group"$', role:readonly\n' '{data: {"policy.csv": $p}}')" >/dev/null
+  guard_protected() { [[ "$(worker_may_add_dev "$group")" == 403 ]]; }
+  wait_for "the guard made and protected /$group" 90 guard_protected
+  # Without the line, the group is not protected anymore.
+  k -n argocd patch configmap argocd-rbac-cm --type merge -p "$(jq -n --arg p "$policy" '{data: {"policy.csv": $p}}')" >/dev/null
+  guard_released() { [[ "$(worker_may_add_dev "$group")" == 204 ]]; }
+  wait_for "the guard released /$group" 90 guard_released
+  local at gid
+  at="$(curl -fsS "${KEYCLOAK_URL}/realms/master/protocol/openid-connect/token" -d grant_type=password -d client_id=admin-cli \
+    -d username=admin --data-urlencode "password=$(secret keycloak-admin-password)" | jq -r .access_token)"
+  gid="$(curl -fsS -H "Authorization: Bearer $at" "${KEYCLOAK_URL}/admin/realms/squared/groups?search=$group&exact=true" | jq -r '.[0].id')"
+  curl -fsS -o /dev/null -X DELETE -H "Authorization: Bearer $at" "${KEYCLOAK_URL}/admin/realms/squared/groups/$gid"
+  log "the guard follows the Argo CD RBAC configuration"
+}
+
 kc_token() {
   curl -fsS "${KEYCLOAK_URL}/realms/squared/protocol/openid-connect/token" \
     -d grant_type=password -d client_id=squared-cli -d scope=openid \
@@ -230,6 +288,9 @@ log "the administrator group in Keycloak controls the administrator rights"
 
 step "check the limits of the Keycloak account of the worker"
 check_worker_limits
+
+step "the guard protects groups that service configurations refer to"
+check_guard
 
 step "sign in to Argo CD, Harbor and Forgejo with Keycloak"
 check_sso "$ADMIN_USER" "$DEV/keycloak-admin-user-password" true

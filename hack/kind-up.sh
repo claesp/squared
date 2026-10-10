@@ -150,43 +150,58 @@ deploy_keycloak() {
     --from-literal="harbor-client-secret=$(secret keycloak-harbor-client-secret)" \
     --from-literal="forgejo-client-secret=$(secret keycloak-forgejo-client-secret)" \
     --from-literal="squared-worker-client-secret=$(secret keycloak-squared-worker-client-secret)" \
+    --from-literal="squared-guard-client-secret=$(secret keycloak-squared-guard-client-secret)" \
     --dry-run=client -o yaml | k apply -f - >/dev/null
   k apply -k "$ROOT/deploy/kind/keycloak" >/dev/null
   k -n keycloak rollout status deployment/keycloak --timeout 10m >/dev/null
   wait_http "${KEYCLOAK_URL}/realms/squared/.well-known/openid-configuration"
 }
 
-# setup_harbor makes Keycloak the authentication of Harbor. Harbor permits
-# this change only while it has no users other than "admin". The local
-# "admin" account stays for the worker and for emergencies. Members of the
-# Keycloak group squared-admins are Harbor administrators.
+# setup_harbor makes Keycloak the authentication of Harbor. The settings
+# come from the ConfigMap harbor-oidc, which the guard also reads. Harbor
+# permits the change of the authentication mode only while it has no users
+# other than "admin". The local "admin" account stays for the worker and
+# for emergencies.
 setup_harbor() {
   wait_http "${HARBOR_URL}/api/v2.0/ping"
-  local mode
-  mode="$(curl -fsS -u "admin:$(secret harbor-admin-password)" "${HARBOR_URL}/api/v2.0/configurations" | jq -r .auth_mode.value)"
-  if [[ "$mode" == "oidc_auth" ]]; then
-    return
-  fi
   log "configuring Harbor sign-in with Keycloak"
+  k apply -f "$ROOT/deploy/kind/harbor-oidc.yaml" >/dev/null
+  local settings mode
+  settings="$(k -n harbor get configmap harbor-oidc -o json | jq --arg secret "$(secret keycloak-harbor-client-secret)" \
+    '.data + {oidc_client_secret: $secret, oidc_auto_onboard: true, oidc_verify_cert: false}')"
+  mode="$(curl -fsS -u "admin:$(secret harbor-admin-password)" "${HARBOR_URL}/api/v2.0/configurations" | jq -r .auth_mode.value)"
+  if [[ "$mode" != "oidc_auth" ]]; then
+    settings="$(jq '. + {auth_mode: "oidc_auth"}' <<<"$settings")"
+  fi
   curl -fsS -u "admin:$(secret harbor-admin-password)" -X PUT -H 'Content-Type: application/json' \
-    -H 'X-Requested-With: squared' "${HARBOR_URL}/api/v2.0/configurations" -d "$(jq -n \
-      --arg secret "$(secret keycloak-harbor-client-secret)" '{
-        auth_mode: "oidc_auth",
-        oidc_name: "Keycloak",
-        oidc_endpoint: "http://keycloak.localhost:30180/realms/squared",
-        oidc_client_id: "harbor",
-        oidc_client_secret: $secret,
-        oidc_scope: "openid,profile,email,offline_access",
-        oidc_user_claim: "preferred_username",
-        oidc_groups_claim: "groups",
-        oidc_admin_group: "/squared-admins",
-        oidc_auto_onboard: true,
-        oidc_verify_cert: false
-      }')" >/dev/null || die "cannot configure Harbor sign-in"
+    -H 'X-Requested-With: squared' "${HARBOR_URL}/api/v2.0/configurations" -d "$settings" >/dev/null \
+    || die "cannot configure Harbor sign-in"
+
+  # A robot account with which the guard reads the members of all projects.
+  local robot id
+  robot="$(curl -fsS -u "admin:$(secret harbor-admin-password)" "${HARBOR_URL}/api/v2.0/robots?page_size=100" \
+    | jq -r '.[] | select(.name == "robot$squared-guard") | .id' | head -1)"
+  if [[ -z "$robot" ]]; then
+    log "making the Harbor robot account of the guard"
+    curl -fsS -u "admin:$(secret harbor-admin-password)" -X POST -H 'Content-Type: application/json' -H 'X-Requested-With: squared' \
+      "${HARBOR_URL}/api/v2.0/robots" -d "$(jq -n --arg s "$(secret harbor-guard-robot-password)" '{
+        name: "squared-guard", description: "Squared guard: reads project members.", level: "system", duration: -1, secret: $s,
+        permissions: [
+          {kind: "system", namespace: "/", access: [{resource: "project", action: "list"}]},
+          {kind: "project", namespace: "*", access: [{resource: "member", action: "list"}]}]}')" >/dev/null \
+      || die "cannot make the Harbor robot account of the guard"
+    robot="$(curl -fsS -u "admin:$(secret harbor-admin-password)" "${HARBOR_URL}/api/v2.0/robots?page_size=100" \
+      | jq -r '.[] | select(.name == "robot$squared-guard") | .id' | head -1)"
+  fi
+  # Harbor makes its own secret for a new robot account. Set the known one.
+  curl -fsS -u "admin:$(secret harbor-admin-password)" -X PATCH -H 'Content-Type: application/json' -H 'X-Requested-With: squared' \
+    "${HARBOR_URL}/api/v2.0/robots/$robot" -d "$(jq -n --arg s "$(secret harbor-guard-robot-password)" '{secret: $s}')" >/dev/null \
+    || die "cannot set the secret of the Harbor robot account of the guard"
 }
 
-# Groups that the Squared worker must not change. Add each group that gives
-# rights in a service, for example an administrator group.
+# Groups that are protected from the start. After the start, the Squared
+# guard keeps the list up to date: it protects each group that a service
+# configuration gives rights to.
 PROTECTED_GROUPS=(squared-admins)
 
 # kc METHOD PATH [JSON] calls the Keycloak admin API of the realm squared as
@@ -213,11 +228,20 @@ kc_put_authz() {
   fi
 }
 
+# kc_delete_authz KIND NAME removes a policy or permission if it exists.
+kc_delete_authz() {
+  local base id
+  base="/clients/$(kc GET '/clients?clientId=admin-permissions' | jq -r '.[0].id')/authz/resource-server"
+  id="$(kc GET "$base/$1?name=$(jq -rn --arg n "$2" '$n|@uri')" | jq -r --arg n "$2" '.[]? | select(.name == $n) | .id')"
+  [[ -z "$id" ]] || kc DELETE "$base/$1/$id" >/dev/null
+}
+
 # setup_keycloak_permissions limits the service account of the Squared
 # worker with fine-grained admin permissions (version 2). The account has
 # no admin role other than query-users and query-groups. The permissions:
 #   - Users (all): view, manage-group-membership.
-#   - Groups (all): view, view-members, manage, manage-membership.
+#   - Groups (all): view, view-members, manage, manage-membership (for the
+#     worker and the guard, see below).
 #   - Protected groups: a permission for exactly these groups replaces the
 #     permission for all groups for the scopes view, manage and
 #     manage-membership. Its only policy is the realm role
@@ -247,11 +271,43 @@ setup_keycloak_permissions() {
   kc_put_authz permission/scope squared-worker-users "$(jq -n \
     '{name: "squared-worker-users", description: "The worker can find users and change their group memberships.",
       resourceType: "Users", scopes: ["view", "manage-group-membership"], policies: ["squared-worker"]}')"
-  kc_put_authz permission/scope squared-worker-groups "$(jq -n \
-    '{name: "squared-worker-groups", description: "The worker can manage the tenant groups and their members.",
-      resourceType: "Groups", scopes: ["view", "view-members", "manage", "manage-membership"], policies: ["squared-worker"]}')"
+  # The guard can make groups, so that a group that a configuration refers
+  # to exists and is protected before somebody else makes it. It has
+  # manage-realm (the only role that can change these permissions) and
+  # view-users from its client roles.
+  local guard_client guard_user
+  guard_client="$(kc GET '/clients?clientId=squared-guard' | jq -r '.[0].id')"
+  guard_user="$(kc GET "/clients/$guard_client/service-account-user" | jq -r .id)"
+  kc_put_authz policy/user squared-guard "$(jq -n --arg u "$guard_user" \
+    '{name: "squared-guard", description: "The service account of the Squared guard.", logic: "POSITIVE", users: [$u]}')"
+  # Keycloak grants a scope only if all permissions for the same resources
+  # grant it, and admin permissions accept only that strategy. Thus one
+  # permission for all groups uses an aggregated policy, which is true for
+  # the worker or the guard (AFFIRMATIVE). The guard has no
+  # manage-group-membership on users, thus it cannot change memberships.
+  kc_delete_authz permission squared-worker-groups
+  kc_delete_authz permission squared-guard-groups
+  # The guard finds the admin-permissions client with query-clients. This
+  # permission makes exactly that client visible to it.
+  kc_put_authz permission/scope squared-guard-admin-permissions "$(jq -n \
+    --arg c "$(kc GET '/clients?clientId=admin-permissions' | jq -r '.[0].id')" \
+    '{name: "squared-guard-admin-permissions", description: "The guard can find the admin-permissions client.",
+      resourceType: "Clients", resources: [$c], scopes: ["view"], policies: ["squared-guard"]}')"
+  kc_put_authz policy/aggregate squared-worker-or-guard "$(jq -n \
+    '{name: "squared-worker-or-guard", description: "The service account of the worker or of the guard.",
+      logic: "POSITIVE", decisionStrategy: "AFFIRMATIVE", policies: ["squared-worker", "squared-guard"]}')"
+  kc_put_authz permission/scope squared-groups "$(jq -n \
+    '{name: "squared-groups", description: "The worker manages the tenant groups and their members. The guard makes the groups that it protects.",
+      resourceType: "Groups", scopes: ["view", "view-members", "manage", "manage-membership"],
+      policies: ["squared-worker-or-guard"]}')"
+  # The guard updates the resources of this permission. Make it only one
+  # time, so that a new run of this script does not remove the groups that
+  # the guard added.
+  if kc GET "/clients/$(kc GET '/clients?clientId=admin-permissions' | jq -r '.[0].id')/authz/resource-server/permission?name=protected-groups" | jq -e 'length > 0' >/dev/null; then
+    return
+  fi
   kc_put_authz permission/scope protected-groups "$(jq -n --args \
-    '{name: "protected-groups", description: "Only holders of squared-protected-group-admin can manage these groups. This permission replaces squared-worker-groups for them.",
+    '{name: "protected-groups", description: "Only holders of squared-protected-group-admin can manage these groups. This permission replaces squared-groups for them.",
       resourceType: "Groups", resources: $ARGS.positional,
       scopes: ["view", "manage", "manage-membership"],
       policies: ["protected-group-administrators"]}' "${groups[@]}")"
@@ -288,6 +344,11 @@ deploy_squared() {
     --from-literal="forgejo-token=$(cat "${DEV}/forgejo-squared-bot-token")" \
     --from-literal="harbor-password=$(secret harbor-admin-password)" \
     --from-literal="keycloak-client-secret=$(secret keycloak-squared-worker-client-secret)" \
+    --dry-run=client -o yaml | k apply -f - >/dev/null
+  k create namespace squared-guard --dry-run=client -o yaml | k apply -f - >/dev/null
+  k -n squared-guard create secret generic squared-guard \
+    --from-literal="keycloak-client-secret=$(secret keycloak-squared-guard-client-secret)" \
+    --from-literal="harbor-robot-password=$(secret harbor-guard-robot-password)" \
     --dry-run=client -o yaml | k apply -f - >/dev/null
   "$ROOT/hack/kind-deploy.sh"
 }

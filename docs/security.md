@@ -67,15 +67,43 @@ controls that it uses. Read [architecture.md](architecture.md) first.
   Forgejo teams. Disable the user in Keycloak too, to stop all sign-ins.
 - Tenant members get read access only to Git and Argo CD. Only Harbor gives
   them write access (push), to their own project.
-- **Rights of the worker.** The Keycloak service account `squared-worker`
-  has the realm-management roles `manage-users`, `view-users`,
-  `query-users` and `query-groups`. Keycloak has no smaller role for
-  group membership, thus this account can also change users of the realm.
-  The Forgejo bot of the worker is a Forgejo administrator, because it
-  makes the accounts of members. Protect both secrets as well as the
-  database password. In production, consider the fine-grained admin
-  permissions of Keycloak to limit the service account to the tenant
-  groups.
+- **Rights of the worker in Keycloak.** Fine-grained admin permissions
+  (version 2) limit the service account `squared-worker`. It has no admin
+  role other than `query-users` and `query-groups`, which only permit
+  searches. Its permissions:
+
+  | Resources | Scopes | Effect |
+  |---|---|---|
+  | All users | `view`, `manage-group-membership` | Find users and change their group memberships. |
+  | All groups | `view`, `view-members`, `manage`, `manage-membership` | Make and remove groups, and change their members. |
+  | Protected groups (`squared-admins`) | `view`, `manage`, `manage-membership`, only for holders of the realm role `squared-protected-group-admin` | A permission for a specific group replaces the permission for all groups. Nobody has the role, thus the worker can neither see nor change these groups, nor add or remove their members. |
+
+  The worker can read users, and thus also the members of the protected
+  groups. It cannot change them.
+
+  To add a user to a group, Keycloak needs both `manage-group-membership`
+  on the user and `manage-membership` on the group. The worker thus cannot
+  add anybody to a protected group. It cannot make, change, disable or
+  remove users, reset passwords, assign roles, impersonate users, read
+  clients or keys, or change the realm. The end-to-end test checks these
+  limits. The protected permission does not have the member scopes
+  (`view-members`, `manage-membership-of-members` and so on), because these
+  apply to the members themselves: the worker must be able to put an
+  administrator into a tenant group.
+- **Protect each group that gives rights.** Keycloak cannot limit the
+  permission to groups that the worker made, thus the protection is a list
+  of groups. When you configure a service to give rights to a new group,
+  add the group to `PROTECTED_GROUPS` in `hack/kind-up.sh` (or to the
+  permission `protected-groups` in production).
+- **Full group paths.** The groups claim has full paths, for example
+  `/squared-admins`, and all services compare the full path. Short names
+  are not unique: the worker can make a subgroup with the name
+  `squared-admins` under a tenant group. Its path
+  `/tenant-acme-owner/squared-admins` does not match `/squared-admins`.
+  Never configure a service with a short group name.
+- **Rights of the worker in Forgejo.** The Forgejo bot of the worker is a
+  Forgejo administrator, because it makes the accounts of members. Protect
+  its token as well as the database password.
 - Forgejo links a Keycloak sign-in to an existing account with the same
   email address (`ACCOUNT_LINKING = auto`). The local accounts of the
   development environment thus have addresses in the domain

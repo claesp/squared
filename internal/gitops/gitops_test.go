@@ -55,7 +55,7 @@ func TestTenantFiles(t *testing.T) {
 		t.Errorf("destinations or cluster whitelist not correct: %+v", project.Spec)
 	}
 	app := string(files["tenants/acme/appproject.json"])
-	for _, want := range []string{`"tenant-acme-owner"`, `"tenant-acme-viewer"`, `"p, proj:tenant-acme:member, applications, get, tenant-acme/*, allow"`} {
+	for _, want := range []string{`"/tenant-acme-owner"`, `"/tenant-acme-viewer"`, `"p, proj:tenant-acme:member, applications, get, tenant-acme/*, allow"`} {
 		if !strings.Contains(app, want) {
 			t.Errorf("project does not contain %s", want)
 		}

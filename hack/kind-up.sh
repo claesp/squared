@@ -179,10 +179,82 @@ setup_harbor() {
         oidc_scope: "openid,profile,email,offline_access",
         oidc_user_claim: "preferred_username",
         oidc_groups_claim: "groups",
-        oidc_admin_group: "squared-admins",
+        oidc_admin_group: "/squared-admins",
         oidc_auto_onboard: true,
         oidc_verify_cert: false
       }')" >/dev/null || die "cannot configure Harbor sign-in"
+}
+
+# Groups that the Squared worker must not change. Add each group that gives
+# rights in a service, for example an administrator group.
+PROTECTED_GROUPS=(squared-admins)
+
+# kc METHOD PATH [JSON] calls the Keycloak admin API of the realm squared as
+# the administrator of the master realm.
+kc() {
+  local token
+  token="$(curl -fsS "${KEYCLOAK_URL}/realms/master/protocol/openid-connect/token" -d grant_type=password \
+    -d client_id=admin-cli -d username=admin --data-urlencode "password=$(secret keycloak-admin-password)" | jq -r .access_token)"
+  curl -fsS -X "$1" -H "Authorization: Bearer $token" -H 'Content-Type: application/json' \
+    "${KEYCLOAK_URL}/admin/realms/squared$2" ${3:+-d "$3"}
+}
+
+# kc_put_authz KIND NAME JSON makes or updates a policy (KIND
+# "policy/user", "policy/role") or a permission (KIND "permission/scope")
+# of the admin-permissions client.
+kc_put_authz() {
+  local kind="$1" name="$2" body="$3" base id
+  base="/clients/$(kc GET '/clients?clientId=admin-permissions' | jq -r '.[0].id')/authz/resource-server"
+  id="$(kc GET "$base/${kind%%/*}?name=$(jq -rn --arg n "$name" '$n|@uri')&exact=true" 2>/dev/null | jq -r --arg n "$name" '.[]? | select(.name == $n) | .id')"
+  if [[ -n "$id" ]]; then
+    kc PUT "$base/$kind/$id" "$(jq --arg id "$id" '. + {id: $id}' <<<"$body")" >/dev/null
+  else
+    kc POST "$base/$kind" "$body" >/dev/null
+  fi
+}
+
+# setup_keycloak_permissions limits the service account of the Squared
+# worker with fine-grained admin permissions (version 2). The account has
+# no admin role other than query-users and query-groups. The permissions:
+#   - Users (all): view, manage-group-membership.
+#   - Groups (all): view, view-members, manage, manage-membership.
+#   - Protected groups: a permission for exactly these groups replaces the
+#     permission for all groups for the scopes view, manage and
+#     manage-membership. Its only policy is the realm role
+#     squared-protected-group-admin, which nobody has. Thus the worker can
+#     neither see nor change these groups, nor add or remove members.
+#     The permission does not have the member scopes (view-members and so
+#     on): they apply to the members themselves, and the worker must be
+#     able to add an administrator to a tenant group.
+# To add a user to a group, Keycloak needs manage-group-membership on the
+# user and manage-membership on the group. Thus the worker cannot add a
+# user to a protected group.
+setup_keycloak_permissions() {
+  log "limiting the Keycloak account of the Squared worker"
+  local worker_client worker_user role_id groups=() g gid
+  worker_client="$(kc GET '/clients?clientId=squared-worker' | jq -r '.[0].id')"
+  worker_user="$(kc GET "/clients/$worker_client/service-account-user" | jq -r .id)"
+  role_id="$(kc GET /roles/squared-protected-group-admin | jq -r .id)"
+  for g in "${PROTECTED_GROUPS[@]}"; do
+    gid="$(kc GET "/groups?search=$g&exact=true" | jq -r --arg n "$g" '.[] | select(.name == $n) | .id')"
+    [[ -n "$gid" ]] || die "protected group $g does not exist"
+    groups+=("$gid")
+  done
+  kc_put_authz policy/user squared-worker "$(jq -n --arg u "$worker_user" \
+    '{name: "squared-worker", description: "The service account of the Squared worker.", logic: "POSITIVE", users: [$u]}')"
+  kc_put_authz policy/role protected-group-administrators "$(jq -n --arg r "$role_id" \
+    '{name: "protected-group-administrators", description: "Holders of the role squared-protected-group-admin.", logic: "POSITIVE", roles: [{id: $r, required: true}]}')"
+  kc_put_authz permission/scope squared-worker-users "$(jq -n \
+    '{name: "squared-worker-users", description: "The worker can find users and change their group memberships.",
+      resourceType: "Users", scopes: ["view", "manage-group-membership"], policies: ["squared-worker"]}')"
+  kc_put_authz permission/scope squared-worker-groups "$(jq -n \
+    '{name: "squared-worker-groups", description: "The worker can manage the tenant groups and their members.",
+      resourceType: "Groups", scopes: ["view", "view-members", "manage", "manage-membership"], policies: ["squared-worker"]}')"
+  kc_put_authz permission/scope protected-groups "$(jq -n --args \
+    '{name: "protected-groups", description: "Only holders of squared-protected-group-admin can manage these groups. This permission replaces squared-worker-groups for them.",
+      resourceType: "Groups", resources: $ARGS.positional,
+      scopes: ["view", "manage", "manage-membership"],
+      policies: ["protected-group-administrators"]}' "${groups[@]}")"
 }
 
 setup_argocd() {
@@ -223,6 +295,7 @@ deploy_squared() {
 create_cluster
 configure_dns
 deploy_keycloak
+setup_keycloak_permissions
 install_charts
 setup_forgejo
 setup_harbor

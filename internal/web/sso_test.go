@@ -34,7 +34,7 @@ func newSSOServer(t *testing.T, idp *ssotest.Provider) *httptest.Server {
 	t.Cleanup(srv.Close)
 	client, err := sso.New(sso.Config{
 		Issuer: idp.URL, ClientID: idp.ClientID, ClientSecret: idp.ClientSecret,
-		RedirectURL: srv.URL + "/auth/callback", PostLogoutURL: srv.URL + "/login", AdminGroup: "squared-admins",
+		RedirectURL: srv.URL + "/auth/callback", PostLogoutURL: srv.URL + "/login", AdminGroup: "/squared-admins",
 	})
 	storetest.Must(t, err)
 	w, err := web.New(svc, web.Config{CookieSecure: false, RegistryHost: "registry.test", SSO: client, SSOName: "Keycloak"}, log)
@@ -103,7 +103,10 @@ func TestSSOSignIn(t *testing.T) {
 
 func TestSSOAdminFlagFromGroups(t *testing.T) {
 	idp := ssotest.New(t)
-	idp.SetUser(ssotest.User{Subject: "u2", Email: "dev@example.com", EmailVerified: true, Name: "Dev"})
+	// A subgroup with the name of the administrator group does not give
+	// administrator rights: only the exact full path does.
+	idp.SetUser(ssotest.User{Subject: "u2", Email: "dev@example.com", EmailVerified: true, Name: "Dev",
+		Groups: []string{"/tenant-acme-owner/squared-admins", "squared-admins"}})
 	srv := newSSOServer(t, idp)
 	b := browser(t)
 	resp, err := b.Get(srv.URL + "/auth/login?next=/admin/users")

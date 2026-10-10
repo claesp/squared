@@ -18,11 +18,13 @@ configs:
       enablePKCEAuthentication: true
       requestedScopes: ["openid", "profile", "email"]
   rbac:
-    # Members of the Keycloak group squared-admins are administrators.
+    # Members of the Keycloak group squared-admins are administrators. The
+    # groups claim has full paths: a subgroup with the same name does not
+    # match.
     # Other users have no rights: tenants use Squared, not Argo CD.
     policy.default: ""
     policy.csv: |
-      g, squared-admins, role:admin
+      g, /squared-admins, role:admin
     scopes: "[groups]"
 dex:
   enabled: false

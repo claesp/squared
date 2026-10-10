@@ -32,8 +32,11 @@ type Config struct {
 	PostLogoutURL string
 	// GroupsClaim is the claim with the group names. Default "groups".
 	GroupsClaim string
-	// AdminGroup is the group of platform administrators. If it is empty,
-	// the provider does not control the administrator flag.
+	// AdminGroup is the group of platform administrators, exactly as in
+	// the groups claim. Use the full path, for example "/squared-admins":
+	// short names are not unique, because a subgroup can have the same
+	// name. If it is empty, the provider does not control the
+	// administrator flag.
 	AdminGroup string
 	// APIAudience enables OIDC access tokens for the API. Access tokens
 	// must have this value in their "aud" claim.
@@ -57,7 +60,7 @@ func (c Config) Admin(id *Identity) (admin, managed bool) {
 		return false, false
 	}
 	for _, g := range id.Groups {
-		if strings.TrimPrefix(g, "/") == c.AdminGroup {
+		if g == c.AdminGroup {
 			return true, true
 		}
 	}

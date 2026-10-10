@@ -51,7 +51,7 @@ OIDC is enabled when `SQUARED_OIDC_ISSUER` is set.
 | `SQUARED_OIDC_POST_LOGOUT_URL` | empty | Where the provider sends the browser after sign-out, for example `https://<squared>/login`. Register it at the provider. |
 | `SQUARED_OIDC_NAME` | `Keycloak` | Name of the provider on the sign-in button. |
 | `SQUARED_OIDC_GROUPS_CLAIM` | `groups` | Claim with the group names. |
-| `SQUARED_OIDC_ADMIN_GROUP` | empty | Members of this group are platform administrators. Squared sets the flag at each sign-in. If empty, administrators set the flag in Squared. |
+| `SQUARED_OIDC_ADMIN_GROUP` | empty | Members of this group are platform administrators. Give the exact value of the groups claim, which must be the full path, for example `/squared-admins`. Squared sets the flag at each sign-in. If empty, administrators set the flag in Squared. |
 | `SQUARED_OIDC_API_AUDIENCE` | empty | If set, the API also accepts access tokens of the provider with this value in the `aud` claim. |
 
 ## `squared worker`

@@ -46,7 +46,7 @@ configMapGenerator:
       - SQUARED_OIDC_CLIENT_SECRET_FILE=/etc/squared/secrets/oidc-client-secret
       - SQUARED_OIDC_REDIRECT_URL=http://localhost:30080/auth/callback
       - SQUARED_OIDC_POST_LOGOUT_URL=http://localhost:30080/login
-      - SQUARED_OIDC_ADMIN_GROUP=squared-admins
+      - SQUARED_OIDC_ADMIN_GROUP=/squared-admins
       - SQUARED_OIDC_API_AUDIENCE=squared-api
       # The worker copies the members of each tenant to Keycloak groups,
       # Harbor project members and a Forgejo team.

@@ -38,6 +38,13 @@ type Config struct {
 	GroupPrefix string
 }
 
+// TenantGroupClaim returns the value of a tenant group in the groups claim:
+// the full path of the top-level group. Services compare full paths,
+// because short names are not unique.
+func (c Config) TenantGroupClaim(slug string, role domain.Role) string {
+	return "/" + c.TenantGroup(slug, role)
+}
+
 // TenantGroup returns the name of the identity provider group of the
 // members of a tenant with a role.
 func (c Config) TenantGroup(slug string, role domain.Role) string {
@@ -181,9 +188,9 @@ func (c Config) appProject(t *domain.Tenant, envs []domain.Environment) object {
 					"p, proj:" + ProjectName(t.Slug) + ":member, logs, get, " + ProjectName(t.Slug) + "/*, allow",
 				},
 				"groups": []string{
-					c.TenantGroup(t.Slug, domain.RoleOwner),
-					c.TenantGroup(t.Slug, domain.RoleDeveloper),
-					c.TenantGroup(t.Slug, domain.RoleViewer),
+					c.TenantGroupClaim(t.Slug, domain.RoleOwner),
+					c.TenantGroupClaim(t.Slug, domain.RoleDeveloper),
+					c.TenantGroupClaim(t.Slug, domain.RoleViewer),
 				},
 			}},
 			"clusterResourceWhitelist": []kind{},

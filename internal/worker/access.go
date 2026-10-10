@@ -139,12 +139,14 @@ func (w *Worker) syncHarborMembers(ctx context.Context, t *domain.Tenant) error 
 	if err != nil {
 		return err
 	}
+	// Harbor compares the group names with the values of the groups claim,
+	// which are full paths.
 	want := map[string]int{}
 	for role, harborRole := range harborRoles {
-		want[w.cfg.GitOps.TenantGroup(t.Slug, role)] = harborRole
+		want[w.cfg.GitOps.TenantGroupClaim(t.Slug, role)] = harborRole
 	}
 	found := map[string]bool{}
-	prefix := w.teamName(t.Slug) + "-"
+	prefix := "/" + w.teamName(t.Slug) + "-"
 	for _, m := range members {
 		if m.EntityType != "g" {
 			continue // Users, for example the admin who made the project.
@@ -222,7 +224,7 @@ func (w *Worker) removeAccess(ctx context.Context, t *domain.Tenant) error {
 	if err != nil && !rest.HasStatus(err, http.StatusNotFound) {
 		return fmt.Errorf("harbor: %w", err)
 	}
-	prefix := w.teamName(t.Slug) + "-"
+	prefix := "/" + w.teamName(t.Slug) + "-"
 	for _, m := range members {
 		if m.EntityType == "g" && strings.HasPrefix(m.EntityName, prefix) {
 			if err := w.harbor.RemoveMember(ctx, w.HarborProject(t.Slug), m.ID); err != nil {

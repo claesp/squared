@@ -165,6 +165,41 @@ dev_has_access() {
   jq -s -e --argjson role "$1" '.[1].body.current_user_role_id == $role and .[3].status == 200' <<<"$out" >/dev/null
 }
 
+# check_worker_limits checks that the service account of the worker can
+# change only the memberships of groups that are not protected.
+check_worker_limits() {
+  local wt at a="${KEYCLOAK_URL}/admin/realms/squared" dev admins probe sub code
+  wt="$(curl -fsS -u "squared-worker:$(secret keycloak-squared-worker-client-secret)" \
+    "${KEYCLOAK_URL}/realms/squared/protocol/openid-connect/token" -d grant_type=client_credentials | jq -r .access_token)"
+  at="$(curl -fsS "${KEYCLOAK_URL}/realms/master/protocol/openid-connect/token" -d grant_type=password -d client_id=admin-cli \
+    -d username=admin --data-urlencode "password=$(secret keycloak-admin-password)" | jq -r .access_token)"
+  wk() { curl -sS -o "$WORK/kc.out" -w '%{http_code}' -X "$1" -H "Authorization: Bearer $wt" -H 'Content-Type: application/json' "$a$2" ${3:+-d "$3"}; }
+  dev="$(curl -fsS -H "Authorization: Bearer $at" "$a/users?username=dev&exact=true" | jq -r '.[0].id')"
+  local padmin
+  padmin="$(curl -fsS -H "Authorization: Bearer $at" "$a/users?username=$ADMIN_USER&exact=true" | jq -r '.[0].id')"
+  admins="$(curl -fsS -H "Authorization: Bearer $at" "$a/groups?search=squared-admins&exact=true" | jq -r '.[0].id')"
+  [[ "$(wk GET '/users?email=dev@squared.test&exact=true')" == 200 ]] || die "the worker cannot find users"
+  for probe in "PUT|/users/$dev/groups/$admins|" "DELETE|/users/$padmin/groups/$admins|" "DELETE|/groups/$admins|" \
+      "PUT|/groups/$admins|{\"name\":\"renamed\"}" "POST|/groups/$admins/children|{\"name\":\"x\"}" "POST|/users|{\"username\":\"mallory\"}" \
+      "PUT|/users/$dev/reset-password|{\"type\":\"password\",\"value\":\"Mallory-password-1\"}" \
+      "PUT|/users/$dev|{\"enabled\":false}" "PUT||{\"registrationAllowed\":true}"; do
+    IFS='|' read -r method path body <<<"$probe"
+    code="$(wk "$method" "$path" "$body")"
+    [[ "$code" == 403 || "$code" == 404 ]] || die "the worker may: $method $path (status $code)"
+  done
+  # A subgroup with the name of the administrator group gives no rights,
+  # because the services compare the full path /squared-admins.
+  probe="e2e-probe-$TENANT"
+  [[ "$(wk POST /groups "{\"name\":\"$probe\"}")" == 201 ]] || die "the worker cannot make a group"
+  sub="$(curl -fsS -H "Authorization: Bearer $wt" "$a/groups?search=$probe&exact=true" | jq -r '.[0].id')"
+  wk POST "/groups/$sub/children" '{"name":"squared-admins"}' >/dev/null
+  wk PUT "/users/$dev/groups/$(curl -fsS -H "Authorization: Bearer $at" "$a/groups/$sub/children" | jq -r '.[0].id')" >/dev/null
+  curl -fsS -H "Authorization: Bearer $(kc_token dev "$DEV_PASSWORD")" "${SQUARED_URL}/api/v1/me" | jq -e '.admin == false' >/dev/null \
+    || die "a subgroup named squared-admins gives administrator rights"
+  curl -fsS -o /dev/null -X DELETE -H "Authorization: Bearer $at" "$a/groups/$sub"
+  log "the worker can change group members, but not users, the realm or protected groups"
+}
+
 kc_token() {
   curl -fsS "${KEYCLOAK_URL}/realms/squared/protocol/openid-connect/token" \
     -d grant_type=password -d client_id=squared-cli -d scope=openid \
@@ -192,6 +227,9 @@ code="$(curl -sS -o /dev/null -w '%{http_code}' -X POST -H "Authorization: Beare
   -d '{"slug": "forbidden", "name": "No", "owner": "dev@squared.test", "environments": ["dev"]}' "${SQUARED_URL}/api/v1/tenants")"
 [[ "$code" == "403" ]] || die "a user without the administrator group made a tenant (status $code)"
 log "the administrator group in Keycloak controls the administrator rights"
+
+step "check the limits of the Keycloak account of the worker"
+check_worker_limits
 
 step "sign in to Argo CD, Harbor and Forgejo with Keycloak"
 check_sso "$ADMIN_USER" "$DEV/keycloak-admin-user-password" true

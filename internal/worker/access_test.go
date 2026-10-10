@@ -36,7 +36,7 @@ func TestAccessSync(t *testing.T) {
 	if got := kc.groupMembers("tenant-acme-viewer"); got == nil || len(got) != 0 {
 		t.Fatalf("viewer group: %v", got)
 	}
-	wantRoles := map[string]int{"tenant-acme-owner": harbor.RoleMaintainer, "tenant-acme-developer": harbor.RoleDeveloper, "tenant-acme-viewer": harbor.RoleGuest}
+	wantRoles := map[string]int{"/tenant-acme-owner": harbor.RoleMaintainer, "/tenant-acme-developer": harbor.RoleDeveloper, "/tenant-acme-viewer": harbor.RoleGuest}
 	if got := e.harbor.roles("acme"); !mapsEqual(got, wantRoles) {
 		t.Fatalf("Harbor members: %v", got)
 	}

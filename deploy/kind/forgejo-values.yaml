@@ -28,7 +28,7 @@ gitea:
       existingSecret: forgejo-oauth
       autoDiscoverUrl: http://keycloak.localhost:30180/realms/squared/.well-known/openid-configuration
       groupClaimName: groups
-      adminGroup: squared-admins
+      adminGroup: /squared-admins
   config:
     APP_NAME: Forgejo for Squared
     server:

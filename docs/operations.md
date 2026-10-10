@@ -51,7 +51,8 @@ is a complete example.
    - valid post logout redirect URI `https://<squared>/login`;
    - PKCE method `S256` (advanced settings).
 2. A protocol mapper "Group Membership" on the client: claim name `groups`,
-   full group path off, in the ID token and the access token.
+   **full group path on**, in the ID token and the access token. All
+   services compare full paths, for example `/squared-admins`.
 3. A protocol mapper "Audience" on the client: included custom audience
    `squared-api`, in the access token. Add the same mapper to other clients
    whose tokens may call the Squared API.
@@ -77,11 +78,27 @@ mapper of step 2. Then configure the services:
 For the copy of tenant members (decision D13 in the architecture):
 
 1. Make a confidential client `squared-worker` with only "service
-   accounts" on. Give its service account the client roles
-   `manage-users`, `view-users`, `query-users` and `query-groups` of
-   `realm-management`.
-2. Set the `SQUARED_KEYCLOAK_*` variables of the worker.
-3. In Forgejo, make the bot of the worker an administrator and give its
+   accounts" on. Give its service account only the client roles
+   `query-users` and `query-groups` of `realm-management`.
+2. Turn on **Admin Permissions** in the realm settings (Keycloak 26.2 or
+   later). Then, in **Permissions**, make:
+   - a user policy `squared-worker` for the service account user;
+   - a realm role `squared-protected-group-admin` that nobody has, and a
+     role policy for it;
+   - a permission for all users: `view`, `manage-group-membership`,
+     policy `squared-worker`;
+   - a permission for all groups: `view`, `view-members`, `manage`,
+     `manage-membership`, policy `squared-worker`;
+   - a permission for the specific groups that give rights (for example
+     `squared-admins`), with the scopes `view`, `manage` and
+     `manage-membership`, and only the role policy. Do not add the member
+     scopes: they would block the tenant memberships of administrators.
+
+   The function `setup_keycloak_permissions` in
+   [`hack/kind-up.sh`](../hack/kind-up.sh) does the same through the admin
+   API. See [security.md](security.md) for the reasons.
+3. Set the `SQUARED_KEYCLOAK_*` variables of the worker.
+4. In Forgejo, make the bot of the worker an administrator and give its
    token the scope `write:admin`. Set `ACCOUNT_LINKING = auto` in
    `[oauth2_client]`.
 

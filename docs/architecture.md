@@ -284,7 +284,10 @@ reconcile run):
   accepts Keycloak groups as project members before the first Harbor
   sign-in of a person. Argo CD also reads the groups: the project of each
   tenant has a role `member` for the three groups. The worker uses a
-  Keycloak service account to manage the groups.
+  Keycloak service account to manage the groups. Fine-grained admin
+  permissions limit this account to group membership and to groups that
+  are not protected (see [security.md](security.md)). All services
+  compare full group paths, for example `/tenant-acme-owner`.
 - **Harbor.** The three groups are members of the project of the tenant.
   Owners get "maintainer", not "project admin", because only Squared
   changes members.

@@ -5,8 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"regexp"
-	"sort"
 	"strings"
 	"time"
 
@@ -56,8 +54,9 @@ type SourceConfig struct {
 	User         string `json:"user,omitempty"`
 	PasswordFile string `json:"passwordFile,omitempty"`
 	// IgnoreFields are new fields of a service configuration that an
-	// operator checked: they give no rights. Only forgejo-database and
-	// harbor-database use it.
+	// operator checked: they give no rights. The types argocd-rbac (keys),
+	// argocd-projects ("spec.<field>" or "roles.<field>"), forgejo-database
+	// and harbor-database use it.
 	IgnoreFields []string `json:"ignoreFields,omitempty"`
 }
 
@@ -157,36 +156,20 @@ type argoRBACSource struct {
 
 func (s *argoRBACSource) Name() string { return s.sc.Service + " RBAC" }
 
-var argoPolicyKey = regexp.MustCompile(`^policy(\..+)?\.csv$`)
-
+// References returns the groups of the "g" lines of the ConfigMap, which
+// Argo CD reads at each change. It also checks the keys and the claims in
+// the key scopes.
 func (s *argoRBACSource) References(ctx context.Context) ([]Reference, []string, error) {
 	cm, err := s.kube.GetConfigMap(ctx, s.sc.Namespace, s.sc.Name)
 	if err != nil {
 		return nil, nil, err
 	}
-	keys := make([]string, 0, len(cm.Data))
-	for k := range cm.Data {
-		if argoPolicyKey.MatchString(k) {
-			keys = append(keys, k)
-		}
+	refs, warnings, err := checkArgoRBAC(cm.Data, s.sc.IgnoreFields)
+	for i := range refs {
+		refs[i].Service = s.sc.Service
+		refs[i].Where = s.sc.Namespace + "/" + s.sc.Name + " " + refs[i].Where
 	}
-	sort.Strings(keys)
-	var refs []Reference
-	for _, k := range keys {
-		groups, others := argoRBACGroups(cm.Data[k])
-		where := s.sc.Namespace + "/" + s.sc.Name + " " + k
-		for _, g := range groups {
-			refs = append(refs, Reference{Group: g, Service: s.sc.Service, Where: where})
-		}
-		// A short name never matches the full paths of the groups claim.
-		// Report it, because it shows a configuration error.
-		for _, o := range others {
-			if !strings.Contains(o, "@") {
-				refs = append(refs, Reference{Group: o, Service: s.sc.Service, Where: where})
-			}
-		}
-	}
-	return refs, nil, nil
+	return refs, warnings, err
 }
 
 type argoProjectsSource struct {
@@ -199,27 +182,50 @@ func (s *argoProjectsSource) Name() string { return s.sc.Service + " projects" }
 
 // References returns the groups of the project roles. The role "member"
 // of a tenant project that Squared made, with the tenant groups of that
-// tenant, is expected and not protected.
+// tenant, is expected and not protected. Argo CD adds the policies of a
+// role to its RBAC without a change, thus a "g" line in them also gives
+// rights. Squared never writes such lines.
 func (s *argoProjectsSource) References(ctx context.Context) ([]Reference, []string, error) {
 	projects, err := s.kube.ListAppProjects(ctx, s.sc.Namespace)
 	if err != nil {
 		return nil, nil, err
 	}
 	var refs []Reference
+	var warnings, problems []string
 	for _, p := range projects {
+		w, pr, err := checkArgoProjectFields(p.Raw, s.sc.IgnoreFields)
+		if err != nil {
+			return nil, nil, fmt.Errorf("project %s: %w", p.Metadata.Name, err)
+		}
+		for _, m := range w {
+			warnings = append(warnings, fmt.Sprintf("Argo CD project %s has %s", p.Metadata.Name, m))
+		}
+		if len(pr) > 0 {
+			problems = append(problems, fmt.Sprintf("project %s: %s", p.Metadata.Name, strings.Join(pr, "; ")))
+		}
 		squared := p.Metadata.Labels[render.LabelManagedBy] == render.ManagedBy
 		slug, isTenant := strings.CutPrefix(p.Metadata.Name, "tenant-")
 		for _, role := range p.Spec.Roles {
+			where := fmt.Sprintf("project %s role %s", p.Metadata.Name, role.Name)
 			for _, g := range role.Groups {
 				if squared && isTenant && role.Name == "member" && s.tenants.expected(slug, g) {
 					continue
 				}
-				refs = append(refs, Reference{Group: g, Service: s.sc.Service,
-					Where: fmt.Sprintf("project %s role %s", p.Metadata.Name, role.Name)})
+				refs = append(refs, Reference{Group: g, Service: s.sc.Service, Where: where})
+			}
+			for _, r := range argoLineRefs(strings.Join(role.Policies, "\n"), where+" policies") {
+				r.Service = s.sc.Service
+				refs = append(refs, r)
 			}
 		}
 	}
-	return refs, nil, nil
+	if len(problems) > 0 {
+		// Give all groups that the guard could read, and the error. The
+		// guard adds these groups and removes none.
+		return refs, warnings, fmt.Errorf("the fields of Argo CD projects changed: %s. The guard keeps the current protection. Update the guard for this Argo CD version",
+			strings.Join(problems, " | "))
+	}
+	return refs, warnings, nil
 }
 
 type harborMembersSource struct {

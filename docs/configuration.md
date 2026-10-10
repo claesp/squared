@@ -124,8 +124,8 @@ is a complete example.
 
 | `type` | Fields | Groups |
 |---|---|---|
-| `argocd-rbac` | `namespace`, `name` | Subjects of the `g` lines in the keys `policy.csv` and `policy.*.csv`. |
-| `argocd-projects` | `namespace` | Groups of the roles of all AppProjects, except the tenant groups in the role `member` of their own tenant project. |
+| `argocd-rbac` | `namespace`, `name`, `ignoreFields` | Subjects of the `g` lines in the keys `policy.csv` and `policy.*.csv`. Checks the keys against the keys of Argo CD 3.5, and the claims in `scopes` (see [security.md](security.md)). `ignoreFields` lists new keys that an operator checked. |
+| `argocd-projects` | `namespace`, `ignoreFields` | Groups of the roles of all AppProjects, except the tenant groups in the role `member` of their own tenant project, and the subjects of `g` lines in the policies of the roles. Checks the field names against the fields of Argo CD 3.5. `ignoreFields` lists new fields that an operator checked, as `spec.<field>` or `roles.<field>`. |
 | `harbor-members` | `url`, `user`, `passwordFile` | Group members of all projects, except the tenant groups in their own tenant project. A robot account with "list projects" and "list members" is enough. |
 | `configmap` | `namespace`, `name` or `selector`, `key` | Group paths in one key, separated by commas or white space. |
 | `forgejo-database` | `url` (PostgreSQL, without password), `passwordFile`, `name` (default `squared_guard_auth_sources`), `ignoreFields` | The administrator, restricted, team map, required claim and quota map groups of all OAuth authentication sources, from the view of [`forgejo-guard-view.sql`](../deploy/kind/forgejo-guard-view.sql). Sees changes in the web interface. Checks the field names against the fields of Forgejo 15 (see [security.md](security.md)). `ignoreFields` lists new fields that an operator checked: they give no rights. |

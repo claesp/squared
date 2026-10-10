@@ -263,6 +263,37 @@ check_guard() {
   remove_group "$group"
   log "the guard follows the Argo CD RBAC configuration"
 
+  # A "g" line in the policies of a project role, as kubectl can write it.
+  # Argo CD adds these lines to its RBAC without a check.
+  local pgroup="e2e-argo-project-$TENANT" project="e2e-guard-$TENANT"
+  k apply -f - >/dev/null <<YAML
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: $project
+  namespace: argocd
+spec:
+  roles:
+    - name: e2e
+      policies:
+        - "g, /$pgroup, role:readonly"
+YAML
+  wait_for "the guard made and protected /$pgroup" 90 guard_protected "$pgroup"
+  k -n argocd delete appproject "$project" >/dev/null
+  wait_for "the guard released /$pgroup" 90 guard_released "$pgroup"
+  remove_group "$pgroup"
+  log "the guard reads the policies of Argo CD project roles"
+
+  # A claim in the Argo CD scopes that the guard does not know. The guard
+  # must report it and keep the protection.
+  k -n argocd patch configmap argocd-rbac-cm --type merge -p '{"data": {"scopes": "[groups, roles]"}}' >/dev/null
+  guard_reports_scopes() { guard_status | jq -e '[.errors[]? | select(test("scopes has the claim roles"))] | length > 0' >/dev/null; }
+  wait_for "the guard reports the unknown claim in the Argo CD scopes" 60 guard_reports_scopes
+  [[ "$(worker_may_add_dev squared-admins)" == 403 ]] || die "the protection of /squared-admins is gone after the scopes change"
+  k -n argocd patch configmap argocd-rbac-cm --type merge -p '{"data": {"scopes": "[groups]"}}' >/dev/null
+  wait_for "the guard has no errors after the scopes are back" 60 guard_clean
+  log "the guard checks the claims in the Argo CD scopes"
+
   # A change of the administrator group in Forgejo, as in the web
   # interface. The Forgejo command line writes the same database table.
   local fgroup="e2e-forgejo-$TENANT" auth_id

@@ -141,6 +141,33 @@ controls that it uses. Read [architecture.md](architecture.md) first.
   turn them on. The network policy of the database accepts only Forgejo
   and the namespace of the guard. A group that becomes protected keeps the members that it had
   before; the guard warns about them.
+- **Argo CD configuration.** Argo CD reads its RBAC only from the
+  ConfigMap `argocd-rbac-cm` and from the AppProjects. The guard reads the
+  same objects through the Kubernetes API, thus it sees all changes, also
+  from the Argo CD web interface and CLI. It reads them as Argo CD 3.5
+  does:
+
+  - Argo CD adds the `policies` of a project role to its RBAC without a
+    check. The API of Argo CD accepts only `p` lines for the role, but
+    `kubectl` can write a `g` line, for example
+    `g, /group, role:admin`. The guard protects the subjects of such lines.
+  - A `p` line with a group as subject gives no rights alone: Argo CD
+    checks only the groups that are in a `g` line.
+  - Argo CD compares the subjects of `g` lines exactly with the values of
+    the claims in the key `scopes`. `policy.matchMode` applies only to
+    resources and objects, not to subjects.
+
+  | Change | Result |
+  |---|---|
+  | A new key in `argocd-rbac-cm` (all its keys are about rights) | Error |
+  | A claim in `scopes` other than `groups` and `email`: the guard cannot tell which Keycloak groups give a value of it | Error |
+  | `scopes` without `groups` | Warning |
+  | A new AppProject or role field with a name like group, team, admin, restrict, claim, role, quota, permission, access or org | Error |
+  | A new AppProject or role field with another name | Warning, until an operator adds it to `ignoreFields` |
+
+  Kubernetes removes fields that the CRD does not have, thus a new field
+  comes only with an upgrade of the CRD. The end-to-end test adds a `g`
+  line to a project role and adds an unknown claim to `scopes`.
 - **Harbor configuration.** Only the Harbor system administrator can read
   the configuration through the API, and a robot account cannot get that
   right. The table `properties` of the Harbor database has all settings,

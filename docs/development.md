@@ -209,6 +209,8 @@ all `*.localhost` names.
 4. Checks that the guard sees `/squared-admins` in the configurations of
    all four services, that a new group in the Argo CD RBAC is made and
    protected, and that it is released when the line goes. It does the same
+   with a `g` line in the policies of an AppProject role, and checks that an
+   unknown claim in the Argo CD `scopes` gives an error. It does the same
    with a change of the Forgejo administrator group through the Forgejo
    command line, which writes the same table as the web interface. Then it
    renames the field `AdminGroup` in the database, as an upgrade could, and

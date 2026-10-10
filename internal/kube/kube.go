@@ -259,20 +259,32 @@ type AppProject struct {
 	} `json:"metadata"`
 	Spec struct {
 		Roles []struct {
-			Name   string   `json:"name"`
-			Groups []string `json:"groups"`
+			Name     string   `json:"name"`
+			Groups   []string `json:"groups"`
+			Policies []string `json:"policies"`
 		} `json:"roles"`
 	} `json:"spec"`
+	// Raw is the complete object, for checks of the field names.
+	Raw json.RawMessage `json:"-"`
 }
 
 // ListAppProjects returns the Argo CD projects in a namespace.
 func (c *Client) ListAppProjects(ctx context.Context, namespace string) ([]AppProject, error) {
 	var out struct {
-		Items []AppProject `json:"items"`
+		Items []json.RawMessage `json:"items"`
 	}
 	path := "/apis/argoproj.io/v1alpha1/namespaces/" + url.PathEscape(namespace) + "/appprojects"
 	if err := c.rest.Do(ctx, http.MethodGet, path, nil, &out); err != nil {
 		return nil, err
 	}
-	return out.Items, nil
+	projects := make([]AppProject, 0, len(out.Items))
+	for _, raw := range out.Items {
+		var p AppProject
+		if err := json.Unmarshal(raw, &p); err != nil {
+			return nil, fmt.Errorf("decode AppProject: %w", err)
+		}
+		p.Raw = raw
+		projects = append(projects, p)
+	}
+	return projects, nil
 }

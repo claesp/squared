@@ -173,6 +173,20 @@ to the configuration of the guard.
 3. Run the end-to-end test against a test environment with the new
    version.
 
+### Argo CD upgrades
+
+1. Look at `GET /status` of the guard after the upgrade:
+   - An error about a new key in `argocd-rbac-cm` or a new project field
+     that can give rights: the guard keeps the current protection. Check
+     the Argo CD release notes. Update the lists in
+     [`internal/guard/argocd.go`](../internal/guard/argocd.go), and
+     release a new version of Squared. If the key or field gives no rights
+     to groups, you can also add it to `ignoreFields` of the source.
+   - A warning about a new project field: check the release notes. If the
+     field gives no rights, add it to `ignoreFields`.
+2. Run the end-to-end test against a test environment with the new
+   version.
+
 ### Harbor upgrades
 
 1. Drop the view `squared_guard_harbor_config` if the upgrade changes the
@@ -215,7 +229,7 @@ monitoring system.
 | `squared_task_seconds` | worker | `kind` | Duration of task handlers (sum and count). |
 | `squared_guard_runs_total` | guard | `result` | Runs of the guard. `result` is `ok` or `error`. |
 | `squared_guard_changes_total` | guard | `change` | Groups that became protected (`protected`) or not protected (`released`). |
-| `squared_guard_warnings_total` | guard | `kind` | `members`: a new protected group has members. `short-name`: a configuration uses a short group name. `source`: a source reports a change to check, for example a new Forgejo field or Harbor setting. |
+| `squared_guard_warnings_total` | guard | `kind` | `members`: a new protected group has members. `short-name`: a configuration uses a short group name. `source`: a source reports a change to check, for example a new Forgejo field, Harbor setting or Argo CD project field. |
 | `squared_guard_source_errors_total` | guard | `source` | Runs in which a source failed. |
 
 Useful alerts:
@@ -231,7 +245,7 @@ Useful alerts:
 - `increase(squared_guard_warnings_total{kind="members"}[1h]) > 0`: a group
   became protected with members; check them.
 - `increase(squared_guard_source_errors_total[15m]) > 0`: a source of the
-  guard failed, for example because a Forgejo or Harbor upgrade changed the fields of
+  guard failed, for example because a Forgejo, Harbor or Argo CD upgrade changed the fields of
   the authentication sources. `GET /status` tells which field.
 
 ## Logs

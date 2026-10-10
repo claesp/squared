@@ -53,6 +53,9 @@ type SourceConfig struct {
 	URL          string `json:"url,omitempty"`
 	User         string `json:"user,omitempty"`
 	PasswordFile string `json:"passwordFile,omitempty"`
+	// IgnoreFields are new fields of a service configuration that an
+	// operator checked: they give no rights. Only forgejo-database uses it.
+	IgnoreFields []string `json:"ignoreFields,omitempty"`
 }
 
 // LoadFile reads a configuration file.
@@ -145,10 +148,10 @@ func (s *argoRBACSource) Name() string { return s.sc.Service + " RBAC" }
 
 var argoPolicyKey = regexp.MustCompile(`^policy(\..+)?\.csv$`)
 
-func (s *argoRBACSource) References(ctx context.Context) ([]Reference, error) {
+func (s *argoRBACSource) References(ctx context.Context) ([]Reference, []string, error) {
 	cm, err := s.kube.GetConfigMap(ctx, s.sc.Namespace, s.sc.Name)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	keys := make([]string, 0, len(cm.Data))
 	for k := range cm.Data {
@@ -172,7 +175,7 @@ func (s *argoRBACSource) References(ctx context.Context) ([]Reference, error) {
 			}
 		}
 	}
-	return refs, nil
+	return refs, nil, nil
 }
 
 type argoProjectsSource struct {
@@ -186,10 +189,10 @@ func (s *argoProjectsSource) Name() string { return s.sc.Service + " projects" }
 // References returns the groups of the project roles. The role "member"
 // of a tenant project that Squared made, with the tenant groups of that
 // tenant, is expected and not protected.
-func (s *argoProjectsSource) References(ctx context.Context) ([]Reference, error) {
+func (s *argoProjectsSource) References(ctx context.Context) ([]Reference, []string, error) {
 	projects, err := s.kube.ListAppProjects(ctx, s.sc.Namespace)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	var refs []Reference
 	for _, p := range projects {
@@ -205,7 +208,7 @@ func (s *argoProjectsSource) References(ctx context.Context) ([]Reference, error
 			}
 		}
 	}
-	return refs, nil
+	return refs, nil, nil
 }
 
 type harborMembersSource struct {
@@ -218,16 +221,16 @@ func (s *harborMembersSource) Name() string { return s.sc.Service + " project me
 
 // References returns the group members of all projects. The tenant groups
 // in the project of the same tenant are expected and not protected.
-func (s *harborMembersSource) References(ctx context.Context) ([]Reference, error) {
+func (s *harborMembersSource) References(ctx context.Context) ([]Reference, []string, error) {
 	projects, err := s.harbor.ProjectNames(ctx)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	var refs []Reference
 	for _, project := range projects {
 		members, err := s.harbor.Members(ctx, project)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		slug, isTenant := strings.CutPrefix(project, s.tenants.projectPrefix)
 		for _, m := range members {
@@ -240,7 +243,7 @@ func (s *harborMembersSource) References(ctx context.Context) ([]Reference, erro
 			refs = append(refs, Reference{Group: m.EntityName, Service: s.sc.Service, Where: "project " + project})
 		}
 	}
-	return refs, nil
+	return refs, nil, nil
 }
 
 type configMapSource struct {
@@ -250,18 +253,18 @@ type configMapSource struct {
 
 func (s *configMapSource) Name() string { return s.sc.Service + " configuration" }
 
-func (s *configMapSource) References(ctx context.Context) ([]Reference, error) {
+func (s *configMapSource) References(ctx context.Context) ([]Reference, []string, error) {
 	var maps []kube.ConfigMap
 	if s.sc.Name != "" {
 		cm, err := s.kube.GetConfigMap(ctx, s.sc.Namespace, s.sc.Name)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		maps = append(maps, *cm)
 	} else {
 		var err error
 		if maps, err = s.kube.ListConfigMaps(ctx, s.sc.Namespace, s.sc.Selector); err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 	}
 	var refs []Reference
@@ -271,7 +274,7 @@ func (s *configMapSource) References(ctx context.Context) ([]Reference, error) {
 				Where: s.sc.Namespace + "/" + cm.Metadata.Name + " " + s.sc.Key})
 		}
 	}
-	return refs, nil
+	return refs, nil, nil
 }
 
 type forgejoInitSource struct {
@@ -281,71 +284,84 @@ type forgejoInitSource struct {
 
 func (s *forgejoInitSource) Name() string { return s.sc.Service + " authentication source" }
 
-func (s *forgejoInitSource) References(ctx context.Context) ([]Reference, error) {
+func (s *forgejoInitSource) References(ctx context.Context) ([]Reference, []string, error) {
 	data, err := s.kube.GetSecretData(ctx, s.sc.Namespace, s.sc.Name)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	var refs []Reference
 	for _, g := range forgejoInitGroups(string(data[s.sc.Key])) {
 		refs = append(refs, Reference{Group: g, Service: s.sc.Service, Where: s.sc.Namespace + "/" + s.sc.Name + " " + s.sc.Key})
 	}
-	return refs, nil
+	return refs, nil, nil
 }
 
-// forgejoDatabaseSource reads the group settings of the OAuth
-// authentication sources from a view in the Forgejo database. It sees
-// changes in the Forgejo web interface, which the init script does not
-// have. See deploy/kind/forgejo-guard-view.sql.
+// forgejoDatabaseSource reads the authentication sources from a view in
+// the Forgejo database. It sees changes in the Forgejo web interface,
+// which the init script does not have. It checks the field names of each
+// source against the fields that the guard knows, so that a renamed field
+// after a Forgejo upgrade stops the source instead of hiding a group. See
+// deploy/kind/forgejo-guard-view.sql.
 type forgejoDatabaseSource struct {
 	sc SourceConfig
 }
 
 func (s *forgejoDatabaseSource) Name() string { return s.sc.Service + " database" }
 
-func (s *forgejoDatabaseSource) References(ctx context.Context) ([]Reference, error) {
+func (s *forgejoDatabaseSource) References(ctx context.Context) ([]Reference, []string, error) {
 	cfg, err := pgx.ParseConfig(s.sc.URL)
 	if err != nil {
-		return nil, fmt.Errorf("parse url: %w", err)
+		return nil, nil, fmt.Errorf("parse url: %w", err)
 	}
 	password, err := os.ReadFile(s.sc.PasswordFile)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	cfg.Password = strings.TrimSpace(string(password))
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 	conn, err := pgx.ConnectConfig(ctx, cfg)
 	if err != nil {
-		return nil, fmt.Errorf("connect: %w", err)
+		return nil, nil, fmt.Errorf("connect: %w", err)
 	}
 	defer conn.Close(context.Background())
-	rows, err := conn.Query(ctx, "SELECT name, is_active, admin_group, restricted_group, group_team_map FROM "+
-		pgx.Identifier{s.sc.Name}.Sanitize()+" ORDER BY id")
+	rows, err := conn.Query(ctx, `SELECT id, name, type, is_active, cfg_keys,
+		coalesce(admin_group, ''), coalesce(restricted_group, ''), coalesce(group_team_map, ''),
+		coalesce(group_claim_name, ''), coalesce(required_claim_name, ''), coalesce(required_claim_value, ''),
+		coalesce(quota_group_claim_name, ''), coalesce(quota_group_map, '')
+		FROM `+pgx.Identifier{s.sc.Name}.Sanitize()+" ORDER BY id")
 	if err != nil {
-		return nil, fmt.Errorf("read %s: %w", s.sc.Name, err)
+		return nil, nil, fmt.Errorf("read %s (run forgejo-guard-view.sql again after a Forgejo upgrade): %w", s.sc.Name, err)
 	}
 	defer rows.Close()
 	var refs []Reference
+	var warnings, problems []string
 	for rows.Next() {
-		var name, admin, restricted, teamMap string
-		var active bool
-		if err := rows.Scan(&name, &active, &admin, &restricted, &teamMap); err != nil {
-			return nil, err
+		var src forgejoSource
+		if err := rows.Scan(&src.ID, &src.Name, &src.Type, &src.Active, &src.Keys,
+			&src.AdminGroup, &src.RestrictedGroup, &src.GroupTeamMap,
+			&src.GroupClaimName, &src.RequiredClaimName, &src.RequiredClaimValue,
+			&src.QuotaGroupClaimName, &src.QuotaGroupMap); err != nil {
+			return nil, nil, err
 		}
-		// An inactive source gives no rights now, but somebody can turn it
-		// on in the web interface. Thus its groups are protected too.
-		where := "authentication source " + name
-		// The administrator and the restricted group are single values.
-		groups := teamMapGroups(teamMap)
-		for _, g := range []string{admin, restricted} {
-			if g = strings.TrimSpace(g); g != "" {
-				groups = append(groups, g)
-			}
+		r, w, err := checkForgejoSource(src, s.sc.IgnoreFields)
+		warnings = append(warnings, w...)
+		if err != nil {
+			problems = append(problems, err.Error())
+			continue
 		}
-		for _, g := range groups {
-			refs = append(refs, Reference{Group: g, Service: s.sc.Service, Where: where})
+		for i := range r {
+			r[i].Service = s.sc.Service
 		}
+		refs = append(refs, r...)
 	}
-	return refs, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, nil, err
+	}
+	if len(problems) > 0 {
+		// Give the groups that the guard could read, and the error. The
+		// guard adds these groups and removes none.
+		return refs, warnings, fmt.Errorf("%s", strings.Join(problems, " | "))
+	}
+	return refs, warnings, nil
 }

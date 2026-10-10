@@ -118,9 +118,27 @@ controls that it uses. Read [architecture.md](architecture.md) first.
   role, `squared_guard`, that can read only the view
   `squared_guard_auth_sources`
   ([`deploy/kind/forgejo-guard-view.sql`](../deploy/kind/forgejo-guard-view.sql)).
-  The view has the name, the active flag and the administrator, restricted
-  and team map groups of each OAuth source. A test checks that the role
-  cannot read the table and that the view has no secret. The guard also
+  The view has the name, the type, the active flag and the field names
+  (never the values) of each source, and the group fields of the OAuth
+  sources: administrator, restricted, team map, required claim and quota
+  map. A test checks that the role cannot read the table and that the view
+  has no secret.
+- **Renamed Forgejo fields.** The view reads the group fields by name. If
+  a Forgejo upgrade renamed a field, the view would give an empty value and
+  the guard would release the group without notice. Thus the guard
+  compares the field names of each OAuth source with the fields of
+  Forgejo 15 that it knows (Forgejo writes all fields, also empty ones):
+
+  | Change | Result |
+  |---|---|
+  | A known group field is missing (renamed or removed) | Error |
+  | A new field with a name like group, team, admin, restrict, claim, role, quota, permission, access or org | Error |
+  | A source with the fields of an OAuth source but another type number | Error |
+  | A new field with another name, or a missing field without group meaning | Warning, until an operator adds it to `ignoreFields` |
+
+  An error stops the source: the guard keeps the current protection,
+  adds the groups that it could read, and the run counts as failed. The
+  end-to-end test renames `AdminGroup` in the database and checks this. The guard also
   protects the groups of inactive sources, because an administrator can
   turn them on. The network policy of the database accepts only Forgejo
   and the namespace of the guard. A group that becomes protected keeps the members that it had

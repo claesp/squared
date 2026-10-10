@@ -29,11 +29,14 @@ func TestForgejoDatabaseSource(t *testing.T) {
 		id bigserial PRIMARY KEY, type integer NOT NULL, name text NOT NULL,
 		is_active boolean NOT NULL, cfg text)`)
 	storetest.Must(t, err)
+	keycloak := forgejo15()
+	keycloak["RestrictedGroup"] = "/guests"
+	keycloak["GroupTeamMap"] = `{"/ops": {"squared": ["operators"]}}`
+	old := forgejo15()
+	old["AdminGroup"] = "/old admins"
 	_, err = admin.Exec(ctx, `INSERT INTO login_source (type, name, is_active, cfg) VALUES
-		(6, 'keycloak', true, '{"Provider":"openidConnect","ClientID":"forgejo","ClientSecret":"top-secret",
-		  "AdminGroup":"/squared-admins","RestrictedGroup":"/guests","GroupTeamMap":"{\"/ops\": {\"squared\": [\"operators\"]}}"}'),
-		(2, 'ldap', true, 'not JSON: the view must ignore other types'),
-		(6, 'old', false, '{"AdminGroup":"/old admins"}')`)
+		(6, 'keycloak', true, $1), (2, 'ldap', true, 'not JSON: the view must ignore it'), (6, 'old', false, $2)`,
+		cfgJSON(keycloak), cfgJSON(old))
 	storetest.Must(t, err)
 	viewSQL, err := os.ReadFile("../../deploy/kind/forgejo-guard-view.sql")
 	storetest.Must(t, err)
@@ -49,8 +52,11 @@ func TestForgejoDatabaseSource(t *testing.T) {
 	storetest.Must(t, os.WriteFile(passwordFile, []byte("guard-test-password\n"), 0o600))
 
 	src := &forgejoDatabaseSource{sc: SourceConfig{Service: "Forgejo", URL: u.String(), PasswordFile: passwordFile, Name: "squared_guard_auth_sources"}}
-	refs, err := src.References(ctx)
+	refs, warnings, err := src.References(ctx)
 	storetest.Must(t, err)
+	if len(warnings) != 0 {
+		t.Fatalf("warnings %v", warnings)
+	}
 	var groups []string
 	for _, r := range refs {
 		groups = append(groups, r.Group)
@@ -70,7 +76,19 @@ func TestForgejoDatabaseSource(t *testing.T) {
 	}
 	var all string
 	storetest.Must(t, guard.QueryRow(ctx, "SELECT string_agg(row_to_json(v)::text, ' ') FROM squared_guard_auth_sources v").Scan(&all))
-	if strings.Contains(all, "top-secret") || strings.Contains(all, "ClientID") {
-		t.Fatalf("the view shows more than the groups: %s", all)
+	if strings.Contains(all, "top-secret") || strings.Contains(all, "openid-configuration") {
+		t.Fatalf("the view shows more than the groups and the field names: %s", all)
+	}
+
+	// A Forgejo upgrade renames a field: the source fails and names it.
+	_, err = admin.Exec(ctx, `UPDATE login_source SET cfg = (cfg::jsonb - 'AdminGroup' || '{"AdministratorGroup": "/squared-admins"}')::text WHERE name = 'keycloak'`)
+	storetest.Must(t, err)
+	refs, _, err = src.References(ctx)
+	if err == nil || !strings.Contains(err.Error(), "AdminGroup is missing") {
+		t.Fatalf("a renamed field gave no error: %v", err)
+	}
+	// The groups of the other sources stay.
+	if got := groupsOf(refs); !slices.Equal(got, []string{"/old admins"}) {
+		t.Fatalf("groups with the error = %q", got)
 	}
 }

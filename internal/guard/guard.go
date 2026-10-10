@@ -39,9 +39,11 @@ type Reference struct {
 }
 
 // Source reads the groups that one service configuration gives rights to.
+// It returns warnings for things that an operator must check. An error
+// tells that the source cannot give a complete list.
 type Source interface {
 	Name() string
-	References(ctx context.Context) ([]Reference, error)
+	References(ctx context.Context) ([]Reference, []string, error)
 }
 
 // Config configures the guard.
@@ -61,9 +63,10 @@ type Guard struct {
 	kc      *keycloak.Client
 	log     *slog.Logger
 
-	runs     *metrics.Counter
-	changes  *metrics.Counter
-	warnings *metrics.Counter
+	runs         *metrics.Counter
+	changes      *metrics.Counter
+	warnings     *metrics.Counter
+	sourceErrors *metrics.Counter
 
 	mu     sync.Mutex
 	status Status
@@ -98,6 +101,8 @@ func New(cfg Config, sources []Source, kc *keycloak.Client, log *slog.Logger, re
 		runs:     reg.NewCounter("squared_guard_runs_total", "Runs of the guard by result (ok, error).", "result"),
 		changes:  reg.NewCounter("squared_guard_changes_total", "Changes of the protected groups.", "change"),
 		warnings: reg.NewCounter("squared_guard_warnings_total", "Warnings, for example a new protected group that has members.", "kind"),
+		sourceErrors: reg.NewCounter("squared_guard_source_errors_total",
+			"Runs in which a source failed, for example because the fields of a service configuration changed.", "source"),
 	}
 }
 
@@ -130,16 +135,24 @@ func (g *Guard) Once(ctx context.Context) (Status, error) {
 	}
 	sourceFailed := false
 	for _, s := range g.sources {
-		r, err := s.References(ctx)
+		r, warnings, err := s.References(ctx)
+		for _, w := range warnings {
+			st.Warnings = append(st.Warnings, s.Name()+": "+w)
+			g.warnings.Inc("source")
+			g.log.Warn("guard: "+w, "source", s.Name())
+		}
+		// A failed source can still give the groups that it could read.
+		// Adding groups is always safe.
+		refs = append(refs, r...)
 		if err != nil {
-			// Without the references of this source, the guard cannot
-			// tell which groups to remove. It only adds groups in this run.
+			// Without all references of this source, the guard cannot tell
+			// which groups to remove. It only adds groups in this run.
 			sourceFailed = true
 			st.Errors = append(st.Errors, fmt.Sprintf("%s: %v", s.Name(), err))
+			g.sourceErrors.Inc(s.Name())
 			g.log.Error("guard cannot read a source; no group is removed in this run", "source", s.Name(), "error", err)
 			continue
 		}
-		refs = append(refs, r...)
 	}
 
 	byGroup := map[string][]Reference{}
@@ -196,8 +209,14 @@ func (g *Guard) Once(ctx context.Context) (Status, error) {
 	sort.Strings(ids)
 	old := append([]string(nil), perm.Resources...)
 	sort.Strings(old)
+	// A failed source makes the run fail, after the guard added the groups
+	// that it found. Thus the alert on failed runs also reports it.
+	var runErr error
+	if len(st.Errors) > 0 {
+		runErr = fmt.Errorf("%d problems; see the status: %s", len(st.Errors), strings.Join(st.Errors, " | "))
+	}
 	if slices.Equal(ids, old) {
-		return g.finish(st), nil
+		return g.finish(st), runErr
 	}
 	if err := g.kc.SetPermissionResources(ctx, perm, ids); err != nil {
 		return g.finish(st), fmt.Errorf("update permission %s: %w", g.cfg.Permission, err)
@@ -215,7 +234,7 @@ func (g *Guard) Once(ctx context.Context) (Status, error) {
 			g.log.Info("guard: group is not protected anymore; no configuration refers to it", "id", id)
 		}
 	}
-	return g.finish(st), nil
+	return g.finish(st), runErr
 }
 
 func pathOf(groups []ProtectedGroup, id string) string {

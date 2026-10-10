@@ -208,7 +208,9 @@ all `*.localhost` names.
    all four services, that a new group in the Argo CD RBAC is made and
    protected, and that it is released when the line goes. It does the same
    with a change of the Forgejo administrator group through the Forgejo
-   command line, which writes the same table as the web interface.
+   command line, which writes the same table as the web interface. Then it
+   renames the field `AdminGroup` in the database, as an upgrade could, and
+   checks that the guard reports it and keeps the protection.
 5. Signs in to Argo CD, Harbor and Forgejo through Keycloak as both users,
    and checks the administrator rights in each service.
 6. Makes a tenant, adds `dev` as developer, and waits until `dev` has the

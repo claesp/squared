@@ -127,8 +127,8 @@ type staticSource struct {
 }
 
 func (s *staticSource) Name() string { return "static" }
-func (s *staticSource) References(context.Context) ([]Reference, error) {
-	return s.refs, s.err
+func (s *staticSource) References(context.Context) ([]Reference, []string, error) {
+	return s.refs, nil, s.err
 }
 
 func setup(t *testing.T, src *staticSource) (*Guard, *fakeKeycloak) {
@@ -202,13 +202,14 @@ func TestGuardKeepsProtectionWhenASourceFails(t *testing.T) {
 	if _, err := g.Once(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	src.refs, src.err = nil, errors.New("connection refused")
+	// The source fails, but still gives one new group: the guard adds it.
+	src.refs, src.err = []Reference{{Group: "/partial", Service: "Forgejo"}}, errors.New("a field is missing")
 	st, err := g.Once(context.Background())
-	if err != nil {
-		t.Fatal(err)
+	if err == nil {
+		t.Fatal("a run with a failed source did not fail")
 	}
-	if got := k.protected(); !slices.Equal(got, []string{"id-admins", "id-ops"}) {
-		t.Fatalf("protection was removed after a source failure: %v", got)
+	if got := k.protected(); !slices.Equal(got, []string{"id-admins", "id-ops", "id-partial"}) {
+		t.Fatalf("after a source failure: %v; want the old groups and the new one", got)
 	}
 	if len(st.Errors) != 1 {
 		t.Fatalf("errors %v", st.Errors)

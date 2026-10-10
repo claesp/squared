@@ -151,6 +151,23 @@ permission `protected-groups` up to date. To install it in production:
 When you add a service that gives rights to groups, add a source for it
 to the configuration of the guard.
 
+### Forgejo upgrades
+
+1. Drop the view `squared_guard_auth_sources` if the upgrade changes the
+   table `login_source`. After the upgrade, run
+   `forgejo-guard-view.sql` again.
+2. Look at `GET /status` of the guard:
+   - An error about a missing or new group field: Forgejo renamed or
+     added a field that can give rights. The guard keeps the current
+     protection. Update the list of fields in
+     [`internal/guard/forgejo.go`](../internal/guard/forgejo.go) and the
+     view, and release a new version of Squared.
+   - A warning about a new field without group meaning: check the Forgejo
+     release notes. If the field gives no rights, add it to
+     `ignoreFields` of the source.
+3. Run the end-to-end test against a test environment with the new
+   version.
+
 ## Health checks
 
 | Role | Path | Meaning |
@@ -177,7 +194,8 @@ monitoring system.
 | `squared_task_seconds` | worker | `kind` | Duration of task handlers (sum and count). |
 | `squared_guard_runs_total` | guard | `result` | Runs of the guard. `result` is `ok` or `error`. |
 | `squared_guard_changes_total` | guard | `change` | Groups that became protected (`protected`) or not protected (`released`). |
-| `squared_guard_warnings_total` | guard | `kind` | `members`: a new protected group has members. `short-name`: a configuration uses a short group name. |
+| `squared_guard_warnings_total` | guard | `kind` | `members`: a new protected group has members. `short-name`: a configuration uses a short group name. `source`: a source reports a change to check, for example a new Forgejo field. |
+| `squared_guard_source_errors_total` | guard | `source` | Runs in which a source failed. |
 
 Useful alerts:
 
@@ -191,6 +209,9 @@ Useful alerts:
   cannot read a source or update the permission.
 - `increase(squared_guard_warnings_total{kind="members"}[1h]) > 0`: a group
   became protected with members; check them.
+- `increase(squared_guard_source_errors_total[15m]) > 0`: a source of the
+  guard failed, for example because a Forgejo upgrade changed the fields of
+  the authentication sources. `GET /status` tells which field.
 
 ## Logs
 

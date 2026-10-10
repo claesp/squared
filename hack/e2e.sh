@@ -231,6 +231,7 @@ worker_may_add_dev() {
 }
 
 guard_protected() { [[ "$(worker_may_add_dev "$1")" == 403 ]]; }
+guard_clean() { guard_status | jq -e '(.protected | length > 0) and ((.errors // []) | length == 0)' >/dev/null 2>&1; }
 guard_released() { [[ "$(worker_may_add_dev "$1")" == 204 ]]; }
 
 # remove_group NAME removes a top-level Keycloak group.
@@ -245,8 +246,7 @@ remove_group() {
 check_guard() {
   local st service group="e2e-ops-$TENANT" policy
   # All four services refer to the administrator group.
-  guard_ran() { guard_status | jq -e '.protected | length > 0' >/dev/null 2>&1; }
-  wait_for "the guard has run" 60 guard_ran
+  wait_for "the guard has run without errors" 60 guard_clean
   st="$(guard_status)"
   for service in "Argo CD" Harbor Forgejo Squared; do
     jq -e --arg s "$service" '.protected[] | select(.path == "/squared-admins") | .references[] | select(.service == $s)' <<<"$st" >/dev/null \
@@ -275,6 +275,17 @@ check_guard() {
   wait_for "the guard released /$fgroup" 90 guard_released "$fgroup"
   remove_group "$fgroup"
   log "the guard follows the Forgejo authentication sources, also changes outside the Helm chart"
+
+  # A Forgejo upgrade that renames a field. The guard must report it and
+  # keep the protection, not read an empty value.
+  forgejo_sql() { k -n forgejo exec -i statefulset/forgejo-db -- psql -q -U forgejo -d forgejo -v ON_ERROR_STOP=1 -c "$1" >/dev/null; }
+  forgejo_sql "UPDATE login_source SET cfg = (cfg::jsonb - 'AdminGroup' || jsonb_build_object('AdministratorGroup', cfg::jsonb -> 'AdminGroup'))::text WHERE name = 'keycloak'"
+  guard_reports_rename() { guard_status | jq -e '[.errors[]? | select(test("AdminGroup is missing"))] | length > 0' >/dev/null; }
+  wait_for "the guard reports the renamed Forgejo field" 60 guard_reports_rename
+  [[ "$(worker_may_add_dev squared-admins)" == 403 ]] || die "the protection of /squared-admins is gone after the renamed field"
+  forgejo_sql "UPDATE login_source SET cfg = (cfg::jsonb - 'AdministratorGroup' || jsonb_build_object('AdminGroup', cfg::jsonb -> 'AdministratorGroup'))::text WHERE name = 'keycloak'"
+  wait_for "the guard has no errors after the field is back" 60 guard_clean
+  log "the guard reports renamed Forgejo fields and keeps the protection"
 }
 
 kc_token() {

@@ -320,7 +320,7 @@ of the worker to the groups that the worker made. Thus a separate process,
    |---|---|
    | Argo CD | The `g` lines of the ConfigMap `argocd-rbac-cm`, and the roles of all AppProjects. |
    | Harbor | The administrator group in the ConfigMap `harbor-oidc`, and the group members of all projects. |
-   | Forgejo | The administrator, restricted and team map groups of the authentication sources, from a view in the Forgejo database. Forgejo has no API for this. The view has only these settings, not the client secrets, and the guard can read only the view. Thus the guard also sees changes in the Forgejo web interface. |
+   | Forgejo | The group fields of the authentication sources, from a view in the Forgejo database. Forgejo has no API for this. The view has only these settings and the field names, not the client secrets, and the guard can read only the view. Thus the guard also sees changes in the Forgejo web interface. It reports an error when a Forgejo upgrade renames a field. |
    | Squared | `SQUARED_OIDC_ADMIN_GROUP` in the ConfigMap with the label `squared.dev/config`. |
 
 2. It ignores the tenant groups where Squared puts them: the role `member`

@@ -101,7 +101,12 @@ func makeForgejoTables(t *testing.T, conn *pgx.Conn) {
 			token_salt text, token_last_eight text, scope text, created_unix bigint, updated_unix bigint);
 		CREATE TABLE public_key (id bigserial PRIMARY KEY, owner_id bigint NOT NULL, name text NOT NULL, fingerprint text,
 			content text, type integer NOT NULL, created_unix bigint, updated_unix bigint);
-		CREATE TABLE repository (id bigserial PRIMARY KEY, owner_id bigint NOT NULL, owner_name text NOT NULL, name text NOT NULL);
+		CREATE TABLE repository (id bigserial PRIMARY KEY, owner_id bigint NOT NULL, owner_name text NOT NULL, name text NOT NULL,
+			default_branch text NOT NULL DEFAULT 'main', is_archived boolean NOT NULL DEFAULT false, created_unix bigint NOT NULL DEFAULT 0);
+		CREATE TABLE protected_branch (id bigserial PRIMARY KEY, repo_id bigint NOT NULL, branch_name text NOT NULL,
+			can_push boolean NOT NULL, enable_whitelist boolean, whitelist_user_i_ds text, whitelist_team_i_ds text,
+			enable_merge_whitelist boolean NOT NULL, whitelist_deploy_keys boolean NOT NULL, merge_whitelist_user_i_ds text,
+			merge_whitelist_team_i_ds text, apply_to_admins boolean NOT NULL);
 		CREATE TABLE deploy_key (id bigserial PRIMARY KEY, key_id bigint NOT NULL, repo_id bigint NOT NULL, name text NOT NULL,
 			fingerprint text, mode integer NOT NULL, created_unix bigint, updated_unix bigint);
 		CREATE TABLE team (id bigserial PRIMARY KEY, org_id bigint NOT NULL, name text NOT NULL, authorize integer NOT NULL,

@@ -7,10 +7,12 @@ import (
 	"context"
 	"crypto/sha1"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
+	"slices"
 	"sort"
 	"strings"
 
@@ -82,6 +84,78 @@ func (c *Client) EnsureRepo(ctx context.Context, org, name, description string) 
 		return nil
 	}
 	return err
+}
+
+// BranchProtection is the part of a Forgejo branch protection rule that
+// Squared sets.
+type BranchProtection struct {
+	RuleName                string   `json:"rule_name"`
+	EnablePush              bool     `json:"enable_push"`
+	EnablePushWhitelist     bool     `json:"enable_push_whitelist"`
+	PushWhitelistUsernames  []string `json:"push_whitelist_usernames"`
+	PushWhitelistTeams      []string `json:"push_whitelist_teams"`
+	PushWhitelistDeployKeys bool     `json:"push_whitelist_deploy_keys"`
+	EnableMergeWhitelist    bool     `json:"enable_merge_whitelist"`
+	MergeWhitelistUsernames []string `json:"merge_whitelist_usernames"`
+	MergeWhitelistTeams     []string `json:"merge_whitelist_teams"`
+	ApplyToAdmins           bool     `json:"apply_to_admins"`
+}
+
+// ProtectBranch makes or corrects the protection rule of a branch, so that
+// only the users in pushers can push to it or merge into it, also when the
+// person is a Forgejo administrator. Forgejo refuses all force pushes to a
+// protected branch. The rule has the exact name of the branch: Forgejo uses
+// such a rule before a rule with a pattern.
+func (c *Client) ProtectBranch(ctx context.Context, org, repo, branch string, pushers []string) error {
+	want := BranchProtection{
+		RuleName: branch, EnablePush: true, EnablePushWhitelist: true,
+		PushWhitelistUsernames: slices.Sorted(slices.Values(pushers)), PushWhitelistTeams: []string{},
+		EnableMergeWhitelist: true, MergeWhitelistUsernames: slices.Sorted(slices.Values(pushers)), MergeWhitelistTeams: []string{},
+		ApplyToAdmins: true,
+	}
+	base := repoPath(org, repo) + "/branch_protections"
+	var have BranchProtection
+	err := c.rest.Do(ctx, http.MethodGet, base+"/"+url.PathEscape(branch), nil, &have)
+	if rest.HasStatus(err, http.StatusNotFound) {
+		in := map[string]any{"branch_name": branch}
+		data, _ := json.Marshal(want)
+		_ = json.Unmarshal(data, &in)
+		if err := c.rest.Do(ctx, http.MethodPost, base, in, nil); err != nil {
+			return fmt.Errorf("protect branch %s of %s/%s: %w", branch, org, repo, err)
+		}
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("read the protection of branch %s of %s/%s: %w", branch, org, repo, err)
+	}
+	slices.Sort(have.PushWhitelistUsernames)
+	slices.Sort(have.MergeWhitelistUsernames)
+	if protectionEqual(have, want) {
+		return nil
+	}
+	if err := c.rest.Do(ctx, http.MethodPatch, base+"/"+url.PathEscape(branch), want, nil); err != nil {
+		return fmt.Errorf("correct the protection of branch %s of %s/%s: %w", branch, org, repo, err)
+	}
+	return nil
+}
+
+func protectionEqual(a, b BranchProtection) bool {
+	return a.EnablePush == b.EnablePush && a.EnablePushWhitelist == b.EnablePushWhitelist &&
+		slices.Equal(a.PushWhitelistUsernames, b.PushWhitelistUsernames) && len(a.PushWhitelistTeams) == 0 &&
+		a.PushWhitelistDeployKeys == b.PushWhitelistDeployKeys && a.EnableMergeWhitelist == b.EnableMergeWhitelist &&
+		slices.Equal(a.MergeWhitelistUsernames, b.MergeWhitelistUsernames) && len(a.MergeWhitelistTeams) == 0 &&
+		a.ApplyToAdmins == b.ApplyToAdmins
+}
+
+// CurrentUser returns the user name of the token.
+func (c *Client) CurrentUser(ctx context.Context) (string, error) {
+	var u struct {
+		Login string `json:"login"`
+	}
+	if err := c.rest.Do(ctx, http.MethodGet, "/user", nil, &u); err != nil {
+		return "", fmt.Errorf("read the user of the token: %w", err)
+	}
+	return u.Login, nil
 }
 
 // ArchiveRepo makes a repository read-only. It does nothing if the

@@ -400,6 +400,26 @@ controls that it uses. Read [architecture.md](architecture.md) first.
   the Keycloak group (see the credentials above). The end-to-end test gives
   `argocd-reader` write access as a collaborator of `squared/platform`, and
   then through a new team, and checks the errors.
+- **Branch protection of the GitOps repositories.** Forgejo site
+  administrators have write access to all repositories, and an access
+  check cannot stop a mistake that it does not see yet. Thus the worker
+  protects the default branch of each GitOps repository with a rule with
+  the exact name of the branch (Forgejo uses it before a rule with a
+  pattern): only the Forgejo user of the worker can push or merge, the
+  rule applies to administrators, and Forgejo refuses all force pushes to
+  a protected branch. The worker makes the rule with the repository and
+  corrects it at each sync of the tenant. The guard reads the view
+  `squared_guard_branch_rules` of
+  [`forgejo-guard-view.sql`](../deploy/kind/forgejo-guard-view.sql) and
+  reports an error for a repository of the organization without the rule
+  (after 5 minutes; a new repository gets a warning first), and for a
+  rule that lets other users, teams or deploy keys push or merge, that
+  does not apply to administrators, or that stops Squared. Archived
+  repositories are not in the check: Forgejo refuses all pushes to them.
+  An operator can accept a repository in `ignoreFields`. The end-to-end
+  test checks that the local Forgejo administrator cannot write to
+  `squared/platform`, that a new tenant repository has the rule, and that
+  the guard reports a rule that does not apply to administrators.
 
 ### Passwords and tokens of Squared
 

@@ -28,7 +28,9 @@ type fakeForgejo struct {
 	commits int
 	users   map[string]string // user name to email
 	links   map[string]string // user name to "<source ID>/<login name>"
-	teams   map[int64]*fakeTeam
+	// protections are the branch protection rules, by "org/repo/branch".
+	protections map[string]forgejo.BranchProtection
+	teams       map[int64]*fakeTeam
 }
 
 type fakeTeam struct {
@@ -55,7 +57,8 @@ type fakeCommit struct {
 }
 
 func newFakeForgejo() *fakeForgejo {
-	return &fakeForgejo{repos: map[string][]fakeCommit{}, users: map[string]string{}, links: map[string]string{}, teams: map[int64]*fakeTeam{}}
+	return &fakeForgejo{repos: map[string][]fakeCommit{}, users: map[string]string{}, links: map[string]string{}, teams: map[int64]*fakeTeam{},
+		protections: map[string]forgejo.BranchProtection{}}
 }
 
 func (f *fakeForgejo) head(repo string) fakeCommit {
@@ -91,6 +94,31 @@ func (f *fakeForgejo) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	switch {
+	case r.Method == http.MethodGet && len(parts) == 1 && parts[0] == "user":
+		writeJSON(w, map[string]string{"login": "squared-bot"})
+	case len(parts) >= 4 && parts[0] == "repos" && parts[3] == "branch_protections":
+		repo := parts[1] + "/" + parts[2]
+		var in forgejo.BranchProtection
+		switch {
+		case r.Method == http.MethodGet && len(parts) == 5:
+			p, ok := f.protections[repo+"/"+parts[4]]
+			if !ok {
+				http.NotFound(w, r)
+				return
+			}
+			writeJSON(w, p)
+		case r.Method == http.MethodPost && len(parts) == 4:
+			json.NewDecoder(r.Body).Decode(&in)
+			f.protections[repo+"/"+in.RuleName] = in
+			w.WriteHeader(http.StatusCreated)
+		case r.Method == http.MethodPatch && len(parts) == 5:
+			json.NewDecoder(r.Body).Decode(&in)
+			in.RuleName = parts[4]
+			f.protections[repo+"/"+parts[4]] = in
+			writeJSON(w, in)
+		default:
+			http.NotFound(w, r)
+		}
 	case r.Method == http.MethodGet && len(parts) == 2 && parts[0] == "orgs":
 		w.Write([]byte(`{}`))
 	case r.Method == http.MethodGet && len(parts) == 3 && parts[0] == "repos":

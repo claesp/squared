@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http/httptest"
 	"os"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -228,3 +229,40 @@ func syncedState(commit string) store.SyncState {
 }
 
 func isPermanent(err error) bool { return queue.IsPermanent(err) }
+
+// TestBranchProtection checks that only the worker can push to the GitOps
+// repositories, also a Forgejo administrator, and that the worker corrects
+// a weaker rule.
+func TestBranchProtection(t *testing.T) {
+	e := setup(t)
+	want := forgejo.BranchProtection{RuleName: "main", EnablePush: true, EnablePushWhitelist: true,
+		PushWhitelistUsernames: []string{"squared-bot"}, PushWhitelistTeams: []string{},
+		EnableMergeWhitelist: true, MergeWhitelistUsernames: []string{"squared-bot"}, MergeWhitelistTeams: []string{},
+		ApplyToAdmins: true}
+	rule := func(repo string) forgejo.BranchProtection {
+		e.git.mu.Lock()
+		defer e.git.mu.Unlock()
+		return e.git.protections["squared/"+repo+"/main"]
+	}
+	// Prepare protected the platform repository.
+	if got := rule("platform"); !reflect.DeepEqual(got, want) {
+		t.Fatalf("platform rule = %+v", got)
+	}
+
+	storetest.Must(t, e.w.Handle(e.ctx, domain.Task{Kind: domain.TaskTenantSync, TenantID: e.tenantID(t)}, 1))
+	if got := rule("tenant-acme"); !reflect.DeepEqual(got, want) {
+		t.Fatalf("tenant rule = %+v", got)
+	}
+
+	// Somebody lets the administrators push. The next sync corrects it.
+	e.git.mu.Lock()
+	weak := want
+	weak.ApplyToAdmins = false
+	weak.PushWhitelistUsernames = []string{"squared-bot", "someone"}
+	e.git.protections["squared/tenant-acme/main"] = weak
+	e.git.mu.Unlock()
+	storetest.Must(t, e.w.Handle(e.ctx, domain.Task{Kind: domain.TaskTenantSync, TenantID: e.tenantID(t)}, 1))
+	if got := rule("tenant-acme"); !reflect.DeepEqual(got, want) {
+		t.Fatalf("tenant rule after the correction = %+v", got)
+	}
+}

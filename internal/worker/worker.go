@@ -46,12 +46,26 @@ type Worker struct {
 	// forgejoSource is the ID of the Keycloak authentication source in
 	// Forgejo. The accounts of tenant members belong to it.
 	forgejoSource int64
-	log           *slog.Logger
+	// forgejoUser is the Forgejo user of the token (the bot of the worker),
+	// the only user who can push to the GitOps repositories. Prepare sets it.
+	forgejoUser string
+	log         *slog.Logger
 }
 
 // New returns a Worker.
 func New(cfg Config, st *store.Store, fj *forgejo.Client, hb *harbor.Client, kc *kube.Client, log *slog.Logger) *Worker {
 	return &Worker{cfg: cfg, store: st, forgejo: fj, harbor: hb, kube: kc, log: log}
+}
+
+// protectRepo makes sure that only the worker can push to the branch of a
+// GitOps repository or merge into it, also when the person is a Forgejo
+// administrator (decision D1). It corrects a weaker rule.
+func (w *Worker) protectRepo(ctx context.Context, repo string) error {
+	if w.forgejoUser == "" {
+		return errors.New("the Forgejo user of the worker is not known; Prepare must run first")
+	}
+	g := w.cfg.GitOps
+	return w.forgejo.ProtectBranch(ctx, g.Org, repo, g.Branch, []string{w.forgejoUser})
 }
 
 // HarborProject returns the Harbor project of a tenant.
@@ -64,7 +78,15 @@ func (w *Worker) Prepare(ctx context.Context) error {
 	if err := w.forgejo.EnsureOrg(ctx, g.Org); err != nil {
 		return fmt.Errorf("prepare organization: %w", err)
 	}
+	user, err := w.forgejo.CurrentUser(ctx)
+	if err != nil {
+		return fmt.Errorf("prepare: %w", err)
+	}
+	w.forgejoUser = user
 	if err := w.forgejo.EnsureRepo(ctx, g.Org, g.PlatformRepo, "Squared platform state. Only Squared writes here."); err != nil {
+		return fmt.Errorf("prepare platform repository: %w", err)
+	}
+	if err := w.protectRepo(ctx, g.PlatformRepo); err != nil {
 		return fmt.Errorf("prepare platform repository: %w", err)
 	}
 	marker, err := g.MarkerFile()
@@ -198,6 +220,9 @@ func (w *Worker) syncTenantFiles(ctx context.Context, t *domain.Tenant) error {
 		return fmt.Errorf("registry project: %w", err)
 	}
 	if err := w.forgejo.EnsureRepo(ctx, g.Org, gitops.TenantRepo(t.Slug), "Manifests of tenant "+t.Slug+". Only Squared writes here."); err != nil {
+		return fmt.Errorf("tenant repository: %w", err)
+	}
+	if err := w.protectRepo(ctx, gitops.TenantRepo(t.Slug)); err != nil {
 		return fmt.Errorf("tenant repository: %w", err)
 	}
 	files, err := g.TenantFiles(t, envs)

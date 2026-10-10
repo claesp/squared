@@ -230,7 +230,10 @@ all `*.localhost` names.
    Forgejo pod and checks that the guard reports them. It adds a deploy
    key with write access to `squared/platform` and checks the error. It
    gives `argocd-reader` write access as a collaborator, and then through a
-   new team, and checks the errors. It does the
+   new team, and checks the errors. It checks that the local Forgejo
+   administrator cannot write to `squared/platform`, and that the guard
+   reports a branch rule that does not apply to administrators. After the
+   tenant is made, it checks that the tenant repository has the rule. It does the
    same for Harbor: it changes the administrator group through the Harbor
    API, then renames the key `oidc_admin_group` in the database.
 5. Signs in to Argo CD, Harbor and Forgejo through Keycloak as both users,

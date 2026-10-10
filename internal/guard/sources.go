@@ -62,6 +62,9 @@ type SourceConfig struct {
 	//                    organization Org through teams or as collaborators, in the
 	//                    Forgejo database (URL, PasswordFile, Name, Org, Writers). No
 	//                    groups, only errors.
+	//   forgejo-branches the protection of the default branch of the repositories of
+	//                    the organization Org, in the Forgejo database (URL,
+	//                    PasswordFile, Name, Org, Writers). No groups, only errors.
 	//   forgejo-config   the sign-in and registration settings in the Forgejo app.ini,
 	//                    from the sidecar "squared forgejo-config" (URL). No groups,
 	//                    only errors.
@@ -83,10 +86,10 @@ type SourceConfig struct {
 	// SourceID is for forgejo-credentials: the ID of the Keycloak authentication
 	// source in Forgejo.
 	SourceID int64 `json:"sourceId,omitempty"`
-	// Org is for forgejo-deploy-keys and forgejo-writers: the Forgejo organization of the
+	// Org is for forgejo-deploy-keys, forgejo-writers and forgejo-branches: the Forgejo organization of the
 	// GitOps repositories (default "squared", as SQUARED_GIT_ORG).
 	Org string `json:"org,omitempty"`
-	// Writers is for forgejo-writers: the users that may push to the
+	// Writers is for forgejo-writers and forgejo-branches: the users that may push to the
 	// repositories of Org, for example the bot of the worker.
 	Writers []string `json:"writers,omitempty"`
 	// IgnoreFields are new fields of a service configuration that an
@@ -95,8 +98,9 @@ type SourceConfig struct {
 	// harbor-database, keycloak-mappers (mapper types), keycloak-realm
 	// (identity providers and user federation), forgejo-config
 	// ("<section>.<key>"), forgejo-deploy-keys ("<repository>/<key name>")
-	// and forgejo-writers ("team:<team>/<user>" or
-	// "collaborator:<repository>/<user>") use it.
+	// forgejo-writers ("team:<team>/<user>" or
+	// "collaborator:<repository>/<user>") and forgejo-branches (repository)
+	// use it.
 	IgnoreFields []string `json:"ignoreFields,omitempty"`
 }
 
@@ -209,6 +213,17 @@ func BuildSources(cfg *FileConfig, kc *kube.Client, idp KeycloakReader) ([]Sourc
 				sc.Org = "squared"
 			}
 			sources = append(sources, &forgejoWritersSource{sc: sc})
+		case "forgejo-branches":
+			if sc.URL == "" || sc.PasswordFile == "" || len(sc.Writers) == 0 {
+				return nil, fmt.Errorf("source %d: forgejo-branches needs url, passwordFile and writers", i)
+			}
+			if sc.Name == "" {
+				sc.Name = "squared_guard_branch_rules"
+			}
+			if sc.Org == "" {
+				sc.Org = "squared"
+			}
+			sources = append(sources, &forgejoBranchesSource{sc: sc})
 		case "forgejo-config":
 			if sc.URL == "" {
 				return nil, fmt.Errorf("source %d: forgejo-config needs url", i)
@@ -721,5 +736,47 @@ func (s *forgejoWritersSource) References(ctx context.Context) ([]Reference, []s
 		return nil, nil, err
 	}
 	warnings, err := checkForgejoWriters(access, s.sc.Org, s.sc.Writers, s.sc.IgnoreFields)
+	return nil, warnings, err
+}
+
+// forgejoBranchesSource reads the protection of the default branches from a
+// view in the Forgejo database. See checkForgejoBranches and
+// deploy/kind/forgejo-guard-view.sql.
+type forgejoBranchesSource struct {
+	sc SourceConfig
+}
+
+func (s *forgejoBranchesSource) Name() string { return s.sc.Service + " branch protection" }
+
+func (s *forgejoBranchesSource) References(ctx context.Context) ([]Reference, []string, error) {
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	conn, err := connectDatabase(ctx, s.sc)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer conn.Close(context.Background())
+	rows, err := conn.Query(ctx, `SELECT owner_name, repo_name, branch, repo_created_unix, archived, protected, can_push,
+		enable_whitelist, push_users, push_teams, push_deploy_keys, enable_merge_whitelist, merge_users, merge_teams, apply_to_admins
+		FROM `+pgx.Identifier{s.sc.Name}.Sanitize()+" ORDER BY owner_name, repo_name")
+	if err != nil {
+		return nil, nil, fmt.Errorf("read %s (run forgejo-guard-view.sql again after a Forgejo upgrade): %w", s.sc.Name, err)
+	}
+	var rules []forgejoBranchRule
+	for rows.Next() {
+		var r forgejoBranchRule
+		var created int64
+		if err := rows.Scan(&r.Owner, &r.Repo, &r.Branch, &created, &r.Archived, &r.Protected, &r.CanPush,
+			&r.EnableWhitelist, &r.PushUsers, &r.PushTeams, &r.PushDeployKeys, &r.EnableMergeWhitelist,
+			&r.MergeUsers, &r.MergeTeams, &r.ApplyToAdmins); err != nil {
+			return nil, nil, err
+		}
+		r.RepoCreated = time.Unix(created, 0)
+		rules = append(rules, r)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, nil, err
+	}
+	warnings, err := checkForgejoBranches(rules, s.sc.Org, s.sc.Writers, s.sc.IgnoreFields, time.Now())
 	return nil, warnings, err
 }

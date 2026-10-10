@@ -550,6 +550,20 @@ YAML
   wait_for "the guard has no errors after the team is removed" 60 guard_clean
   log "the guard checks the team and collaborator access to the GitOps repositories"
 
+  # The worker protects the branch of the platform repository: not even a
+  # Forgejo administrator can push to it.
+  local code
+  code="$(curl -sS -o /dev/null -w '%{http_code}' -u "forgejo-admin:$(secret forgejo-admin-password)" -X POST \
+    -H 'Content-Type: application/json' "${FORGEJO_URL}/api/v1/repos/squared/platform/contents/e2e-guard.txt" \
+    -d '{"content": "ZTJl", "message": "e2e: must fail", "branch": "main"}')"
+  [[ "$code" == 403 ]] || die "a Forgejo administrator could write to the platform repository, or the test is wrong (status $code)"
+  # A weaker rule, as an administrator can make it.
+  fj_admin /repos/squared/platform/branch_protections/main -X PATCH -H 'Content-Type: application/json' -d '{"apply_to_admins": false}' >/dev/null
+  guard_reports_writer 'branch main of squared/platform: the rule does not apply to Forgejo administrators'
+  fj_admin /repos/squared/platform/branch_protections/main -X PATCH -H 'Content-Type: application/json' -d '{"apply_to_admins": true}' >/dev/null
+  wait_for "the guard has no errors after the rule is back" 60 guard_clean
+  log "the guard checks the branch protection of the GitOps repositories"
+
   # A change of the administrator group in Harbor, through the API as in
   # the web interface.
   local hgroup="e2e-harbor-$TENANT"
@@ -625,6 +639,9 @@ api POST /tenants "$(jq -n --arg s "$TENANT" --arg o "$ADMIN_EMAIL" \
 wait_for "tenant is ready" 300 tenant_ready
 k get namespace "$NS" >/dev/null
 k -n "$NS" get secret squared-registry >/dev/null
+fj_admin "/repos/squared/tenant-$TENANT/branch_protections/main" \
+  | jq -e '.push_whitelist_usernames == ["squared-bot"] and .merge_whitelist_usernames == ["squared-bot"] and .apply_to_admins' >/dev/null \
+  || die "the tenant repository has no branch protection for Squared only"
 
 step "map tenant members to Harbor, Forgejo and Argo CD"
 # dev has no rights in the tenant yet.

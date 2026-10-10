@@ -178,11 +178,12 @@ to the configuration of the guard, and add its Keycloak client to
 ### Forgejo upgrades
 
 1. Drop the views `squared_guard_auth_sources`,
-   `squared_guard_credential_owners`, `squared_guard_deploy_keys` and
-   `squared_guard_repo_access` if the upgrade changes the tables that they
+   `squared_guard_credential_owners`, `squared_guard_deploy_keys`,
+   `squared_guard_repo_access` and `squared_guard_branch_rules` if the
+   upgrade changes the tables that they
    read (`login_source`, `user`, `access_token`, `public_key`,
    `deploy_key`, `repository`, `team`, `team_user`, `team_unit`,
-   `team_repo` or `collaboration`). After the upgrade, run
+   `team_repo`, `collaboration` or `protected_branch`). After the upgrade, run
    `forgejo-guard-view.sql` again.
 2. Look at `GET /status` of the guard:
    - An error about a missing or new group field: Forgejo renamed or

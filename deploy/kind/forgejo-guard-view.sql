@@ -1,6 +1,7 @@
 -- Access of the Squared guard to the authentication sources of Forgejo,
 -- to the owners of personal access tokens and SSH keys, to the deploy keys
--- of the repositories, and to the team and collaborator access.
+-- of the repositories, to the team and collaborator access, and to the
+-- protection of the default branches.
 --
 -- Forgejo has no API for its authentication sources. A change in the
 -- Forgejo web interface is only in the table login_source. The column cfg
@@ -155,3 +156,48 @@ JOIN "user" u ON u.id = c.user_id;
 
 REVOKE ALL ON squared_guard_repo_access FROM PUBLIC;
 GRANT SELECT ON squared_guard_repo_access TO squared_guard;
+
+-- The protection rule of the default branch of each repository: the rule
+-- with the exact name of the branch, which Forgejo uses before a rule with
+-- a pattern. A repository without such a rule is in the view too
+-- (protected is false). The user lists have names, the team lists only
+-- the number of teams. The guard checks that only Squared can push to the
+-- GitOps repositories or merge into them. Forgejo refuses all pushes to an
+-- archived repository.
+DROP VIEW IF EXISTS squared_guard_branch_rules;
+
+CREATE VIEW squared_guard_branch_rules WITH (security_barrier) AS
+WITH p AS (
+    SELECT repo_id, branch_name, can_push, enable_whitelist, whitelist_deploy_keys,
+           enable_merge_whitelist, apply_to_admins,
+           -- Forgejo writes the lists as JSON; an empty list can be NULL or "null".
+           CASE WHEN whitelist_user_i_ds ~ '^\s*\[' THEN whitelist_user_i_ds::jsonb END             AS push_user_ids,
+           CASE WHEN whitelist_team_i_ds ~ '^\s*\[' THEN whitelist_team_i_ds::jsonb END             AS push_team_ids,
+           CASE WHEN merge_whitelist_user_i_ds ~ '^\s*\[' THEN merge_whitelist_user_i_ds::jsonb END AS merge_user_ids,
+           CASE WHEN merge_whitelist_team_i_ds ~ '^\s*\[' THEN merge_whitelist_team_i_ds::jsonb END AS merge_team_ids
+    FROM protected_branch
+)
+SELECT r.owner_name                                   AS owner_name,
+       r.name                                         AS repo_name,
+       r.default_branch                               AS branch,
+       r.created_unix                                 AS repo_created_unix,
+       r.is_archived                                  AS archived,
+       p.repo_id IS NOT NULL                          AS protected,
+       coalesce(p.can_push, false)                    AS can_push,
+       coalesce(p.enable_whitelist, false)            AS enable_whitelist,
+       ARRAY(SELECT u.name FROM "user" u
+             WHERE u.id IN (SELECT jsonb_array_elements_text(p.push_user_ids)::bigint)
+             ORDER BY u.name)                         AS push_users,
+       coalesce(jsonb_array_length(p.push_team_ids), 0) AS push_teams,
+       coalesce(p.whitelist_deploy_keys, false)       AS push_deploy_keys,
+       coalesce(p.enable_merge_whitelist, false)      AS enable_merge_whitelist,
+       ARRAY(SELECT u.name FROM "user" u
+             WHERE u.id IN (SELECT jsonb_array_elements_text(p.merge_user_ids)::bigint)
+             ORDER BY u.name)                         AS merge_users,
+       coalesce(jsonb_array_length(p.merge_team_ids), 0) AS merge_teams,
+       coalesce(p.apply_to_admins, false)             AS apply_to_admins
+FROM repository r
+LEFT JOIN p ON p.repo_id = r.id AND p.branch_name = r.default_branch;
+
+REVOKE ALL ON squared_guard_branch_rules FROM PUBLIC;
+GRANT SELECT ON squared_guard_branch_rules TO squared_guard;

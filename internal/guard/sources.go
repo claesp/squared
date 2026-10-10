@@ -13,6 +13,7 @@ import (
 	"squared/internal/domain"
 	"squared/internal/gitops"
 	"squared/internal/harbor"
+	"squared/internal/keycloak"
 	"squared/internal/kube"
 	"squared/internal/render"
 	"squared/internal/rest"
@@ -44,6 +45,8 @@ type SourceConfig struct {
 	//                    view that has only the group settings (URL, PasswordFile, Name)
 	//   harbor-database  the configuration in the Harbor database, through a view
 	//                    that has only the group settings (URL, PasswordFile, Name)
+	//   keycloak-mappers the mappers of the Keycloak clients that the services use
+	//                    (Clients, Audiences, Claims). It gives no groups, only errors.
 	Type         string `json:"type"`
 	Service      string `json:"service"`
 	Namespace    string `json:"namespace,omitempty"`
@@ -53,10 +56,16 @@ type SourceConfig struct {
 	URL          string `json:"url,omitempty"`
 	User         string `json:"user,omitempty"`
 	PasswordFile string `json:"passwordFile,omitempty"`
+	// Clients, Audiences and Claims are for keycloak-mappers: the client IDs
+	// and the custom audiences of the tokens that the services accept, and
+	// the claims that they read as groups (default "groups").
+	Clients   []string `json:"clients,omitempty"`
+	Audiences []string `json:"audiences,omitempty"`
+	Claims    []string `json:"claims,omitempty"`
 	// IgnoreFields are new fields of a service configuration that an
 	// operator checked: they give no rights. The types argocd-rbac (keys),
-	// argocd-projects ("spec.<field>" or "roles.<field>"), forgejo-database
-	// and harbor-database use it.
+	// argocd-projects ("spec.<field>" or "roles.<field>"), forgejo-database,
+	// harbor-database and keycloak-mappers (mapper types) use it.
 	IgnoreFields []string `json:"ignoreFields,omitempty"`
 }
 
@@ -78,8 +87,14 @@ func LoadFile(path string) (*FileConfig, error) {
 	return &cfg, nil
 }
 
+// ClientReader reads the mappers of the Keycloak clients.
+type ClientReader interface {
+	Clients(ctx context.Context) ([]keycloak.ClientMappers, error)
+	ClientScopes(ctx context.Context) ([]keycloak.ClientScope, error)
+}
+
 // BuildSources makes the sources of a configuration.
-func BuildSources(cfg *FileConfig, kc *kube.Client) ([]Source, error) {
+func BuildSources(cfg *FileConfig, kc *kube.Client, idp ClientReader) ([]Source, error) {
 	tenants := tenantGroups{prefix: cfg.TenantGroupPrefix, projectPrefix: cfg.ProjectPrefix}
 	var sources []Source
 	for i, sc := range cfg.Sources {
@@ -119,6 +134,14 @@ func BuildSources(cfg *FileConfig, kc *kube.Client) ([]Source, error) {
 				sc.Name = "squared_guard_harbor_config"
 			}
 			sources = append(sources, &harborDatabaseSource{sc: sc})
+		case "keycloak-mappers":
+			if len(sc.Clients) == 0 {
+				return nil, fmt.Errorf("source %d: keycloak-mappers needs clients", i)
+			}
+			if len(sc.Claims) == 0 {
+				sc.Claims = []string{"groups"}
+			}
+			sources = append(sources, &keycloakMappersSource{sc: sc, idp: idp})
 		case "forgejo-init":
 			if sc.Key == "" {
 				sc.Key = "configure_gitea.sh"
@@ -432,4 +455,28 @@ func (s *harborDatabaseSource) References(ctx context.Context) ([]Reference, []s
 		refs[i].Service = s.sc.Service
 	}
 	return refs, warnings, err
+}
+
+// keycloakMappersSource checks the mappers of the Keycloak clients that
+// the services use. The protection of a group helps only if membership of
+// the group is the only way to get it into the groups claim.
+type keycloakMappersSource struct {
+	sc  SourceConfig
+	idp ClientReader
+}
+
+func (s *keycloakMappersSource) Name() string { return s.sc.Service + " client mappers" }
+
+func (s *keycloakMappersSource) References(ctx context.Context) ([]Reference, []string, error) {
+	clients, err := s.idp.Clients(ctx)
+	if err != nil {
+		return nil, nil, err
+	}
+	scopes, err := s.idp.ClientScopes(ctx)
+	if err != nil {
+		return nil, nil, err
+	}
+	warnings, err := checkKeycloakMappers(clients, scopes, mapperRules{
+		Clients: s.sc.Clients, Audiences: s.sc.Audiences, Claims: s.sc.Claims, Ignore: s.sc.IgnoreFields})
+	return nil, warnings, err
 }

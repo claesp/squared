@@ -294,6 +294,26 @@ YAML
   wait_for "the guard has no errors after the scopes are back" 60 guard_clean
   log "the guard checks the claims in the Argo CD scopes"
 
+  # A Keycloak mapper that writes the groups claim. This one is in no
+  # token, thus it is harmless, but the guard must report each mapper
+  # other than the group membership mapper.
+  local at client mapper
+  at="$(curl -fsS "${KEYCLOAK_URL}/realms/master/protocol/openid-connect/token" -d grant_type=password -d client_id=admin-cli \
+    -d username=admin --data-urlencode "password=$(secret keycloak-admin-password)" | jq -r .access_token)"
+  client="$(curl -fsS -H "Authorization: Bearer $at" "${KEYCLOAK_URL}/admin/realms/squared/clients?clientId=argocd" | jq -r '.[0].id')"
+  curl -fsS -X POST -H "Authorization: Bearer $at" -H 'Content-Type: application/json' \
+    "${KEYCLOAK_URL}/admin/realms/squared/clients/$client/protocol-mappers/models" -d '{"name": "e2e-guard",
+      "protocol": "openid-connect", "protocolMapper": "oidc-hardcoded-claim-mapper", "config": {"claim.name": "groups",
+      "claim.value": "/e2e", "id.token.claim": "false", "access.token.claim": "false", "userinfo.token.claim": "false"}}' >/dev/null
+  guard_reports_mapper() { guard_status | jq -e '[.errors[]? | select(test("mapper \"e2e-guard\" \\(type oidc-hardcoded-claim-mapper\\) writes the group claim"))] | length > 0' >/dev/null; }
+  wait_for "the guard reports the Keycloak mapper" 60 guard_reports_mapper
+  [[ "$(worker_may_add_dev squared-admins)" == 403 ]] || die "the protection of /squared-admins is gone after the mapper change"
+  mapper="$(curl -fsS -H "Authorization: Bearer $at" "${KEYCLOAK_URL}/admin/realms/squared/clients/$client/protocol-mappers/models" \
+    | jq -r '.[] | select(.name == "e2e-guard") | .id')"
+  curl -fsS -X DELETE -H "Authorization: Bearer $at" "${KEYCLOAK_URL}/admin/realms/squared/clients/$client/protocol-mappers/models/$mapper" >/dev/null
+  wait_for "the guard has no errors after the mapper is removed" 60 guard_clean
+  log "the guard checks the Keycloak mappers of the service clients"
+
   # A change of the administrator group in Forgejo, as in the web
   # interface. The Forgejo command line writes the same database table.
   local fgroup="e2e-forgejo-$TENANT" auth_id

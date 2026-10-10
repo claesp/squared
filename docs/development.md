@@ -150,7 +150,7 @@ if the realm does not exist. The realm has:
 | Client `harbor` | Harbor. Confidential. |
 | Client `forgejo` | Forgejo. Confidential. |
 | Client `squared-cli` | Development only: the password grant for API tokens in the end-to-end test. |
-| Client `squared-guard` | Service account of the guard. It has `manage-realm` and keeps the permission `protected-groups` up to date. |
+| Client `squared-guard` | Service account of the guard. It has `manage-realm` and keeps the permission `protected-groups` up to date. It reads the client mappers with `view-clients`. |
 | Client `squared-worker` | Service account of the worker. It manages the groups `tenant-<tenant>-<role>`. `hack/kind-up.sh` limits it with fine-grained admin permissions. |
 | Role `squared-protected-group-admin` | Nobody has it. Only its holders could manage the protected groups. |
 | Group `squared-admins` | Administrators of Squared, Argo CD, Harbor and Forgejo. |
@@ -210,7 +210,8 @@ all `*.localhost` names.
    all four services, that a new group in the Argo CD RBAC is made and
    protected, and that it is released when the line goes. It does the same
    with a `g` line in the policies of an AppProject role, and checks that an
-   unknown claim in the Argo CD `scopes` gives an error. It does the same
+   unknown claim in the Argo CD `scopes` gives an error, and that a Keycloak
+   mapper that writes `groups` on the client `argocd` gives an error. It does the same
    with a change of the Forgejo administrator group through the Forgejo
    command line, which writes the same table as the web interface. Then it
    renames the field `AdminGroup` in the database, as an upgrade could, and

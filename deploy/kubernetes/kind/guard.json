@@ -11,6 +11,8 @@
     {"type": "harbor-database", "service": "Harbor",
      "url": "postgres://squared_guard@harbor-database.harbor.svc.cluster.local:5432/registry?sslmode=disable",
      "passwordFile": "/etc/squared/secrets/harbor-db-password"},
+    {"type": "keycloak-mappers", "service": "Keycloak",
+     "clients": ["squared", "squared-cli", "argocd", "harbor", "forgejo"], "audiences": ["squared-api"]},
     {"type": "configmap", "service": "Squared", "namespace": "squared", "selector": "squared.dev/config=true", "key": "SQUARED_OIDC_ADMIN_GROUP"},
     {"type": "forgejo-database", "service": "Forgejo",
      "url": "postgres://squared_guard@forgejo-db.forgejo.svc.cluster.local:5432/forgejo?sslmode=disable",

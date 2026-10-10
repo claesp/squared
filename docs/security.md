@@ -98,9 +98,12 @@ controls that it uses. Read [architecture.md](architecture.md) first.
   makes a missing group before anybody else can.
 - **Rights of the guard.** The guard has the realm-management roles
   `manage-realm` (no smaller role can change fine-grained admin
-  permissions), `view-users`, `query-groups` and `query-clients`, a
-  permission to see the `admin-permissions` client, and the group permission
-  of the worker (to make groups). It has no `manage-group-membership` on
+  permissions), `view-users`, `query-groups` and `view-clients` (to read
+  the client mappers and to find the `admin-permissions` client), and the
+  group permission of the worker (to make groups). Keycloak removes the
+  client secrets from the answers unless the account can manage the
+  client, and only an account that can manage a client can read its
+  secret: `view-clients` gives no secrets. It has no `manage-group-membership` on
   users, thus it cannot change memberships. This is a strong account. The guard thus runs
   alone in the namespace `squared-guard`, accepts no connections, reads
   the configurations with read-only Kubernetes roles (named objects where
@@ -141,6 +144,33 @@ controls that it uses. Read [architecture.md](architecture.md) first.
   turn them on. The network policy of the database accepts only Forgejo
   and the namespace of the guard. A group that becomes protected keeps the members that it had
   before; the guard warns about them.
+- **Keycloak client mappers.** The protection of a group helps only if
+  membership of the group is the only way to get its path into the
+  `groups` claim. Other mappers can write that claim: a fixed value
+  (`oidc-hardcoded-claim-mapper`), a user attribute, realm roles (the
+  built-in scope `microprofile-jwt` does this), or even a value from the
+  sign-in request (`oidc-claims-param-value-idtoken-mapper`). The guard
+  reads the mappers of the clients that the services use, with the
+  mappers of their default and optional client scopes:
+
+  | Change | Result |
+  |---|---|
+  | A mapper of another type writes a group claim, or a part of it (`groups.x`) | Error |
+  | A group membership mapper without full paths: a subgroup with the same name gives the same rights | Error |
+  | A mapper type that Keycloak 26.8 does not have, for example a script mapper; it can write any claim | Error, until an operator adds the type to `ignoreFields` |
+  | The guard does not see a client of its configuration, for example without `view-clients` | Error |
+  | A client of the configuration has no group membership mapper | Warning |
+
+  It also checks every other client with an audience mapper for one of
+  these clients or for a custom audience of a service (`squared-api`),
+  because the services accept its tokens. The built-in clients of the
+  realm, for example `account`, may ask for `microprofile-jwt`, but their
+  tokens have no audience of a service. The guard checks the mappers
+  also when they are in no token: a later change of one flag would make
+  them active. The end-to-end test adds a mapper that writes `groups` to
+  the client `argocd` and checks the error. Limit: the guard does not
+  read the client roles that `oidc-audience-resolve-mapper` turns into
+  audiences; give the service clients no client roles.
 - **Argo CD configuration.** Argo CD reads its RBAC only from the
   ConfigMap `argocd-rbac-cm` and from the AppProjects. The guard reads the
   same objects through the Kubernetes API, thus it sees all changes, also

@@ -119,9 +119,9 @@ permission `protected-groups` up to date. To install it in production:
 
 1. Make a confidential client `squared-guard` with only "service
    accounts" on. Give its service account the client roles `manage-realm`,
-   `view-users`, `query-groups` and `query-clients` of `realm-management`,
-   and a permission with the scope `view` on the client
-   `admin-permissions`, so that the guard can find that client.
+   `view-users`, `query-groups` and `view-clients` of `realm-management`.
+   With `view-clients` the guard reads the client mappers and finds the
+   `admin-permissions` client. It gives no client secrets.
 2. Make a user policy for this service account, and an aggregated policy
    with the decision strategy "Affirmative" that contains the policies of
    the worker and of the guard. Use the aggregated policy in the permission
@@ -154,7 +154,8 @@ permission `protected-groups` up to date. To install it in production:
    run.
 
 When you add a service that gives rights to groups, add a source for it
-to the configuration of the guard.
+to the configuration of the guard, and add its Keycloak client to
+`clients` of the source `keycloak-mappers`.
 
 ### Forgejo upgrades
 
@@ -171,6 +172,17 @@ to the configuration of the guard.
      release notes. If the field gives no rights, add it to
      `ignoreFields` of the source.
 3. Run the end-to-end test against a test environment with the new
+   version.
+
+### Keycloak upgrades
+
+1. Look at `GET /status` of the guard after the upgrade. An error about an
+   unknown mapper type: Keycloak added a type, or an extension has one.
+   Check what the type writes. If it cannot write a group claim, add it to
+   `ignoreFields` of the source `keycloak-mappers`, or update the list in
+   [`internal/guard/keycloak.go`](../internal/guard/keycloak.go) and
+   release a new version of Squared.
+2. Run the end-to-end test against a test environment with the new
    version.
 
 ### Argo CD upgrades

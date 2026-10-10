@@ -320,12 +320,11 @@ setup_keycloak_permissions() {
   # manage-group-membership on users, thus it cannot change memberships.
   kc_delete_authz permission squared-worker-groups
   kc_delete_authz permission squared-guard-groups
-  # The guard finds the admin-permissions client with query-clients. This
-  # permission makes exactly that client visible to it.
-  kc_put_authz permission/scope squared-guard-admin-permissions "$(jq -n \
-    --arg c "$(kc GET '/clients?clientId=admin-permissions' | jq -r '.[0].id')" \
-    '{name: "squared-guard-admin-permissions", description: "The guard can find the admin-permissions client.",
-      resourceType: "Clients", resources: [$c], scopes: ["view"], policies: ["squared-guard"]}')"
+  # The guard sees all clients and client scopes with the role
+  # view-clients, also the admin-permissions client. Keycloak does not
+  # show it the client secrets. An older setup had a permission for that
+  # one client.
+  kc_delete_authz permission squared-guard-admin-permissions
   kc_put_authz policy/aggregate squared-worker-or-guard "$(jq -n \
     '{name: "squared-worker-or-guard", description: "The service account of the worker or of the guard.",
       logic: "POSITIVE", decisionStrategy: "AFFIRMATIVE", policies: ["squared-worker", "squared-guard"]}')"

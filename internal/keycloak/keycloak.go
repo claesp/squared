@@ -1,6 +1,7 @@
 // Package keycloak is a client for the parts of the Keycloak admin API
-// that the worker uses: groups and group members. It signs in with the
-// client credentials grant of a service account.
+// that the worker and the guard use: groups, group members, admin
+// permissions, and the mappers of clients. It signs in with the client
+// credentials grant of a service account.
 package keycloak
 
 import (
@@ -311,4 +312,59 @@ func (c *Client) SetPermissionResources(ctx context.Context, p *Permission, reso
 	update := *p
 	update.Resources = resources
 	return c.rest.Do(ctx, http.MethodPut, base+"/permission/scope/"+url.PathEscape(p.ID), update, nil)
+}
+
+// ProtocolMapper is a protocol mapper of a client or of a client scope. It
+// puts a claim into the tokens.
+type ProtocolMapper struct {
+	Name           string            `json:"name"`
+	Protocol       string            `json:"protocol"`
+	ProtocolMapper string            `json:"protocolMapper"` // The type, for example "oidc-group-membership-mapper".
+	Config         map[string]string `json:"config"`
+}
+
+// ClientMappers is the part of a client that tells which claims its tokens
+// get: its own mappers and its client scopes. It has no secrets.
+type ClientMappers struct {
+	ClientID             string           `json:"clientId"`
+	Protocol             string           `json:"protocol"`
+	DefaultClientScopes  []string         `json:"defaultClientScopes"`
+	OptionalClientScopes []string         `json:"optionalClientScopes"`
+	ProtocolMappers      []ProtocolMapper `json:"protocolMappers"`
+}
+
+// ClientScope is a client scope with its mappers.
+type ClientScope struct {
+	Name            string           `json:"name"`
+	Protocol        string           `json:"protocol"`
+	ProtocolMappers []ProtocolMapper `json:"protocolMappers"`
+}
+
+// Clients returns the mappers and the client scopes of all clients. It
+// needs the role view-clients. Keycloak removes the secrets from the
+// answer unless the account can manage the client.
+func (c *Client) Clients(ctx context.Context) ([]ClientMappers, error) {
+	const page = 100
+	var all []ClientMappers
+	for first := 0; ; first += page {
+		var clients []ClientMappers
+		path := fmt.Sprintf("/clients?first=%d&max=%d", first, page)
+		if err := c.rest.Do(ctx, http.MethodGet, path, nil, &clients); err != nil {
+			return nil, fmt.Errorf("list clients: %w", err)
+		}
+		all = append(all, clients...)
+		if len(clients) < page {
+			return all, nil
+		}
+	}
+}
+
+// ClientScopes returns all client scopes with their mappers. It needs the
+// role view-clients; without it, Keycloak returns an empty list.
+func (c *Client) ClientScopes(ctx context.Context) ([]ClientScope, error) {
+	var scopes []ClientScope
+	if err := c.rest.Do(ctx, http.MethodGet, "/client-scopes", nil, &scopes); err != nil {
+		return nil, fmt.Errorf("list client scopes: %w", err)
+	}
+	return scopes, nil
 }

@@ -39,13 +39,13 @@ func runGuard(ctx context.Context, log *slog.Logger) error {
 	if err != nil {
 		return err
 	}
-	sources, err := guard.BuildSources(fileCfg, kc)
+	idp := keycloak.New(keycloakURL, realm, clientID, clientSecret, rest.NewHTTPClient(nil))
+	sources, err := guard.BuildSources(fileCfg, kc, idp)
 	if err != nil {
 		return err
 	}
 	reg := &metrics.Registry{}
-	g := guard.New(guard.Config{Permission: fileCfg.Permission, Groups: fileCfg.Groups}, sources,
-		keycloak.New(keycloakURL, realm, clientID, clientSecret, rest.NewHTTPClient(nil)), log, reg)
+	g := guard.New(guard.Config{Permission: fileCfg.Permission, Groups: fileCfg.Groups}, sources, idp, log, reg)
 	log.Info("guard started", "sources", len(sources), "interval", interval.String())
 
 	mux := http.NewServeMux()

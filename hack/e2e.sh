@@ -286,6 +286,31 @@ check_guard() {
   forgejo_sql "UPDATE login_source SET cfg = (cfg::jsonb - 'AdministratorGroup' || jsonb_build_object('AdminGroup', cfg::jsonb -> 'AdministratorGroup'))::text WHERE name = 'keycloak'"
   wait_for "the guard has no errors after the field is back" 60 guard_clean
   log "the guard reports renamed Forgejo fields and keeps the protection"
+
+  # A change of the administrator group in Harbor, through the API as in
+  # the web interface.
+  local hgroup="e2e-harbor-$TENANT"
+  harbor_admin_group() {
+    curl -fsS -u "admin:$(secret harbor-admin-password)" -X PUT -H 'Content-Type: application/json' \
+      -H 'X-Requested-With: squared' "${HARBOR_URL}/api/v2.0/configurations" \
+      -d "$(jq -n --arg g "$1" '{oidc_admin_group: $g}')" >/dev/null
+  }
+  harbor_admin_group "/$hgroup"
+  wait_for "the guard made and protected /$hgroup" 90 guard_protected "$hgroup"
+  harbor_admin_group "/squared-admins"
+  wait_for "the guard released /$hgroup" 90 guard_released "$hgroup"
+  remove_group "$hgroup"
+  log "the guard follows the live Harbor configuration"
+
+  # A Harbor upgrade that renames a setting.
+  harbor_sql() { k -n harbor exec -i statefulset/harbor-database -c database -- psql -q -U postgres -d registry -v ON_ERROR_STOP=1 -c "$1" >/dev/null; }
+  harbor_sql "UPDATE properties SET k = 'oidc_admin_groups' WHERE k = 'oidc_admin_group'"
+  guard_reports_harbor() { guard_status | jq -e '[.errors[]? | select(test("oidc_admin_groups can give rights"))] | length > 0' >/dev/null; }
+  wait_for "the guard reports the renamed Harbor setting" 60 guard_reports_harbor
+  [[ "$(worker_may_add_dev squared-admins)" == 403 ]] || die "the protection of /squared-admins is gone after the renamed setting"
+  harbor_sql "UPDATE properties SET k = 'oidc_admin_group' WHERE k = 'oidc_admin_groups'"
+  wait_for "the guard has no errors after the setting is back" 60 guard_clean
+  log "the guard reports renamed Harbor settings and keeps the protection"
 }
 
 kc_token() {

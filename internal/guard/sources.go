@@ -44,6 +44,8 @@ type SourceConfig struct {
 	//   forgejo-init     the init script of the Forgejo Helm chart (Namespace, Name, Key)
 	//   forgejo-database the authentication sources in the Forgejo database, through a
 	//                    view that has only the group settings (URL, PasswordFile, Name)
+	//   harbor-database  the configuration in the Harbor database, through a view
+	//                    that has only the group settings (URL, PasswordFile, Name)
 	Type         string `json:"type"`
 	Service      string `json:"service"`
 	Namespace    string `json:"namespace,omitempty"`
@@ -54,7 +56,8 @@ type SourceConfig struct {
 	User         string `json:"user,omitempty"`
 	PasswordFile string `json:"passwordFile,omitempty"`
 	// IgnoreFields are new fields of a service configuration that an
-	// operator checked: they give no rights. Only forgejo-database uses it.
+	// operator checked: they give no rights. Only forgejo-database and
+	// harbor-database use it.
 	IgnoreFields []string `json:"ignoreFields,omitempty"`
 }
 
@@ -109,6 +112,14 @@ func BuildSources(cfg *FileConfig, kc *kube.Client) ([]Source, error) {
 				sc.Name = "squared_guard_auth_sources"
 			}
 			sources = append(sources, &forgejoDatabaseSource{sc: sc})
+		case "harbor-database":
+			if sc.URL == "" || sc.PasswordFile == "" {
+				return nil, fmt.Errorf("source %d: harbor-database needs url and passwordFile", i)
+			}
+			if sc.Name == "" {
+				sc.Name = "squared_guard_harbor_config"
+			}
+			sources = append(sources, &harborDatabaseSource{sc: sc})
 		case "forgejo-init":
 			if sc.Key == "" {
 				sc.Key = "configure_gitea.sh"
@@ -308,21 +319,31 @@ type forgejoDatabaseSource struct {
 
 func (s *forgejoDatabaseSource) Name() string { return s.sc.Service + " database" }
 
-func (s *forgejoDatabaseSource) References(ctx context.Context) ([]Reference, []string, error) {
-	cfg, err := pgx.ParseConfig(s.sc.URL)
+// connectDatabase connects to the database of a source with the password
+// in the password file.
+func connectDatabase(ctx context.Context, sc SourceConfig) (*pgx.Conn, error) {
+	cfg, err := pgx.ParseConfig(sc.URL)
 	if err != nil {
-		return nil, nil, fmt.Errorf("parse url: %w", err)
+		return nil, fmt.Errorf("parse url: %w", err)
 	}
-	password, err := os.ReadFile(s.sc.PasswordFile)
+	password, err := os.ReadFile(sc.PasswordFile)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 	cfg.Password = strings.TrimSpace(string(password))
-	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
-	defer cancel()
 	conn, err := pgx.ConnectConfig(ctx, cfg)
 	if err != nil {
-		return nil, nil, fmt.Errorf("connect: %w", err)
+		return nil, fmt.Errorf("connect: %w", err)
+	}
+	return conn, nil
+}
+
+func (s *forgejoDatabaseSource) References(ctx context.Context) ([]Reference, []string, error) {
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	conn, err := connectDatabase(ctx, s.sc)
+	if err != nil {
+		return nil, nil, err
 	}
 	defer conn.Close(context.Background())
 	rows, err := conn.Query(ctx, `SELECT id, name, type, is_active, cfg_keys,
@@ -364,4 +385,45 @@ func (s *forgejoDatabaseSource) References(ctx context.Context) ([]Reference, []
 		return refs, warnings, fmt.Errorf("%s", strings.Join(problems, " | "))
 	}
 	return refs, warnings, nil
+}
+
+// harborDatabaseSource reads the configuration of Harbor from a view in
+// the Harbor database. It sees changes in the Harbor web interface and
+// API. It checks the keys against the settings that the guard knows, so
+// that a new or renamed setting after a Harbor upgrade stops the source
+// instead of hiding a group. See deploy/kind/harbor-guard-view.sql.
+type harborDatabaseSource struct {
+	sc SourceConfig
+}
+
+func (s *harborDatabaseSource) Name() string { return s.sc.Service + " database" }
+
+func (s *harborDatabaseSource) References(ctx context.Context) ([]Reference, []string, error) {
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	conn, err := connectDatabase(ctx, s.sc)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer conn.Close(context.Background())
+	rows, err := conn.Query(ctx, "SELECT key, coalesce(value, '') FROM "+pgx.Identifier{s.sc.Name}.Sanitize())
+	if err != nil {
+		return nil, nil, fmt.Errorf("read %s (run harbor-guard-view.sql again after a Harbor upgrade): %w", s.sc.Name, err)
+	}
+	settings := map[string]string{}
+	for rows.Next() {
+		var k, v string
+		if err := rows.Scan(&k, &v); err != nil {
+			return nil, nil, err
+		}
+		settings[k] = v
+	}
+	if err := rows.Err(); err != nil {
+		return nil, nil, err
+	}
+	refs, warnings, err := checkHarborConfig(settings, s.sc.IgnoreFields)
+	for i := range refs {
+		refs[i].Service = s.sc.Service
+	}
+	return refs, warnings, err
 }

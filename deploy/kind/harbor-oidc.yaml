@@ -1,8 +1,8 @@
 # The OIDC settings of Harbor, without the client secret. hack/kind-up.sh
-# applies them to Harbor through the API. The guard reads the
-# administrator group from here, because a Harbor robot account cannot read
-# the Harbor configuration. Change these settings here, not in the Harbor
-# web interface.
+# applies them to Harbor through the API. The guard reads the live
+# settings from the Harbor database, thus a change in the Harbor web
+# interface is also protected. But the next run of kind-up.sh writes these
+# settings again.
 apiVersion: v1
 kind: ConfigMap
 metadata:

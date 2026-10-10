@@ -1,0 +1,24 @@
+# Only the Harbor components and the Squared guard can connect to the
+# Harbor database. The guard can read only the view of
+# harbor-guard-view.sql.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: harbor-database
+  namespace: harbor
+spec:
+  podSelector:
+    matchLabels:
+      app: harbor
+      component: database
+  policyTypes: ["Ingress"]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app: harbor
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: squared-guard
+      ports:
+        - port: 5432

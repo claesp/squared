@@ -138,7 +138,12 @@ permission `protected-groups` up to date. To install it in production:
    `login_source`, drop the view; run the file again after the upgrade.
    Without database access, use the source type `forgejo-init`.
 4. Make a Harbor robot account at system level with the permissions "list
-   projects" and "list members" of all projects.
+   projects" and "list members" of all projects. Run
+   [`deploy/kind/harbor-guard-view.sql`](../deploy/kind/harbor-guard-view.sql)
+   in the Harbor database (`registry`) as the owner of the Harbor tables,
+   and set a password for the role `squared_guard`. Permit connections from
+   the guard to the database. Before a Harbor upgrade that changes the
+   table `properties`, drop the view; run the file again after the upgrade.
 5. Write the configuration file (see [configuration.md](configuration.md))
    with a source for each service that gives rights to groups.
 6. Give the service account of the guard read access to the objects of
@@ -168,6 +173,22 @@ to the configuration of the guard.
 3. Run the end-to-end test against a test environment with the new
    version.
 
+### Harbor upgrades
+
+1. Drop the view `squared_guard_harbor_config` if the upgrade changes the
+   table `properties`. After the upgrade, run `harbor-guard-view.sql`
+   again.
+2. Look at `GET /status` of the guard:
+   - An error about a new setting that can give rights: Harbor renamed or
+     added a setting. The guard keeps the current protection. Update the
+     list of settings in
+     [`internal/guard/harbor.go`](../internal/guard/harbor.go) and the
+     view, and release a new version of Squared.
+   - A warning about a new setting: check the Harbor release notes. If the
+     setting gives no rights, add it to `ignoreFields` of the source.
+3. Run the end-to-end test against a test environment with the new
+   version.
+
 ## Health checks
 
 | Role | Path | Meaning |
@@ -194,7 +215,7 @@ monitoring system.
 | `squared_task_seconds` | worker | `kind` | Duration of task handlers (sum and count). |
 | `squared_guard_runs_total` | guard | `result` | Runs of the guard. `result` is `ok` or `error`. |
 | `squared_guard_changes_total` | guard | `change` | Groups that became protected (`protected`) or not protected (`released`). |
-| `squared_guard_warnings_total` | guard | `kind` | `members`: a new protected group has members. `short-name`: a configuration uses a short group name. `source`: a source reports a change to check, for example a new Forgejo field. |
+| `squared_guard_warnings_total` | guard | `kind` | `members`: a new protected group has members. `short-name`: a configuration uses a short group name. `source`: a source reports a change to check, for example a new Forgejo field or Harbor setting. |
 | `squared_guard_source_errors_total` | guard | `source` | Runs in which a source failed. |
 
 Useful alerts:
@@ -210,7 +231,7 @@ Useful alerts:
 - `increase(squared_guard_warnings_total{kind="members"}[1h]) > 0`: a group
   became protected with members; check them.
 - `increase(squared_guard_source_errors_total[15m]) > 0`: a source of the
-  guard failed, for example because a Forgejo upgrade changed the fields of
+  guard failed, for example because a Forgejo or Harbor upgrade changed the fields of
   the authentication sources. `GET /status` tells which field.
 
 ## Logs

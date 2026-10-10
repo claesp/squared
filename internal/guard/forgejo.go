@@ -12,8 +12,8 @@ import (
 // the Forgejo table login_source.
 const forgejoOAuthType = 6
 
-// fieldKind tells what a field of the Forgejo OAuth configuration means for
-// the guard.
+// fieldKind tells what a field of a service configuration means for the
+// guard.
 type fieldKind int
 
 const (

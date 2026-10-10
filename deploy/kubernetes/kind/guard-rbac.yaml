@@ -23,26 +23,6 @@ roleRef: { apiGroup: rbac.authorization.k8s.io, kind: Role, name: squared-guard 
 subjects:
   - { kind: ServiceAccount, name: squared-guard, namespace: squared-guard }
 ---
-apiVersion: rbac.authorization.k8s.io/v1
-kind: Role
-metadata:
-  name: squared-guard
-  namespace: harbor
-rules:
-  - apiGroups: [""]
-    resources: ["configmaps"]
-    resourceNames: ["harbor-oidc"]
-    verbs: ["get"]
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
-metadata:
-  name: squared-guard
-  namespace: harbor
-roleRef: { apiGroup: rbac.authorization.k8s.io, kind: Role, name: squared-guard }
-subjects:
-  - { kind: ServiceAccount, name: squared-guard, namespace: squared-guard }
----
 # The configuration of Squared has a hash in its name, thus the guard
 # lists the ConfigMaps with the label squared.dev/config.
 apiVersion: rbac.authorization.k8s.io/v1

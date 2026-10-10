@@ -109,9 +109,7 @@ controls that it uses. Read [architecture.md](architecture.md) first.
   permission and makes groups. Protect its secret like a Keycloak
   administrator password.
 - **Limits of the guard.** It sees only the sources in its configuration.
-  Change the administrator group of Harbor in the ConfigMap `harbor-oidc`,
-  not in the Harbor web interface: a Harbor robot account cannot read the
-  Harbor configuration. The guard makes only top-level groups.
+  The guard makes only top-level groups.
 - **Forgejo authentication sources.** Forgejo has no API for them, and a
   change in the web interface is only in the table `login_source`. That
   table also has the OAuth client secrets. Thus the guard gets a database
@@ -143,6 +141,32 @@ controls that it uses. Read [architecture.md](architecture.md) first.
   turn them on. The network policy of the database accepts only Forgejo
   and the namespace of the guard. A group that becomes protected keeps the members that it had
   before; the guard warns about them.
+- **Harbor configuration.** Only the Harbor system administrator can read
+  the configuration through the API, and a robot account cannot get that
+  right. The table `properties` of the Harbor database has all settings,
+  also the client secrets. Thus the guard gets a database role,
+  `squared_guard`, that can read only the view
+  `squared_guard_harbor_config`
+  ([`deploy/kind/harbor-guard-view.sql`](../deploy/kind/harbor-guard-view.sql)).
+  The view has all keys, and the values only of `auth_mode`,
+  `primary_auth_mode`, `oidc_admin_group`, `oidc_groups_claim`,
+  `oidc_group_filter` and `http_authproxy_admin_groups`. A test checks that
+  the role cannot read the table and that the view has no secret.
+- **New Harbor settings.** Harbor keeps only the keys that somebody set,
+  thus a missing key tells nothing. The guard compares the keys with the
+  settings of Harbor 2.15 that it knows:
+
+  | Change | Result |
+  |---|---|
+  | A new key with a name like group, team, admin, restrict, claim, role, quota, permission, access or org | Error |
+  | A new key with another name | Warning, until an operator adds it to `ignoreFields` |
+
+  An upgrade that renames `oidc_admin_group` also moves the value to a new
+  key, thus the guard reports it. The guard protects the administrator
+  groups in all authentication modes, because an administrator can change
+  the mode. The end-to-end test changes the group through the Harbor API,
+  and renames the key in the database. The network policy of the database
+  accepts only the Harbor pods and the namespace of the guard.
 - **Full group paths.** The groups claim has full paths, for example
   `/squared-admins`, and all services compare the full path. Short names
   are not unique: the worker can make a subgroup with the name

@@ -176,7 +176,7 @@ SQL
 }
 
 # setup_harbor makes Keycloak the authentication of Harbor. The settings
-# come from the ConfigMap harbor-oidc, which the guard also reads. Harbor
+# come from the ConfigMap harbor-oidc. Harbor
 # permits the change of the authentication mode only while it has no users
 # other than "admin". The local "admin" account stays for the worker and
 # for emergencies.
@@ -215,6 +215,21 @@ setup_harbor() {
   curl -fsS -u "admin:$(secret harbor-admin-password)" -X PATCH -H 'Content-Type: application/json' -H 'X-Requested-With: squared' \
     "${HARBOR_URL}/api/v2.0/robots/$robot" -d "$(jq -n --arg s "$(secret harbor-guard-robot-password)" '{secret: $s}')" >/dev/null \
     || die "cannot set the secret of the Harbor robot account of the guard"
+}
+
+# setup_harbor_guard gives the guard read access to the group settings of
+# the Harbor configuration: a view without the other values, and a role
+# that can read only that view. The Harbor API gives the configuration
+# only to system administrators.
+setup_harbor_guard() {
+  log "giving the guard read access to the Harbor configuration"
+  k apply -f "$ROOT/deploy/kind/harbor-db-policy.yaml" >/dev/null
+  k -n harbor exec -i statefulset/harbor-database -c database -- psql -q -U postgres -d registry -v ON_ERROR_STOP=1 \
+    < "$ROOT/deploy/kind/harbor-guard-view.sql" >/dev/null
+  k -n harbor exec -i statefulset/harbor-database -c database -- psql -q -U postgres -d registry -v ON_ERROR_STOP=1 \
+    -v "pw=$(secret harbor-db-guard-password)" >/dev/null <<'SQL'
+ALTER ROLE squared_guard PASSWORD :'pw';
+SQL
 }
 
 # Groups that are protected from the start. After the start, the Squared
@@ -368,6 +383,7 @@ deploy_squared() {
     --from-literal="keycloak-client-secret=$(secret keycloak-squared-guard-client-secret)" \
     --from-literal="harbor-robot-password=$(secret harbor-guard-robot-password)" \
     --from-literal="forgejo-db-password=$(secret forgejo-db-guard-password)" \
+    --from-literal="harbor-db-password=$(secret harbor-db-guard-password)" \
     --dry-run=client -o yaml | k apply -f - >/dev/null
   "$ROOT/hack/kind-deploy.sh"
 }
@@ -380,6 +396,7 @@ install_charts
 setup_forgejo
 setup_forgejo_guard
 setup_harbor
+setup_harbor_guard
 setup_argocd
 deploy_squared
 

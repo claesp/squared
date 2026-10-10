@@ -127,7 +127,9 @@ Go programs, which ask DNS.
 
 Forgejo uses its own PostgreSQL database in the namespace `forgejo`
 (`deploy/kind/forgejo-db.yaml`). The guard reads the authentication sources
-from a view in this database (see [security.md](security.md)).
+from a view in this database (see [security.md](security.md)). It reads
+the Harbor configuration from a view in the database of the Harbor chart
+(`registry` in the StatefulSet `harbor-database`).
 
 The Kind node pulls images from Harbor at `localhost:30002` over plain
 HTTP. The script writes a containerd `hosts.toml` file in the node for
@@ -210,7 +212,9 @@ all `*.localhost` names.
    with a change of the Forgejo administrator group through the Forgejo
    command line, which writes the same table as the web interface. Then it
    renames the field `AdminGroup` in the database, as an upgrade could, and
-   checks that the guard reports it and keeps the protection.
+   checks that the guard reports it and keeps the protection. It does the
+   same for Harbor: it changes the administrator group through the Harbor
+   API, then renames the key `oidc_admin_group` in the database.
 5. Signs in to Argo CD, Harbor and Forgejo through Keycloak as both users,
    and checks the administrator rights in each service.
 6. Makes a tenant, adds `dev` as developer, and waits until `dev` has the

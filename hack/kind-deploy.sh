@@ -1,19 +1,14 @@
 #!/usr/bin/env bash
 # Builds the Squared image, loads it into the Kind cluster and deploys it.
-# Use it after a code change. hack/kind-up.sh must have run one time.
+# Use it after a code change. hack/kind-up.sh must have run one time. The
+# sidecar "squared forgejo-config" in the Forgejo pod uses the image too;
+# after a change of that role, run
+# "kubectl -n forgejo rollout restart deployment/forgejo".
 source "$(dirname "$0")/lib.sh"
 
 need kind kubectl podman
 
-version="$(git -C "$ROOT" describe --always --dirty 2>/dev/null || echo dev)"
-log "building image localhost/squared:dev ($version)"
-podman build --quiet --tag localhost/squared:dev --build-arg "VERSION=$version" "$ROOT" >/dev/null
-
-log "loading image into the cluster"
-mkdir -p "$DEV"
-podman save --quiet --output "$DEV/squared-image.tar" localhost/squared:dev
-kind load image-archive "$DEV/squared-image.tar" --name "$CLUSTER" >/dev/null
-rm -f "$DEV/squared-image.tar"
+build_squared_image
 
 log "applying manifests"
 k apply -k "$ROOT/deploy/kubernetes/kind" >/dev/null
@@ -33,4 +28,4 @@ for name in squared-server squared-worker; do
     sleep 2
   done
 done
-log "Squared $version is running at $SQUARED_URL"
+log "Squared $SQUARED_IMAGE_VERSION is running at $SQUARED_URL"

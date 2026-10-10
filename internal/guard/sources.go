@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"os"
 	"strings"
 	"time"
@@ -11,6 +12,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"squared/internal/domain"
+	"squared/internal/forgejo"
 	"squared/internal/gitops"
 	"squared/internal/harbor"
 	"squared/internal/keycloak"
@@ -49,6 +51,8 @@ type SourceConfig struct {
 	//                    (Clients, Audiences, Claims). It gives no groups, only errors.
 	//   keycloak-realm   the email settings of the Keycloak realm. It gives no
 	//                    groups, only errors.
+	//   forgejo-config   the section [oauth2_client] of the Forgejo app.ini, from the
+	//                    sidecar "squared forgejo-config" (URL). No groups, only errors.
 	Type         string `json:"type"`
 	Service      string `json:"service"`
 	Namespace    string `json:"namespace,omitempty"`
@@ -67,8 +71,9 @@ type SourceConfig struct {
 	// IgnoreFields are new fields of a service configuration that an
 	// operator checked: they give no rights. The types argocd-rbac (keys),
 	// argocd-projects ("spec.<field>" or "roles.<field>"), forgejo-database,
-	// harbor-database, keycloak-mappers (mapper types) and keycloak-realm
-	// (identity providers and user federation) use it.
+	// harbor-database, keycloak-mappers (mapper types), keycloak-realm
+	// (identity providers and user federation) and forgejo-config (keys of
+	// [oauth2_client]) use it.
 	IgnoreFields []string `json:"ignoreFields,omitempty"`
 }
 
@@ -149,6 +154,11 @@ func BuildSources(cfg *FileConfig, kc *kube.Client, idp KeycloakReader) ([]Sourc
 			sources = append(sources, &keycloakMappersSource{sc: sc, idp: idp})
 		case "keycloak-realm":
 			sources = append(sources, &keycloakRealmSource{sc: sc, idp: idp})
+		case "forgejo-config":
+			if sc.URL == "" {
+				return nil, fmt.Errorf("source %d: forgejo-config needs url", i)
+			}
+			sources = append(sources, &forgejoConfigSource{sc: sc, rest: rest.Client{BaseURL: sc.URL, HTTP: rest.NewHTTPClient(nil)}})
 		case "forgejo-init":
 			if sc.Key == "" {
 				sc.Key = "configure_gitea.sh"
@@ -504,5 +514,27 @@ func (s *keycloakRealmSource) References(ctx context.Context) ([]Reference, []st
 		return nil, nil, err
 	}
 	warnings, err := checkRealmEmail(*settings, s.sc.IgnoreFields)
+	return nil, warnings, err
+}
+
+// forgejoConfigSource reads the sign-in settings of Forgejo from the
+// sidecar "squared forgejo-config" in the pod of Forgejo. Forgejo has no
+// API for them, and they are only in app.ini. See checkForgejoOAuth2Client.
+type forgejoConfigSource struct {
+	sc   SourceConfig
+	rest rest.Client
+}
+
+func (s *forgejoConfigSource) Name() string { return s.sc.Service + " sign-in settings" }
+
+func (s *forgejoConfigSource) References(ctx context.Context) ([]Reference, []string, error) {
+	var rep forgejo.SectionReport
+	if err := s.rest.Do(ctx, http.MethodGet, "", nil, &rep); err != nil {
+		return nil, nil, err
+	}
+	if rep.Section != "oauth2_client" {
+		return nil, nil, fmt.Errorf("the answer of %s is not a report of [oauth2_client]", s.sc.URL)
+	}
+	warnings, err := checkForgejoOAuth2Client(rep, s.sc.IgnoreFields)
 	return nil, warnings, err
 }

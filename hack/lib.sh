@@ -64,3 +64,16 @@ kind_cmd() {
     kind "$@"
   fi
 }
+
+# build_squared_image builds the image localhost/squared:dev and loads it
+# into the Kind cluster. It sets SQUARED_IMAGE_VERSION.
+build_squared_image() {
+  SQUARED_IMAGE_VERSION="$(git -C "$ROOT" describe --always --dirty 2>/dev/null || echo dev)"
+  log "building image localhost/squared:dev ($SQUARED_IMAGE_VERSION)"
+  podman build --quiet --tag localhost/squared:dev --build-arg "VERSION=$SQUARED_IMAGE_VERSION" "$ROOT" >/dev/null
+  log "loading image into the cluster"
+  mkdir -p "$DEV"
+  podman save --quiet --output "$DEV/squared-image.tar" localhost/squared:dev
+  kind load image-archive "$DEV/squared-image.tar" --name "$CLUSTER" >/dev/null
+  rm -f "$DEV/squared-image.tar"
+}

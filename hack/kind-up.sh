@@ -57,7 +57,7 @@ install_charts() {
   log "installing the Forgejo database"
   k -n forgejo create secret generic forgejo-db --from-literal="password=$(secret forgejo-db-password)" \
     --dry-run=client -o yaml | k apply -f - >/dev/null
-  k apply -f "$ROOT/deploy/kind/forgejo-db.yaml" >/dev/null
+  k apply -f "$ROOT/deploy/kind/forgejo-db.yaml" -f "$ROOT/deploy/kind/forgejo-config.yaml" >/dev/null
   k -n forgejo rollout status statefulset/forgejo-db --timeout 5m >/dev/null
   k -n forgejo create secret generic forgejo-oauth --from-literal=key=forgejo \
     --from-literal="secret=$(secret keycloak-forgejo-client-secret)" --dry-run=client -o yaml | k apply -f - >/dev/null
@@ -411,6 +411,8 @@ configure_dns
 deploy_keycloak
 setup_keycloak_email
 setup_keycloak_permissions
+# The Forgejo pod has a sidecar with the Squared image.
+build_squared_image
 install_charts
 setup_forgejo
 setup_forgejo_guard

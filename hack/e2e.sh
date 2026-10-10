@@ -421,6 +421,22 @@ YAML
   wait_for "the guard has no errors after the field is back" 60 guard_clean
   log "the guard reports renamed Forgejo fields and keeps the protection"
 
+  # ACCOUNT_LINKING = auto in app.ini, as "kubectl exec" can write it.
+  # Forgejo reads the file only at its start, thus the guard reports the
+  # value for the next start and the change of the file.
+  local ini=/data/gitea/conf/app.ini
+  forgejo_sh() { k -n forgejo exec deploy/forgejo -c forgejo -- sh -c "$1"; }
+  forgejo_sh "grep -qx 'ACCOUNT_LINKING = disabled' $ini && sed -i 's/^ACCOUNT_LINKING = disabled\$/ACCOUNT_LINKING = auto/' $ini" \
+    || die "app.ini of Forgejo has no line 'ACCOUNT_LINKING = disabled'"
+  guard_reports_linking() {
+    guard_status | jq -e '[.errors[]? | select(test("ACCOUNT_LINKING is auto after the next start") and test("changed after the start"))] | length > 0' >/dev/null
+  }
+  wait_for "the guard reports ACCOUNT_LINKING = auto in app.ini" 60 guard_reports_linking
+  [[ "$(worker_may_add_dev squared-admins)" == 403 ]] || die "the protection of /squared-admins is gone after the app.ini change"
+  forgejo_sh "sed -i 's/^ACCOUNT_LINKING = auto\$/ACCOUNT_LINKING = disabled/' $ini"
+  wait_for "the guard has no errors after app.ini is back" 60 guard_clean
+  log "the guard checks ACCOUNT_LINKING of Forgejo"
+
   # A change of the administrator group in Harbor, through the API as in
   # the web interface.
   local hgroup="e2e-harbor-$TENANT"

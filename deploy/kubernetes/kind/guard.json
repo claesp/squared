@@ -14,6 +14,7 @@
     {"type": "keycloak-mappers", "service": "Keycloak",
      "clients": ["squared", "squared-cli", "argocd", "harbor", "forgejo"], "audiences": ["squared-api"]},
     {"type": "keycloak-realm", "service": "Keycloak"},
+    {"type": "forgejo-config", "service": "Forgejo", "url": "http://forgejo-config.forgejo.svc.cluster.local:8083/oauth2-client"},
     {"type": "configmap", "service": "Squared", "namespace": "squared", "selector": "squared.dev/config=true", "key": "SQUARED_OIDC_ADMIN_GROUP"},
     {"type": "forgejo-database", "service": "Forgejo",
      "url": "postgres://squared_guard@forgejo-db.forgejo.svc.cluster.local:5432/forgejo?sslmode=disable",

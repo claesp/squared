@@ -1,0 +1,40 @@
+# The guard reads the sign-in settings of Forgejo from the sidecar
+# "squared forgejo-config" in the Forgejo pod (see forgejo-values.yaml).
+# Only the guard can connect to the sidecar. The web port of Forgejo stays
+# open for all.
+apiVersion: v1
+kind: Service
+metadata:
+  name: forgejo-config
+  namespace: forgejo
+spec:
+  selector:
+    app.kubernetes.io/name: forgejo
+    app.kubernetes.io/instance: forgejo
+  ports:
+    - name: config
+      port: 8083
+      targetPort: 8083
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: forgejo
+  namespace: forgejo
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: forgejo
+      app.kubernetes.io/instance: forgejo
+  policyTypes: ["Ingress"]
+  ingress:
+    # The web port of Forgejo. The chart uses service.http.port of
+    # forgejo-values.yaml (30300, the same as the NodePort) as HTTP_PORT.
+    - ports:
+        - port: 30300
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: squared-guard
+      ports:
+        - port: 8083

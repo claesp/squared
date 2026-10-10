@@ -281,6 +281,21 @@ controls that it uses. Read [architecture.md](architecture.md) first.
   `e2e-intruder` with the address `dev@e2e-intruder.test`, and as a
   Keycloak user `forgejo-admin` with the address of the local
   administrator, and checks that neither gets an existing account.
+- **The guard checks `ACCOUNT_LINKING`.** The setting is only in
+  `app.ini`; Forgejo has no API for it and reads the file only at its
+  start. The sidecar `squared forgejo-config` in the Forgejo pod reads the
+  section `[oauth2_client]` (no secrets) at the start of the pod and at
+  each request, and serves only that section; only the namespace of the
+  guard can connect to it. The guard reports an error if Forgejo uses
+  `auto` now or will use it after the next start, if the section changed
+  after the start (then the running Forgejo can differ from the file), or
+  if the section has a key that Forgejo 15 does not have (for example
+  `account_linking`: Forgejo reads key names with the exact case). The
+  sidecar runs as the Forgejo user with the configuration directory
+  read-only, never stops because of the file, and has no readiness probe,
+  so that it cannot stop Forgejo. The end-to-end test writes
+  `ACCOUNT_LINKING = auto` into the file of the running pod and checks the
+  error.
 
 ### Passwords and tokens of Squared
 

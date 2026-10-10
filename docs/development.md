@@ -89,6 +89,11 @@ make kind-down    # remove the cluster
 again. At the end it shows the addresses and the passwords. The passwords
 are also in `.dev/` (Git ignores this directory).
 
+The Forgejo pod has a sidecar with the Squared image (`squared
+forgejo-config`, for the guard). `make kind-deploy` does not restart
+Forgejo. After a change of that role, run
+`kubectl -n forgejo rollout restart deployment/forgejo`.
+
 | Service | Address | Sign-in |
 |---|---|---|
 | Squared | http://localhost:30080 | Keycloak |
@@ -219,7 +224,9 @@ all `*.localhost` names.
    with a change of the Forgejo administrator group through the Forgejo
    command line, which writes the same table as the web interface. Then it
    renames the field `AdminGroup` in the database, as an upgrade could, and
-   checks that the guard reports it and keeps the protection. It does the
+   checks that the guard reports it and keeps the protection. It writes
+   `ACCOUNT_LINKING = auto` into `app.ini` of the running Forgejo pod and
+   checks that the guard reports it. It does the
    same for Harbor: it changes the administrator group through the Harbor
    API, then renames the key `oidc_admin_group` in the database.
 5. Signs in to Argo CD, Harbor and Forgejo through Keycloak as both users,

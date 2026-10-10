@@ -78,3 +78,44 @@ gitea:
       INSTALL_LOCK: true
     repository:
       DEFAULT_PRIVATE: private
+
+# The guard checks the sign-in settings in app.ini (ACCOUNT_LINKING).
+# Forgejo has no API for them, thus this sidecar serves the section
+# [oauth2_client], and only that section: other sections can have secrets.
+# It runs as the Forgejo user, because app.ini has the mode 0600, and it
+# mounts only the directory of app.ini, read-only. It has no readiness
+# probe and never stops because of app.ini, so that it cannot make the pod
+# of Forgejo not ready.
+extraContainers:
+  - name: squared-forgejo-config
+    image: localhost/squared:dev
+    imagePullPolicy: Never
+    args: ["forgejo-config"]
+    env:
+      - name: SQUARED_FORGEJO_APP_INI
+        value: /forgejo-conf/app.ini
+      - name: SQUARED_LISTEN
+        value: ":8083"
+    ports:
+      - name: config
+        containerPort: 8083
+    securityContext:
+      runAsUser: 1000
+      runAsGroup: 1000
+      runAsNonRoot: true
+      readOnlyRootFilesystem: true
+      allowPrivilegeEscalation: false
+      capabilities:
+        drop: ["ALL"]
+    resources:
+      requests:
+        cpu: 5m
+        memory: 16Mi
+      limits:
+        memory: 64Mi
+    volumeMounts:
+      - name: data
+        mountPath: /forgejo-conf
+        subPath: gitea/conf
+        readOnly: true
+

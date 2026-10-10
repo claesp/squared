@@ -4,6 +4,7 @@
 //	squared serve           web interface, API and outbox relay
 //	squared worker          task consumer and Argo CD status watcher
 //	squared guard           protects the groups that give rights in services
+//	squared forgejo-config  serves the sign-in settings of Forgejo to the guard
 //	squared migrate         apply database migrations
 //	squared check-catalog   check package definitions
 //	squared version         show the version
@@ -43,6 +44,7 @@ Commands:
   serve           Run the web interface, the API and the outbox relay.
   worker          Run the task worker and the Argo CD status watcher.
   guard           Protect the Keycloak groups that the services give rights to.
+  forgejo-config  Serve the sign-in settings of Forgejo (a sidecar of Forgejo).
   migrate         Apply the database migrations, then stop.
   check-catalog   Check the package definitions in a directory, then stop.
   version         Show the version.`
@@ -65,6 +67,8 @@ func run(args []string) error {
 		return runWorker(ctx, log)
 	case "guard":
 		return runGuard(ctx, log)
+	case "forgejo-config":
+		return runForgejoConfig(ctx, log)
 	case "migrate":
 		return migrate(ctx, log)
 	case "check-catalog":

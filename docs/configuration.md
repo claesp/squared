@@ -133,7 +133,26 @@ is a complete example.
 | `harbor-database` | `url` (PostgreSQL, without password), `passwordFile`, `name` (default `squared_guard_harbor_config`), `ignoreFields` | `oidc_admin_group` and `http_authproxy_admin_groups` of the Harbor configuration, from the view of [`harbor-guard-view.sql`](../deploy/kind/harbor-guard-view.sql). Sees changes in the web interface and the API. Checks the keys against the settings of Harbor 2.15 (see [security.md](security.md)). `ignoreFields` lists new keys that an operator checked: they give no rights. |
 | `keycloak-mappers` | `clients`, `audiences`, `claims` (default `["groups"]`), `ignoreFields` | No groups. Checks that only group membership mappers with full paths write the group claims, and only the mappers of the user's email address and its verification write `email` and `email_verified`, in the tokens that the services accept: the tokens of `clients`, and of other clients with an audience mapper for one of `clients` or `audiences`. Reads the own mappers and the client scopes of each client (see [security.md](security.md)). `ignoreFields` lists mapper types that an operator checked. Needs the role `view-clients`. |
 | `keycloak-realm` | `ignoreFields` | No groups. Checks that a person can get only an email address that the person owns: no duplicate addresses, users cannot change their address, registration only with verification, and no identity provider or user federation with `trustEmail` (see [security.md](security.md)). `ignoreFields` lists identity providers and user federation that an operator checked. Needs `view-identity-providers`. |
+| `forgejo-config` | `url`, `ignoreFields` | No groups. Reads the section `[oauth2_client]` of the Forgejo `app.ini` from the sidecar `squared forgejo-config` (see below). An error if `ACCOUNT_LINKING` is `auto` now or after the next start of Forgejo, if the section changed after the start, or if it has an unknown key. A warning if Forgejo uses `login` (the default). `ignoreFields` lists new keys that an operator checked. |
 | `forgejo-init` | `namespace`, `name`, `key` (default `configure_gitea.sh`) | `--admin-group`, `--restricted-group` and the keys of `--group-team-map` in the init script of the Forgejo Helm chart. Use it only if the guard cannot reach the Forgejo database: it does not see changes in the web interface. |
 
 All groups are full paths, for example `/squared-admins`. The guard warns
 about a short name: it never matches the groups claim.
+
+## `squared forgejo-config`
+
+A sidecar in the pod of Forgejo. Forgejo has no API for its sign-in
+settings, and reads them only from `app.ini` at its start. The sidecar
+reads the section `[oauth2_client]` at its own start, which is the start
+of the pod, and on each request, and serves both at `GET /oauth2-client`.
+It never serves other sections, which can have secrets. Run it as the
+Forgejo user (the file has the mode 0600), with the directory of
+`app.ini` mounted read-only, and permit only the guard to connect.
+[`deploy/kind/forgejo-values.yaml`](../deploy/kind/forgejo-values.yaml)
+and [`deploy/kind/forgejo-config.yaml`](../deploy/kind/forgejo-config.yaml)
+are a complete example.
+
+| Variable | Default | Description |
+|---|---|---|
+| `SQUARED_FORGEJO_APP_INI` | `/data/gitea/conf/app.ini` | Path of `app.ini`. |
+| `SQUARED_LISTEN` | `:8083` | Address of the HTTP server. |

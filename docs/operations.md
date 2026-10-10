@@ -147,7 +147,10 @@ permission `protected-groups` up to date. To install it in production:
    password for the role `squared_guard`. Permit connections from the guard
    to the database. Before a Forgejo upgrade that changes the table
    `login_source`, drop the view; run the file again after the upgrade.
-   Without database access, use the source type `forgejo-init`.
+   Without database access, use the source type `forgejo-init`. Add the
+   sidecar `squared forgejo-config` to the Forgejo pod, a Service for it,
+   and a network policy that permits only the guard to connect (see
+   [configuration.md](configuration.md)), and a source `forgejo-config`.
 4. Make a Harbor robot account at system level with the permissions "list
    projects" and "list members" of all projects. Run
    [`deploy/kind/harbor-guard-view.sql`](../deploy/kind/harbor-guard-view.sql)
@@ -182,6 +185,11 @@ to the configuration of the guard, and add its Keycloak client to
    - A warning about a new field without group meaning: check the Forgejo
      release notes. If the field gives no rights, add it to
      `ignoreFields` of the source.
+   - An error about an unknown key in `[oauth2_client]`: Forgejo added or
+     renamed a sign-in setting. Check that it cannot link accounts by the
+     name or the address, then add it to `ignoreFields` of the source
+     `forgejo-config`, or update the list in
+     [`internal/guard/forgejoconfig.go`](../internal/guard/forgejoconfig.go).
 3. Run the end-to-end test against a test environment with the new
    version.
 

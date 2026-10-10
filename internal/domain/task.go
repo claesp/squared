@@ -11,6 +11,7 @@ const (
 	TaskDeploymentSync   TaskKind = "deployment.sync"   // Render and commit the desired revision.
 	TaskDeploymentDelete TaskKind = "deployment.delete" // Remove a deployment.
 	TaskTenantDelete     TaskKind = "tenant.delete"     // Remove a tenant without deployments.
+	TaskTenantAccess     TaskKind = "tenant.access"     // Copy the members to Keycloak, Harbor and Forgejo.
 )
 
 // Task is a message from the API server to the worker.

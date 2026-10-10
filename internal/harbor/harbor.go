@@ -180,3 +180,69 @@ func (c *Client) Digest(ctx context.Context, project, repository, reference stri
 func (c *Client) Ping(ctx context.Context) error {
 	return c.rest.Do(ctx, http.MethodGet, "/users/current", nil, nil)
 }
+
+// Harbor project roles.
+const (
+	RoleProjectAdmin = 1
+	RoleDeveloper    = 2 // Push and pull.
+	RoleGuest        = 3 // Pull.
+	RoleMaintainer   = 4 // Push, pull and delete, but no member changes.
+)
+
+// groupTypeOIDC is the Harbor type of a group that comes from the groups
+// claim of the OIDC provider.
+const groupTypeOIDC = 3
+
+// Member is a member of a project.
+type Member struct {
+	ID         int64  `json:"id"`
+	EntityName string `json:"entity_name"`
+	EntityType string `json:"entity_type"` // "u" for a user, "g" for a group.
+	RoleID     int    `json:"role_id"`
+}
+
+// Members returns the members of a project.
+func (c *Client) Members(ctx context.Context, project string) ([]Member, error) {
+	var all []Member
+	for page := 1; ; page++ {
+		var members []Member
+		path := fmt.Sprintf("/projects/%s/members?page=%d&page_size=100", url.PathEscape(project), page)
+		if err := c.rest.Do(ctx, http.MethodGet, path, nil, &members); err != nil {
+			return nil, fmt.Errorf("members of project %s: %w", project, err)
+		}
+		all = append(all, members...)
+		if len(members) < 100 {
+			return all, nil
+		}
+	}
+}
+
+// AddGroupMember gives an OIDC group a role in a project. The group does
+// not need to exist in Harbor before.
+func (c *Client) AddGroupMember(ctx context.Context, project, group string, role int) error {
+	in := map[string]any{
+		"role_id":      role,
+		"member_group": map[string]any{"group_name": group, "group_type": groupTypeOIDC},
+	}
+	err := c.rest.Do(ctx, http.MethodPost, "/projects/"+url.PathEscape(project)+"/members", in, nil)
+	if err != nil {
+		return fmt.Errorf("add group %s to project %s: %w", group, project, err)
+	}
+	return nil
+}
+
+// SetMemberRole changes the role of a member.
+func (c *Client) SetMemberRole(ctx context.Context, project string, memberID int64, role int) error {
+	path := fmt.Sprintf("/projects/%s/members/%d", url.PathEscape(project), memberID)
+	return c.rest.Do(ctx, http.MethodPut, path, map[string]int{"role_id": role}, nil)
+}
+
+// RemoveMember removes a member from a project.
+func (c *Client) RemoveMember(ctx context.Context, project string, memberID int64) error {
+	path := fmt.Sprintf("/projects/%s/members/%d", url.PathEscape(project), memberID)
+	err := c.rest.Do(ctx, http.MethodDelete, path, nil, nil)
+	if rest.HasStatus(err, http.StatusNotFound) {
+		return nil
+	}
+	return err
+}

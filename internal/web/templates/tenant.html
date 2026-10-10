@@ -71,8 +71,9 @@
 
 <section class="card">
   <h2>Images</h2>
-  <p>Push the images of this tenant to the registry project:</p>
+  <p>Owners and developers push the images of this tenant to the registry project:</p>
   <pre>{{.Data.Registry}}/&lt;name&gt;:&lt;tag&gt;</pre>
+  <p class="muted">Sign in to Harbor with your organization account, copy the CLI secret from your Harbor profile, and use it as password for <code>podman login</code> or <code>docker login</code>.</p>
   <p class="muted">In a deployment, give the image as <code>&lt;name&gt;:&lt;tag&gt;</code>. Squared finds the digest of the tag and deploys that digest. Thus a later push to the same tag does not change a running deployment.</p>
   {{- with .Data.RepoURL}}
   <p>Git repository with the manifests: <a href="{{.}}">{{.}}</a></p>

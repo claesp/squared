@@ -33,6 +33,19 @@ type Config struct {
 	WorkerServiceAccount string // Service account of the worker.
 	WorkerNamespace      string // Namespace of the worker.
 	IngressNamespace     string // Namespace of the ingress controller. Its pods can connect to tenant pods.
+	// GroupPrefix is the start of the identity provider groups of tenants.
+	// The groups are "<prefix><tenant>-<role>". Default "tenant-".
+	GroupPrefix string
+}
+
+// TenantGroup returns the name of the identity provider group of the
+// members of a tenant with a role.
+func (c Config) TenantGroup(slug string, role domain.Role) string {
+	prefix := c.GroupPrefix
+	if prefix == "" {
+		prefix = "tenant-"
+	}
+	return prefix + slug + "-" + string(role)
 }
 
 // Labels.
@@ -158,6 +171,21 @@ func (c Config) appProject(t *domain.Tenant, envs []domain.Environment) object {
 			// Tenants cannot make cluster objects, and only the kinds that
 			// the renderer makes. This also protects against bad commits
 			// to the tenant repository.
+			// Members of the tenant can read their applications and the
+			// logs of their pods in Argo CD. Changes go through Squared.
+			"roles": []map[string]any{{
+				"name":        "member",
+				"description": "Members of the tenant. Read access to applications and logs.",
+				"policies": []string{
+					"p, proj:" + ProjectName(t.Slug) + ":member, applications, get, " + ProjectName(t.Slug) + "/*, allow",
+					"p, proj:" + ProjectName(t.Slug) + ":member, logs, get, " + ProjectName(t.Slug) + "/*, allow",
+				},
+				"groups": []string{
+					c.TenantGroup(t.Slug, domain.RoleOwner),
+					c.TenantGroup(t.Slug, domain.RoleDeveloper),
+					c.TenantGroup(t.Slug, domain.RoleViewer),
+				},
+			}},
 			"clusterResourceWhitelist": []kind{},
 			"namespaceResourceWhitelist": []kind{
 				{"", "ServiceAccount"},

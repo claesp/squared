@@ -267,6 +267,39 @@ rights at the next sign-in. Each service keeps one local administrator
 account for emergencies and for automation (the Squared worker uses the
 local Harbor account and a Forgejo token).
 
+### D13: Squared copies tenant members to the platform tools
+
+Squared is the source of the members of a tenant. The worker copies them
+to the other systems with the task `tenant.access` (after each member
+change, after a user is disabled or enabled, and in each tenant sync and
+reconcile run):
+
+| Squared role | Keycloak group | Harbor project | Forgejo tenant repository | Argo CD |
+|---|---|---|---|---|
+| owner | `tenant-<tenant>-owner` | maintainer | read | read applications and logs |
+| developer | `tenant-<tenant>-developer` | developer | read | read applications and logs |
+| viewer | `tenant-<tenant>-viewer` | guest | read | read applications and logs |
+
+- **Keycloak groups.** Harbor in OIDC mode cannot make users, but it
+  accepts Keycloak groups as project members before the first Harbor
+  sign-in of a person. Argo CD also reads the groups: the project of each
+  tenant has a role `member` for the three groups. The worker uses a
+  Keycloak service account to manage the groups.
+- **Harbor.** The three groups are members of the project of the tenant.
+  Owners get "maintainer", not "project admin", because only Squared
+  changes members.
+- **Forgejo.** A team `tenant-<tenant>` has read access to the tenant
+  repository. The worker makes the Forgejo account of each member before
+  the first Forgejo sign-in; Forgejo links it by the verified email
+  address at that sign-in. All roles get read access only: Squared is the
+  only writer of the manifests (D1), and a manual commit would not change
+  a deployment (D3).
+- **Changes by hand** in these systems do not stay: the next sync removes
+  members that are not members in Squared.
+- **Timing.** Keycloak and Forgejo change within seconds. Harbor and Argo
+  CD read the groups from the token at sign-in, thus a change applies at
+  the next sign-in of the person.
+
 ## Data model
 
 ```

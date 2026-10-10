@@ -259,6 +259,24 @@
           }
         }
       ]
+    },
+    {
+      "clientId": "squared-worker",
+      "name": "Squared worker",
+      "description": "Service account of the Squared worker. It manages the groups tenant-<tenant>-<role> and their members.",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "clientAuthenticatorType": "client-secret",
+      "secret": "${SQUARED_WORKER_CLIENT_SECRET}",
+      "standardFlowEnabled": false,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": true,
+      "defaultClientScopes": [
+        "basic",
+        "roles"
+      ]
     }
   ],
   "users": [
@@ -303,6 +321,19 @@
       "realmRoles": [
         "default-roles-squared"
       ]
+    },
+    {
+      "username": "service-account-squared-worker",
+      "enabled": true,
+      "serviceAccountClientId": "squared-worker",
+      "clientRoles": {
+        "realm-management": [
+          "manage-users",
+          "view-users",
+          "query-users",
+          "query-groups"
+        ]
+      }
     }
   ]
 }

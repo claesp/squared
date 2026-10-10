@@ -48,6 +48,12 @@ configMapGenerator:
       - SQUARED_OIDC_POST_LOGOUT_URL=http://localhost:30080/login
       - SQUARED_OIDC_ADMIN_GROUP=squared-admins
       - SQUARED_OIDC_API_AUDIENCE=squared-api
+      # The worker copies the members of each tenant to Keycloak groups,
+      # Harbor project members and a Forgejo team.
+      - SQUARED_KEYCLOAK_URL=http://keycloak.localhost:30180
+      - SQUARED_KEYCLOAK_REALM=squared
+      - SQUARED_KEYCLOAK_CLIENT_ID=squared-worker
+      - SQUARED_KEYCLOAK_CLIENT_SECRET_FILE=/etc/squared/secrets/keycloak-client-secret
       # The browser uses http://localhost:30080. Browsers accept Secure
       # cookies on localhost also without TLS.
       - SQUARED_COOKIE_SECURE=true

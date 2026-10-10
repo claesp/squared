@@ -88,7 +88,7 @@ ensure_forgejo_user() {
   if [[ "$(fj GET "/users/$user" | jq -r '.login // empty')" != "$user" ]]; then
     log "making Forgejo user $user"
     fj POST /admin/users "$(jq -n --arg u "$user" --arg p "$(secret "forgejo-$user-password")" \
-      '{username: $u, email: ($u + "@squared.test"), password: $p, must_change_password: false}')" >/dev/null
+      '{username: $u, email: ($u + "@local.invalid"), password: $p, must_change_password: false}')" >/dev/null
   fi
 }
 
@@ -109,7 +109,10 @@ setup_forgejo() {
   wait_http "${FORGEJO_URL}/api/healthz"
   ensure_forgejo_user squared-bot
   ensure_forgejo_user argocd-reader
-  ensure_forgejo_token squared-bot squared-worker '["write:organization","write:repository","read:user"]'
+  # The worker makes Forgejo accounts for tenant members, thus the bot is a
+  # Forgejo administrator.
+  fj PATCH /admin/users/squared-bot '{"login_name": "squared-bot", "source_id": 0, "admin": true}' >/dev/null
+  ensure_forgejo_token squared-bot squared-worker '["write:organization","write:repository","write:admin","read:user"]'
   ensure_forgejo_token argocd-reader argocd '["read:repository"]'
   local bot
   bot="$(cat "${DEV}/forgejo-squared-bot-token")"
@@ -146,6 +149,7 @@ deploy_keycloak() {
     --from-literal="argocd-client-secret=$(secret keycloak-argocd-client-secret)" \
     --from-literal="harbor-client-secret=$(secret keycloak-harbor-client-secret)" \
     --from-literal="forgejo-client-secret=$(secret keycloak-forgejo-client-secret)" \
+    --from-literal="squared-worker-client-secret=$(secret keycloak-squared-worker-client-secret)" \
     --dry-run=client -o yaml | k apply -f - >/dev/null
   k apply -k "$ROOT/deploy/kind/keycloak" >/dev/null
   k -n keycloak rollout status deployment/keycloak --timeout 10m >/dev/null
@@ -211,6 +215,7 @@ deploy_squared() {
     --from-literal="database-url=$db_url" --from-literal="amqp-url=$amqp_url" \
     --from-literal="forgejo-token=$(cat "${DEV}/forgejo-squared-bot-token")" \
     --from-literal="harbor-password=$(secret harbor-admin-password)" \
+    --from-literal="keycloak-client-secret=$(secret keycloak-squared-worker-client-secret)" \
     --dry-run=client -o yaml | k apply -f - >/dev/null
   "$ROOT/hack/kind-deploy.sh"
 }

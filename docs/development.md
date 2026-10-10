@@ -142,6 +142,7 @@ if the realm does not exist. The realm has:
 | Client `harbor` | Harbor. Confidential. |
 | Client `forgejo` | Forgejo. Confidential. |
 | Client `squared-cli` | Development only: the password grant for API tokens in the end-to-end test. |
+| Client `squared-worker` | Service account of the worker. It manages the groups `tenant-<tenant>-<role>`. |
 | Group `squared-admins` | Administrators of Squared, Argo CD, Harbor and Forgejo. |
 | User `platform-admin` (`platform-admin@squared.test`) | Member of `squared-admins`. Password in `.dev/keycloak-admin-user-password`. |
 | User `dev` (`dev@squared.test`) | A normal user. Password in `.dev/keycloak-dev-user-password`. |
@@ -194,14 +195,17 @@ all `*.localhost` names.
    their rights in the API.
 3. Signs in to Argo CD, Harbor and Forgejo through Keycloak as both users,
    and checks the administrator rights in each service.
-4. Makes a tenant through the API and waits until it is `ready`.
-5. Pushes the example image to the Harbor project of the tenant.
+4. Makes a tenant, adds `dev` as developer, and waits until `dev` has the
+   Harbor project and can read the Forgejo repository.
+5. Pushes the example image as `dev` with the Harbor CLI secret.
 6. Deploys the image and checks the answer of the service.
-7. Checks that a pod in another namespace cannot connect to the service.
-8. Changes a value (revision 2) and checks the new answer.
-9. Rolls back to revision 1 (revision 3) and checks the old answer.
-10. Removes the deployment and checks that the objects are gone.
-11. Removes the tenant and checks that its Argo CD project is gone.
+7. Checks that `dev` can read, but not sync, the application in Argo CD.
+8. Checks that a pod in another namespace cannot connect to the service.
+9. Changes a value (revision 2) and checks the new answer.
+10. Rolls back to revision 1 (revision 3) and checks the old answer.
+11. Removes `dev` from the tenant and checks that `dev` loses the access.
+12. Removes the deployment and checks that the objects are gone.
+13. Removes the tenant and checks that its Argo CD project is gone.
 
 Set `KEEP_TENANT=1` to keep the tenant after the test, so that you can
 examine it.

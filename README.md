@@ -19,6 +19,10 @@ through [RabbitMQ](https://www.rabbitmq.com).
 - **Single sign-on with Keycloak** for Squared, Argo CD, Harbor and
   Forgejo. One Keycloak group gives administrator rights in all of them.
   The Squared API also accepts Keycloak access tokens.
+- **Tenant access in the platform tools.** Squared copies the members of
+  each tenant to Keycloak groups. They give access to the Harbor project
+  (push or pull by role), read access to the Git repository and to the
+  applications and logs in Argo CD.
 - **Users and roles.** Platform administrators, and owners, developers and
   viewers in each tenant. Sessions with CSRF protection, personal API
   tokens, and optional local passwords (Argon2id).

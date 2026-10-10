@@ -4,6 +4,7 @@ package forgejo
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/sha1"
 	"encoding/base64"
 	"fmt"
@@ -255,4 +256,178 @@ func Diff(current map[string]string, scope Scope, desired map[string][]byte) []C
 	}
 	sort.Slice(changes, func(i, j int) bool { return changes[i].Path < changes[j].Path })
 	return changes
+}
+
+// Team is a team of an organization.
+type Team struct {
+	ID   int64  `json:"id"`
+	Name string `json:"name"`
+}
+
+// EnsureTeam makes a team with read access to the code of the repositories
+// that the caller adds, if the team does not exist, and returns it.
+func (c *Client) EnsureTeam(ctx context.Context, org, name, description string) (*Team, error) {
+	if t, err := c.FindTeam(ctx, org, name); err != nil || t != nil {
+		return t, err
+	}
+	in := map[string]any{
+		"name":                      name,
+		"description":               description,
+		"permission":                "read",
+		"units":                     []string{"repo.code"},
+		"includes_all_repositories": false,
+		"can_create_org_repo":       false,
+	}
+	var t Team
+	if err := c.rest.Do(ctx, http.MethodPost, "/orgs/"+url.PathEscape(org)+"/teams", in, &t); err != nil {
+		return nil, fmt.Errorf("make team %s: %w", name, err)
+	}
+	return &t, nil
+}
+
+// FindTeam returns the team with a name, or nil.
+func (c *Client) FindTeam(ctx context.Context, org, name string) (*Team, error) {
+	for page := 1; page < 100; page++ {
+		var teams []Team
+		path := fmt.Sprintf("/orgs/%s/teams?page=%d&limit=50", url.PathEscape(org), page)
+		if err := c.rest.Do(ctx, http.MethodGet, path, nil, &teams); err != nil {
+			return nil, fmt.Errorf("list teams of %s: %w", org, err)
+		}
+		for i := range teams {
+			if teams[i].Name == name {
+				return &teams[i], nil
+			}
+		}
+		if len(teams) < 50 {
+			break
+		}
+	}
+	return nil, nil
+}
+
+// DeleteTeam removes a team. It does nothing if the team does not exist.
+func (c *Client) DeleteTeam(ctx context.Context, org, name string) error {
+	t, err := c.FindTeam(ctx, org, name)
+	if err != nil || t == nil {
+		return err
+	}
+	err = c.rest.Do(ctx, http.MethodDelete, fmt.Sprintf("/teams/%d", t.ID), nil, nil)
+	if rest.HasStatus(err, http.StatusNotFound) {
+		return nil
+	}
+	return err
+}
+
+// AddTeamRepo gives a team access to a repository.
+func (c *Client) AddTeamRepo(ctx context.Context, teamID int64, org, repo string) error {
+	return c.rest.Do(ctx, http.MethodPut, fmt.Sprintf("/teams/%d/repos/%s/%s", teamID, url.PathEscape(org), url.PathEscape(repo)), nil, nil)
+}
+
+// TeamMembers returns the user names of the members of a team.
+func (c *Client) TeamMembers(ctx context.Context, teamID int64) ([]string, error) {
+	var names []string
+	for page := 1; page < 1000; page++ {
+		var users []struct {
+			Login string `json:"login"`
+		}
+		path := fmt.Sprintf("/teams/%d/members?page=%d&limit=50", teamID, page)
+		if err := c.rest.Do(ctx, http.MethodGet, path, nil, &users); err != nil {
+			return nil, fmt.Errorf("members of team %d: %w", teamID, err)
+		}
+		for _, u := range users {
+			names = append(names, u.Login)
+		}
+		if len(users) < 50 {
+			break
+		}
+	}
+	return names, nil
+}
+
+// AddTeamMember adds a user to a team.
+func (c *Client) AddTeamMember(ctx context.Context, teamID int64, user string) error {
+	return c.rest.Do(ctx, http.MethodPut, fmt.Sprintf("/teams/%d/members/%s", teamID, url.PathEscape(user)), nil, nil)
+}
+
+// RemoveTeamMember removes a user from a team.
+func (c *Client) RemoveTeamMember(ctx context.Context, teamID int64, user string) error {
+	err := c.rest.Do(ctx, http.MethodDelete, fmt.Sprintf("/teams/%d/members/%s", teamID, url.PathEscape(user)), nil, nil)
+	if rest.HasStatus(err, http.StatusNotFound) {
+		return nil
+	}
+	return err
+}
+
+// UserNameFor returns the Forgejo user name for an email address: the part
+// before "@", with characters that Forgejo does not accept changed to "-".
+// Forgejo uses the same rule at the first sign-in (USERNAME = email).
+func UserNameFor(email string) string {
+	local, _, _ := strings.Cut(strings.ToLower(email), "@")
+	var b strings.Builder
+	for _, r := range local {
+		switch {
+		case r >= 'a' && r <= 'z', r >= '0' && r <= '9', r == '.', r == '_', r == '-':
+			b.WriteRune(r)
+		default:
+			b.WriteRune('-')
+		}
+	}
+	name := strings.Trim(b.String(), ".-_")
+	if name == "" {
+		name = "user"
+	}
+	if len(name) > 30 {
+		name = name[:30]
+	}
+	return name
+}
+
+// EnsureUser returns the name of the user with an email address. If no such
+// user exists, it makes one with a random password that nobody knows. At
+// the first sign-in with the identity provider, Forgejo links the account
+// by the email address (ACCOUNT_LINKING = auto). The caller needs
+// administrator rights.
+func (c *Client) EnsureUser(ctx context.Context, email, fullName string) (string, error) {
+	base := UserNameFor(email)
+	for i := 1; i <= 20; i++ {
+		name := base
+		if i > 1 {
+			name = fmt.Sprintf("%s-%d", base, i)
+		}
+		var u struct {
+			Email string `json:"email"`
+		}
+		err := c.rest.Do(ctx, http.MethodGet, "/users/"+url.PathEscape(name), nil, &u)
+		if err == nil {
+			if strings.EqualFold(u.Email, email) {
+				return name, nil
+			}
+			continue // The name belongs to a different person.
+		}
+		if !rest.HasStatus(err, http.StatusNotFound) {
+			return "", fmt.Errorf("find user %s: %w", name, err)
+		}
+		in := map[string]any{
+			"username":             name,
+			"email":                email,
+			"full_name":            fullName,
+			"password":             randomPassword(),
+			"must_change_password": false,
+			"send_notify":          false,
+			"visibility":           "private",
+		}
+		err = c.rest.Do(ctx, http.MethodPost, "/admin/users", in, nil)
+		if rest.HasStatus(err, http.StatusUnprocessableEntity) {
+			continue // A reserved name, for example "admin". Try the next name.
+		}
+		if err != nil {
+			return "", fmt.Errorf("make user %s: %w", name, err)
+		}
+		return name, nil
+	}
+	return "", fmt.Errorf("no free user name for %s", email)
+}
+
+func randomPassword() string {
+	return "Sq-" + rand.Text() + rand.Text()
 }

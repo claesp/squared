@@ -98,3 +98,19 @@ func TestSync(t *testing.T) {
 		t.Errorf("unexpected second operation %v", second)
 	}
 }
+
+func TestUserNameFor(t *testing.T) {
+	tests := map[string]string{
+		"dev@example.com":          "dev",
+		"Ada.Lovelace@example.com": "ada.lovelace",
+		"a+tag@example.com":        "a-tag",
+		"-x-@example.com":          "x",
+		"@example.com":             "user",
+		"averyveryveryverylongnameforsomebody@example.com": "averyveryveryverylongnameforso",
+	}
+	for email, want := range tests {
+		if got := UserNameFor(email); got != want {
+			t.Errorf("UserNameFor(%q) = %q, want %q", email, got, want)
+		}
+	}
+}

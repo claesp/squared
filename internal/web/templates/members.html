@@ -14,9 +14,10 @@
   </tbody>
 </table>
 <dl class="roles">
-  <dt>owner</dt><dd>All operations of a developer. Can also change members and environments.</dd>
-  <dt>developer</dt><dd>Can make, change, roll back and remove deployments.</dd>
-  <dt>viewer</dt><dd>Can read all data of the tenant.</dd>
+  <dt>owner</dt><dd>All operations of a developer. Can also change members and environments. Harbor: push, pull and delete images.</dd>
+  <dt>developer</dt><dd>Can make, change, roll back and remove deployments. Harbor: push and pull images.</dd>
+  <dt>viewer</dt><dd>Can read all data of the tenant. Harbor: pull images.</dd>
+  <dt>all roles</dt><dd>Read access to the Git repository of the tenant and to its applications and logs in Argo CD. Changes apply at the next sign-in to Harbor and Argo CD.</dd>
 </dl>
 {{- if can .Access "owner"}}
 <section class="card">

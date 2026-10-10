@@ -74,6 +74,17 @@ mapper of step 2. Then configure the services:
 | Harbor | `https://<harbor>/c/oidc/callback` | **Configuration > Authentication** or `PUT /api/v2.0/configurations` with `auth_mode: oidc_auth`, `oidc_groups_claim: groups`, `oidc_admin_group: squared-admins`. Harbor permits this change only before users other than `admin` exist. Add the scope `offline_access` to the client, for the CLI secrets of users. |
 | Forgejo | `https://<forgejo>/user/oauth2/keycloak/callback` | An authentication source of type OpenID Connect with group claim `groups` and administrator group `squared-admins`. Set `ALLOW_ONLY_EXTERNAL_REGISTRATION=true` and `ENABLE_AUTO_REGISTRATION=true`. |
 
+For the copy of tenant members (decision D13 in the architecture):
+
+1. Make a confidential client `squared-worker` with only "service
+   accounts" on. Give its service account the client roles
+   `manage-users`, `view-users`, `query-users` and `query-groups` of
+   `realm-management`.
+2. Set the `SQUARED_KEYCLOAK_*` variables of the worker.
+3. In Forgejo, make the bot of the worker an administrator and give its
+   token the scope `write:admin`. Set `ACCOUNT_LINKING = auto` in
+   `[oauth2_client]`.
+
 The files in [`deploy/kind`](../deploy/kind) and the functions
 `setup_harbor` and `install_charts` in
 [`hack/kind-up.sh`](../hack/kind-up.sh) are complete examples. Each

@@ -307,6 +307,17 @@ func (s *Service) SetUserDisabled(ctx context.Context, actor *domain.User, userI
 		if err := tx.SetUserDisabled(ctx, userID, disabled); err != nil {
 			return err
 		}
+		// A disabled user loses the access in Keycloak, Harbor and Forgejo
+		// too. An enabled user gets it back.
+		tenants, err := tx.ListTenantsOfUser(ctx, userID)
+		if err != nil {
+			return err
+		}
+		for _, t := range tenants {
+			if err := tx.EnqueueTask(ctx, domain.Task{Kind: domain.TaskTenantAccess, TenantID: t.ID}); err != nil {
+				return err
+			}
+		}
 		action := "user.enable"
 		if disabled {
 			action = "user.disable"

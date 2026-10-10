@@ -17,6 +17,7 @@ import (
 	"squared/internal/forgejo"
 	"squared/internal/gitops"
 	"squared/internal/harbor"
+	"squared/internal/keycloak"
 	"squared/internal/kube"
 	"squared/internal/queue"
 	"squared/internal/render"
@@ -36,12 +37,13 @@ type Config struct {
 
 // Worker handles tasks.
 type Worker struct {
-	cfg     Config
-	store   *store.Store
-	forgejo *forgejo.Client
-	harbor  *harbor.Client
-	kube    *kube.Client
-	log     *slog.Logger
+	cfg      Config
+	store    *store.Store
+	forgejo  *forgejo.Client
+	harbor   *harbor.Client
+	kube     *kube.Client
+	keycloak *keycloak.Client // nil: no access sync.
+	log      *slog.Logger
 }
 
 // New returns a Worker.
@@ -96,6 +98,8 @@ func (w *Worker) Handle(ctx context.Context, task domain.Task, attempt int) erro
 		return w.store.WithLock(ctx, "tenant:"+task.TenantID, func() error { return w.syncTenant(ctx, task.TenantID) })
 	case domain.TaskTenantDelete:
 		return w.store.WithLock(ctx, "tenant:"+task.TenantID, func() error { return w.deleteTenant(ctx, task.TenantID) })
+	case domain.TaskTenantAccess:
+		return w.store.WithLock(ctx, "tenant:"+task.TenantID, func() error { return w.syncTenantAccess(ctx, task.TenantID) })
 	case domain.TaskDeploymentSync:
 		return w.store.WithLock(ctx, "deployment:"+task.DeploymentID, func() error { return w.syncDeployment(ctx, task.DeploymentID, attempt) })
 	case domain.TaskDeploymentDelete:
@@ -204,7 +208,10 @@ func (w *Worker) syncTenantFiles(ctx context.Context, t *domain.Tenant) error {
 
 	// Argo CD makes the namespaces some seconds after the commit. Until
 	// then, the pull secrets cannot be written and the task is retried.
-	return w.ensurePullSecrets(ctx, t, project, envs)
+	if err := w.ensurePullSecrets(ctx, t, project, envs); err != nil {
+		return err
+	}
+	return w.syncAccess(ctx, t)
 }
 
 func envNames(envs []domain.Environment) string {
@@ -461,6 +468,9 @@ func (w *Worker) deleteTenant(ctx context.Context, tenantID string) error {
 	msg := fmt.Sprintf("Remove tenant %s", t.Slug)
 	if _, _, err := w.forgejo.Sync(ctx, g.Org, g.PlatformRepo, g.Branch, forgejo.Prefix(gitops.TenantDir(t.Slug)), nil, msg); err != nil {
 		return fmt.Errorf("platform repository: %w", err)
+	}
+	if err := w.removeAccess(ctx, t); err != nil {
+		return err
 	}
 	if err := w.forgejo.ArchiveRepo(ctx, g.Org, gitops.TenantRepo(t.Slug)); err != nil {
 		return fmt.Errorf("archive tenant repository: %w", err)

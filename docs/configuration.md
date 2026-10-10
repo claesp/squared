@@ -78,6 +78,11 @@ OIDC is enabled when `SQUARED_OIDC_ISSUER` is set.
 | `SQUARED_REGISTRY_HOST` | (necessary) | Host name of Harbor in image references. The nodes must be able to pull from it. |
 | `SQUARED_PROJECT_PREFIX` | empty | Prefix of the Harbor project of a tenant. |
 | `SQUARED_PLATFORM_PROJECT` | `platform` | Public Harbor project for images that all tenants can use. Empty: none. |
+| `SQUARED_KEYCLOAK_URL` | empty | Base address of Keycloak, for example `https://id.example.com`. If set, the worker copies tenant members to Keycloak groups, Harbor project members and Forgejo teams. |
+| `SQUARED_KEYCLOAK_REALM` | (necessary with Keycloak) | Realm of the groups. |
+| `SQUARED_KEYCLOAK_CLIENT_ID` | (necessary with Keycloak) | Client with a service account (client credentials grant). |
+| `SQUARED_KEYCLOAK_CLIENT_SECRET` (secret) | (necessary with Keycloak) | Secret of that client. |
+| `SQUARED_TENANT_GROUP_PREFIX` | `tenant-` | Start of the group names `<prefix><tenant>-<role>` and of the Forgejo team names `<prefix><tenant>`. |
 | `SQUARED_WORKER_CONCURRENCY` | `4` | Number of tasks in progress at the same time. |
 | `SQUARED_WORKER_MAX_ATTEMPTS` | `15` | Attempts before a task goes to the dead queue. |
 | `SQUARED_STATUS_INTERVAL` | `10s` | Time between two reads of the Argo CD status. |

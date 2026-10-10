@@ -54,6 +54,12 @@ func TestTenantFiles(t *testing.T) {
 	if len(project.Spec.Destinations) != 2 || project.Spec.ClusterResourceWhitelist == nil || len(project.Spec.ClusterResourceWhitelist) != 0 {
 		t.Errorf("destinations or cluster whitelist not correct: %+v", project.Spec)
 	}
+	app := string(files["tenants/acme/appproject.json"])
+	for _, want := range []string{`"tenant-acme-owner"`, `"tenant-acme-viewer"`, `"p, proj:tenant-acme:member, applications, get, tenant-acme/*, allow"`} {
+		if !strings.Contains(app, want) {
+			t.Errorf("project does not contain %s", want)
+		}
+	}
 	ns := string(files["tenants/acme/dev/namespace.json"])
 	if !strings.Contains(ns, `"pod-security.kubernetes.io/enforce": "restricted"`) || !strings.Contains(ns, "Prune=false") {
 		t.Errorf("namespace is not protected:\n%s", ns)

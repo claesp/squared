@@ -47,13 +47,32 @@ audit events stay. The namespaces and the Harbor project with the images
 stay, until an administrator removes them by hand. See
 [operations.md](operations.md#remove-an-environment-namespace).
 
+## Your access in Harbor, Forgejo and Argo CD
+
+Your role in a tenant also gives you access in the platform tools. Sign
+in to each tool with Keycloak:
+
+| Your role | Harbor project of the tenant | Git repository of the tenant (Forgejo) | Argo CD |
+|---|---|---|---|
+| owner | push, pull and delete images | read | read applications and pod logs |
+| developer | push and pull images | read | read applications and pod logs |
+| viewer | pull images | read | read applications and pod logs |
+
+Squared manages this access. When an owner changes your role or removes
+you, the change applies at your next sign-in to Harbor or Argo CD, and
+immediately in Forgejo.
+
 ## Push an image
 
 Each tenant has a project in the Harbor registry. The tenant page shows
-the address, for example `harbor.example.com/acme`.
+the address, for example `harbor.example.com/acme`. Owners and developers
+can push images.
 
-1. Sign in to Harbor with your Harbor account or a robot account:
-   `podman login harbor.example.com`
+1. Sign in to the Harbor web interface with Keycloak. Open your user
+   profile and copy the **CLI secret**. Then sign in with your container
+   tool: `podman login harbor.example.com` with your Harbor user name and
+   the CLI secret as password. A CI system can also use a Harbor robot
+   account.
 2. Tag the image: `podman tag shop:1.4.2 harbor.example.com/acme/shop:1.4.2`
 3. Push the image: `podman push harbor.example.com/acme/shop:1.4.2`
 

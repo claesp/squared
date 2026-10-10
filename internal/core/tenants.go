@@ -247,6 +247,9 @@ func (s *Service) PutMember(ctx context.Context, actor *domain.User, slug, email
 		if err := tx.PutMembership(ctx, a.Tenant.ID, u.ID, role); err != nil {
 			return err
 		}
+		if err := tx.EnqueueTask(ctx, domain.Task{Kind: domain.TaskTenantAccess, TenantID: a.Tenant.ID}); err != nil {
+			return err
+		}
 		return s.audit(ctx, tx, actor, a.Tenant.ID, "member.put", u.Email, string(role))
 	})
 }
@@ -272,6 +275,9 @@ func (s *Service) RemoveMember(ctx context.Context, actor *domain.User, slug, us
 			return err
 		}
 		if err := tx.DeleteMembership(ctx, a.Tenant.ID, userID); err != nil {
+			return err
+		}
+		if err := tx.EnqueueTask(ctx, domain.Task{Kind: domain.TaskTenantAccess, TenantID: a.Tenant.ID}); err != nil {
 			return err
 		}
 		return s.audit(ctx, tx, actor, a.Tenant.ID, "member.remove", u.Email, "")

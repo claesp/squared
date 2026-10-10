@@ -17,7 +17,7 @@ gitea:
   admin:
     # A local administrator for emergencies and for hack/kind-up.sh.
     username: forgejo-admin
-    email: forgejo-admin@squared.test
+    email: forgejo-admin@local.invalid
     passwordMode: keepUpdated
   # Sign-in with Keycloak. The chart makes the authentication source at
   # start. Members of the Keycloak group squared-admins are Forgejo
@@ -47,7 +47,9 @@ gitea:
       ENABLE_AUTO_REGISTRATION: true
       # The user name is the first part of the email address.
       USERNAME: email
-      ACCOUNT_LINKING: disabled
+      # The Squared worker makes the accounts of tenant members before
+      # their first sign-in. Forgejo links them by the email address.
+      ACCOUNT_LINKING: auto
       UPDATE_AVATAR: false
     database:
       DB_TYPE: sqlite3

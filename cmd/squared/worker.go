@@ -14,6 +14,7 @@ import (
 	"squared/internal/gitops"
 	"squared/internal/harbor"
 	"squared/internal/httpx"
+	"squared/internal/keycloak"
 	"squared/internal/kube"
 	"squared/internal/metrics"
 	"squared/internal/queue"
@@ -50,12 +51,20 @@ func runWorker(ctx context.Context, log *slog.Logger) error {
 			WorkerServiceAccount: env.String("SQUARED_WORKER_SERVICE_ACCOUNT", "squared-worker"),
 			WorkerNamespace:      env.String("SQUARED_WORKER_NAMESPACE", env.String("POD_NAMESPACE", "squared")),
 			IngressNamespace:     env.String("SQUARED_INGRESS_NAMESPACE", ""),
+			GroupPrefix:          env.String("SQUARED_TENANT_GROUP_PREFIX", "tenant-"),
 		},
 		RegistryHost:    env.Required("SQUARED_REGISTRY_HOST"),
 		ProjectPrefix:   env.String("SQUARED_PROJECT_PREFIX", ""),
 		PlatformProject: env.String("SQUARED_PLATFORM_PROJECT", "platform"),
 		IngressClass:    env.String("SQUARED_INGRESS_CLASS", ""),
 		IngressTLS:      env.Bool("SQUARED_INGRESS_TLS", false),
+	}
+	keycloakURL := env.String("SQUARED_KEYCLOAK_URL", "")
+	var keycloakRealm, keycloakClient, keycloakSecret string
+	if keycloakURL != "" {
+		keycloakRealm = env.Required("SQUARED_KEYCLOAK_REALM")
+		keycloakClient = env.Required("SQUARED_KEYCLOAK_CLIENT_ID")
+		keycloakSecret = env.Secret("SQUARED_KEYCLOAK_CLIENT_SECRET", true)
 	}
 	kubeCfg, kubeErr := kubeConfig(&env)
 	st, err := openStore(ctx, &env)
@@ -75,6 +84,10 @@ func runWorker(ctx context.Context, log *slog.Logger) error {
 	fj := forgejo.New(forgejoURL, forgejoToken, httpClient)
 	hb := harbor.New(harborURL, harborUser, harborPassword, httpClient)
 	w := worker.New(cfg, st, fj, hb, kc, log)
+	if keycloakURL != "" {
+		w.EnableAccessSync(keycloak.New(keycloakURL, keycloakRealm, keycloakClient, keycloakSecret, httpClient))
+		log.Info("tenant access sync is on", "keycloak", keycloakURL, "realm", keycloakRealm)
+	}
 
 	// The shared objects are necessary before the first task. Retry until
 	// Forgejo and Harbor are available.

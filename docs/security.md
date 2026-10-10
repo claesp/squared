@@ -59,6 +59,28 @@ controls that it uses. Read [architecture.md](architecture.md) first.
   their passwords in a secret store, and use them only when Keycloak is not
   available.
 
+### Access of tenant members to the platform tools
+
+- Squared controls the access. The worker removes group members, Harbor
+  members and team members that somebody added by hand.
+- A disabled Squared user loses the tenant groups in Keycloak and the
+  Forgejo teams. Disable the user in Keycloak too, to stop all sign-ins.
+- Tenant members get read access only to Git and Argo CD. Only Harbor gives
+  them write access (push), to their own project.
+- **Rights of the worker.** The Keycloak service account `squared-worker`
+  has the realm-management roles `manage-users`, `view-users`,
+  `query-users` and `query-groups`. Keycloak has no smaller role for
+  group membership, thus this account can also change users of the realm.
+  The Forgejo bot of the worker is a Forgejo administrator, because it
+  makes the accounts of members. Protect both secrets as well as the
+  database password. In production, consider the fine-grained admin
+  permissions of Keycloak to limit the service account to the tenant
+  groups.
+- Forgejo links a Keycloak sign-in to an existing account with the same
+  email address (`ACCOUNT_LINKING = auto`). The local accounts of the
+  development environment thus have addresses in the domain
+  `local.invalid`, which no Keycloak user has.
+
 ### Passwords and tokens of Squared
 
 - **Passwords** are hashed with Argon2id (19 MiB memory, 2 iterations, 1

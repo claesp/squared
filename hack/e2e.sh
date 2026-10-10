@@ -143,6 +143,28 @@ check_sso() {
 
 # kc_token USER PASSWORD prints a Keycloak access token for the API. It
 # uses the password grant of the development client "squared-cli".
+# dev_access prints the HTTP status of the Harbor project and of the
+# Forgejo repository of the tenant for the user dev, after a new sign-in.
+dev_access() {
+  "$SSO" -user dev -password-file "$DEV/keycloak-dev-user-password" \
+    "login=${HARBOR_URL}/c/oidc/login?redirect_url=%2Fharbor%2Fprojects" \
+    "get=${HARBOR_URL}/api/v2.0/projects/$TENANT" \
+    "login=${FORGEJO_URL}/user/oauth2/keycloak" \
+    "get=${FORGEJO_URL}/squared/tenant-$TENANT" | jq -s -r '"\(.[1].status) \(.[3].status)"'
+}
+
+# dev_has_access ROLE tells if dev has the Harbor project role ROLE and can
+# read the Forgejo repository.
+dev_has_access() {
+  local out
+  out="$("$SSO" -user dev -password-file "$DEV/keycloak-dev-user-password" \
+    "login=${HARBOR_URL}/c/oidc/login?redirect_url=%2Fharbor%2Fprojects" \
+    "get=${HARBOR_URL}/api/v2.0/projects/$TENANT" \
+    "login=${FORGEJO_URL}/user/oauth2/keycloak" \
+    "get=${FORGEJO_URL}/squared/tenant-$TENANT")"
+  jq -s -e --argjson role "$1" '.[1].body.current_user_role_id == $role and .[3].status == 200' <<<"$out" >/dev/null
+}
+
 kc_token() {
   curl -fsS "${KEYCLOAK_URL}/realms/squared/protocol/openid-connect/token" \
     -d grant_type=password -d client_id=squared-cli -d scope=openid \
@@ -182,10 +204,24 @@ wait_for "tenant is ready" 300 tenant_ready
 k get namespace "$NS" >/dev/null
 k -n "$NS" get secret squared-registry >/dev/null
 
-step "push the example image to Harbor"
+step "map tenant members to Harbor, Forgejo and Argo CD"
+# dev has no rights in the tenant yet.
+[[ "$(dev_access)" == "403 404" || "$(dev_access)" == "404 404" ]] || die "dev has access before the membership: $(dev_access)"
+api PUT "/tenants/$TENANT/members" '{"email": "dev@squared.test", "role": "developer"}' >/dev/null
+wait_for "dev gets the Harbor project and the Forgejo repository" 120 dev_has_access 2
+
+step "push the example image to Harbor as the developer"
+# A Harbor user who signs in with Keycloak uses the CLI secret from the
+# Harbor profile as password for the container tools.
+cli_secret="$("$SSO" -user dev -password-file "$DEV/keycloak-dev-user-password" \
+  "login=${HARBOR_URL}/c/oidc/login?redirect_url=%2Fharbor%2Fprojects" "get=${HARBOR_URL}/api/v2.0/users/current" \
+  | jq -s -r '.[1].body.oidc_user_meta.secret')"
+[[ -n "$cli_secret" && "$cli_secret" != null ]] || die "dev has no Harbor CLI secret"
 podman build --quiet --tag localhost/hello:1.0.0 "$ROOT/examples/hello" >/dev/null
-secret harbor-admin-password | podman login --tls-verify=false --username admin --password-stdin localhost:30002 >/dev/null
+podman login --tls-verify=false --username dev --password-stdin localhost:30002 <<<"$cli_secret" >/dev/null
 podman push --quiet --tls-verify=false localhost/hello:1.0.0 "localhost:30002/$TENANT/hello:1.0.0"
+podman logout localhost:30002 >/dev/null
+log "dev pushed the image with the rights of the developer group"
 
 step "deploy revision 1"
 api POST "/tenants/$TENANT/deployments" "$(jq -n \
@@ -193,6 +229,18 @@ api POST "/tenants/$TENANT/deployments" "$(jq -n \
 wait_for "revision 1 is deployed" 300 deployment_is deployed 1
 expect_greeting "Hello from revision 1"
 api GET "/tenants/$TENANT/deployments/dev/hello" | jq -e '.revisions[0].images.image | test("@sha256:")' >/dev/null
+
+step "check the Argo CD rights of the developer"
+out="$("$SSO" -user dev -password-file "$DEV/keycloak-dev-user-password" \
+  "login=http://localhost:30081/auth/login?return_url=http%3A%2F%2Flocalhost%3A30081%2Fapplications" \
+  "get=http://localhost:30081/api/v1/applications?projects=tenant-$TENANT" \
+  "get=http://localhost:30081/api/v1/account/can-i/applications/get/tenant-$TENANT/*" \
+  "get=http://localhost:30081/api/v1/account/can-i/applications/sync/tenant-$TENANT/*")"
+jq -s -e --arg app "$TENANT-dev-hello" '[.[1].body.items[]?.metadata.name] | index($app) != null' <<<"$out" >/dev/null \
+  || die "dev does not see the application in Argo CD"
+[[ "$(jq -s -r '"\(.[2].body.value) \(.[3].body.value)"' <<<"$out")" == "yes no" ]] \
+  || die "dev has the wrong rights in Argo CD: $(jq -s -c '[.[2].body.value, .[3].body.value]' <<<"$out")"
+log "dev can read the applications of the tenant in Argo CD, but not sync them"
 
 step "check tenant isolation"
 # A pod in another namespace tries to connect. The network policy of the
@@ -232,6 +280,12 @@ step "roll back to revision 1"
 api POST "/tenants/$TENANT/deployments/dev/hello/rollback" '{"revision": 1}' >/dev/null
 wait_for "revision 3 (copy of 1) is deployed" 300 deployment_is deployed 3
 expect_greeting "Hello from revision 1"
+
+step "remove the developer from the tenant"
+dev_id="$(api GET "/tenants/$TENANT/members" | jq -r '.items[] | select(.email == "dev@squared.test") | .user_id')"
+api DELETE "/tenants/$TENANT/members/$dev_id" >/dev/null
+dev_lost_access() { [[ "$(dev_access)" != 200* && "$(dev_access)" == *" 404" ]]; }
+wait_for "dev loses the Harbor project and the Forgejo repository" 120 dev_lost_access
 
 step "remove the deployment"
 api DELETE "/tenants/$TENANT/deployments/dev/hello" >/dev/null

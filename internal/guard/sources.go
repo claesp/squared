@@ -41,6 +41,9 @@ type SourceConfig struct {
 	// Type is one of:
 	//   argocd-rbac      "g" lines of an Argo CD RBAC ConfigMap (Namespace, Name)
 	//   argocd-projects  roles of all Argo CD projects (Namespace)
+	//   argocd-repositories the repositories and credential templates of Argo CD, from
+	//                    its API, without secrets (URL, PasswordFile with a token,
+	//                    RepoPrefixes). No groups, only errors.
 	//   harbor-members   group members of all Harbor projects (URL, User, PasswordFile)
 	//   configmap        group paths in a ConfigMap key (Namespace, Name or Selector, Key)
 	//   forgejo-init     the init script of the Forgejo Helm chart (Namespace, Name, Key)
@@ -101,6 +104,9 @@ type SourceConfig struct {
 	// Webhooks is for forgejo-webhooks: the webhook addresses that Squared
 	// expects, or "sha256:<hex>" for an address with a secret.
 	Webhooks []string `json:"webhooks,omitempty"`
+	// RepoPrefixes is for argocd-repositories: the addresses of the GitOps
+	// repositories, for example "https://git.example/squared/".
+	RepoPrefixes []string `json:"repoPrefixes,omitempty"`
 	// WebhookHosts is for forgejo-config: the hosts that ALLOWED_HOST_LIST
 	// may have besides "external", for example the host of Argo CD.
 	WebhookHosts []string `json:"webhookHosts,omitempty"`
@@ -155,6 +161,20 @@ func BuildSources(cfg *FileConfig, kc *kube.Client, idp KeycloakReader) ([]Sourc
 		switch sc.Type {
 		case "argocd-rbac":
 			sources = append(sources, &argoRBACSource{sc: sc, kube: kc})
+		case "argocd-repositories":
+			if sc.URL == "" || sc.PasswordFile == "" || len(sc.RepoPrefixes) == 0 {
+				return nil, fmt.Errorf("source %d: argocd-repositories needs url, passwordFile and repoPrefixes", i)
+			}
+			file := sc.PasswordFile
+			sources = append(sources, &argoReposSource{sc: sc, rest: rest.Client{BaseURL: strings.TrimRight(sc.URL, "/"), HTTP: rest.NewHTTPClient(nil),
+				Auth: func(r *http.Request) error {
+					token, err := os.ReadFile(file)
+					if err != nil {
+						return err
+					}
+					r.Header.Set("Authorization", "Bearer "+strings.TrimSpace(string(token)))
+					return nil
+				}}})
 		case "argocd-projects":
 			sources = append(sources, &argoProjectsSource{sc: sc, kube: kc, tenants: tenants})
 		case "harbor-members":
@@ -884,5 +904,70 @@ func (s *forgejoMirrorsSource) References(ctx context.Context) ([]Reference, []s
 		return nil, nil, err
 	}
 	warnings, err := checkForgejoMirrors(mirrors, s.sc.Org, s.sc.IgnoreFields)
+	return nil, warnings, err
+}
+
+// argoReposSource reads the repositories and credential templates of Argo
+// CD from its API, with a token of a local account that can only read
+// them. The API never shows passwords, tokens or keys. See
+// checkArgoRepositories.
+type argoReposSource struct {
+	sc   SourceConfig
+	rest rest.Client
+}
+
+func (s *argoReposSource) Name() string { return s.sc.Service + " repositories" }
+
+func (s *argoReposSource) References(ctx context.Context) ([]Reference, []string, error) {
+	var repos []argoRepo
+	type repoList struct {
+		Items []struct {
+			Repo     string `json:"repo"`
+			Insecure bool   `json:"insecure"`
+		} `json:"items"`
+	}
+	type credsList struct {
+		Items []struct {
+			URL string `json:"url"`
+		} `json:"items"`
+	}
+	var rl repoList
+	if err := s.rest.Do(ctx, http.MethodGet, "/api/v1/repositories", nil, &rl); err != nil {
+		return nil, nil, err
+	}
+	for _, r := range rl.Items {
+		repos = append(repos, argoRepo{URL: r.Repo, Insecure: r.Insecure})
+	}
+	var cl credsList
+	if err := s.rest.Do(ctx, http.MethodGet, "/api/v1/repocreds", nil, &cl); err != nil {
+		return nil, nil, err
+	}
+	for _, c := range cl.Items {
+		repos = append(repos, argoRepo{URL: c.URL, Template: true})
+	}
+	// Argo CD answers 501 for the write repositories when the source
+	// hydrator is off. Then nothing pushes with write credentials.
+	var wl repoList
+	hydratorOn := true
+	err := s.rest.Do(ctx, http.MethodGet, "/api/v1/write-repositories", nil, &wl)
+	switch {
+	case rest.HasStatus(err, http.StatusNotImplemented):
+		hydratorOn = false
+	case err != nil:
+		return nil, nil, err
+	}
+	if hydratorOn {
+		for _, r := range wl.Items {
+			repos = append(repos, argoRepo{URL: r.Repo, Write: true, Insecure: r.Insecure})
+		}
+		var wcl credsList
+		if err := s.rest.Do(ctx, http.MethodGet, "/api/v1/write-repocreds", nil, &wcl); err != nil {
+			return nil, nil, err
+		}
+		for _, c := range wcl.Items {
+			repos = append(repos, argoRepo{URL: c.URL, Template: true, Write: true})
+		}
+	}
+	warnings, err := checkArgoRepositories(repos, s.sc.RepoPrefixes, hydratorOn)
 	return nil, warnings, err
 }

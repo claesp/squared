@@ -462,6 +462,26 @@ YAML
   wait_for "the guard has no errors after the scopes are back" 60 guard_clean
   log "the guard checks the claims in the Argo CD scopes"
 
+  # A credential template that ends in the host name: Argo CD would also
+  # send its credentials to other hosts that start with it. The password is
+  # not a real one.
+  local argo_api="http://localhost:30081/api/v1" argo_session template="http://forgejo.localhost:30300"
+  argo_session="$(curl -fsS "$argo_api/session" -H 'Content-Type: application/json' -d "$(jq -n \
+    --arg p "$(k -n argocd get secret argocd-initial-admin-secret -o jsonpath='{.data.password}' | base64 -d)" \
+    '{username: "admin", password: $p}')" | jq -er .token)" || die "cannot sign in to Argo CD as admin"
+  curl -fsS -X POST -H "Authorization: Bearer $argo_session" -H 'Content-Type: application/json' "$argo_api/repocreds" \
+    -d "$(jq -n --arg u "$template" '{url: $u, username: "e2e-guard", password: "not-a-secret"}')" >/dev/null \
+    || die "cannot add a credential template to Argo CD"
+  guard_reports_template() {
+    guard_status | jq -e '[.errors[]? | select(test("credential template http://forgejo[.]localhost:30300 ends in the host name"))] | length > 0' >/dev/null
+  }
+  wait_for "the guard reports the credential template that ends in the host" 60 guard_reports_template
+  [[ "$(worker_may_add_dev squared-admins)" == 403 ]] || die "the protection of /squared-admins is gone after the credential template"
+  curl -fsS -X DELETE -H "Authorization: Bearer $argo_session" -H 'Content-Type: application/json' \
+    "$argo_api/repocreds/$(jq -rn --arg u "$template" '$u|@uri')" >/dev/null || die "cannot remove the credential template from Argo CD"
+  wait_for "the guard has no errors after the credential template is removed" 60 guard_clean
+  log "the guard checks the repository credentials of Argo CD"
+
   # Keycloak mappers that write the groups claim or the email claim. These
   # are in no token, thus they are harmless, but the guard must report
   # each mapper that does not come from the group membership or the email

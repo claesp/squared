@@ -216,7 +216,8 @@ all `*.localhost` names.
    all four services, that a new group in the Argo CD RBAC is made and
    protected, and that it is released when the line goes. It does the same
    with a `g` line in the policies of an AppProject role, and checks that an
-   unknown claim in the Argo CD `scopes` gives an error, and that Keycloak
+   unknown claim in the Argo CD `scopes` gives an error, that an Argo CD
+   credential template that ends in the host name gives an error, and that Keycloak
    mappers that write `groups` on the client `argocd` and `email` from
    another attribute on the client `forgejo` give errors. It also turns on
    duplicate email addresses and lets users edit their address in the

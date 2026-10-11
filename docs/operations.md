@@ -158,19 +158,26 @@ permission `protected-groups` up to date. To install it in production:
    sidecar `squared forgejo-config` to the Forgejo pod, a Service for it,
    and a network policy that permits only the guard to connect (see
    [configuration.md](configuration.md)), and a source `forgejo-config`.
-4. Make a Harbor robot account at system level with the permissions "list
+4. In Argo CD, add the account `squared-guard` with only the capability
+   `apiKey` (`accounts.squared-guard: apiKey` in `argocd-cm`) and the
+   lines `p, squared-guard, repositories, get, *, allow` and
+   `p, squared-guard, write-repositories, get, *, allow` in the RBAC
+   policy, make a token for it, and put the token into the secret of the
+   guard. See `setup_argocd_guard` in
+   [`hack/kind-up.sh`](../hack/kind-up.sh).
+5. Make a Harbor robot account at system level with the permissions "list
    projects" and "list members" of all projects. Run
    [`deploy/kind/harbor-guard-view.sql`](../deploy/kind/harbor-guard-view.sql)
    in the Harbor database (`registry`) as the owner of the Harbor tables,
    and set a password for the role `squared_guard`. Permit connections from
    the guard to the database. Before a Harbor upgrade that changes the
    table `properties`, drop the view; run the file again after the upgrade.
-5. Write the configuration file (see [configuration.md](configuration.md))
+6. Write the configuration file (see [configuration.md](configuration.md))
    with a source for each service that gives rights to groups.
-6. Give the service account of the guard read access to the objects of
+7. Give the service account of the guard read access to the objects of
    the sources (see
    [`deploy/kubernetes/kind/guard-rbac.yaml`](../deploy/kubernetes/kind/guard-rbac.yaml)).
-7. Run one replica. `GET /status` on port 8082 shows the protected groups,
+8. Run one replica. `GET /status` on port 8082 shows the protected groups,
    the places that refer to them, the errors and the warnings of the last
    run.
 

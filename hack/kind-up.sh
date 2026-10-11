@@ -46,12 +46,14 @@ configure_dns() {
 
 install_charts() {
   log "installing Argo CD $ARGOCD_CHART_VERSION"
+  # The end-to-end test changes argocd-rbac-cm for a short time with
+  # "kubectl patch". The values here win over such a change.
   helm --kube-context "$CONTEXT" upgrade --install argocd argo-cd \
     --repo https://argoproj.github.io/argo-helm --version "$ARGOCD_CHART_VERSION" \
     --namespace argocd --create-namespace \
     --values "$ROOT/deploy/kind/argocd-values.yaml" \
     --set-string "configs.secret.extra.oidc\\.keycloak\\.clientSecret=$(secret keycloak-argocd-client-secret)" \
-    --wait --timeout 10m >/dev/null
+    --force-conflicts --wait --timeout 10m >/dev/null
 
   k create namespace forgejo --dry-run=client -o yaml | k apply -f - >/dev/null
   log "installing the Forgejo database"
@@ -379,6 +381,24 @@ setup_argocd() {
   k apply -f "$ROOT/deploy/kind/argocd-platform.yaml" >/dev/null
 }
 
+# setup_argocd_guard makes the API token of the Argo CD account
+# squared-guard, which can only read the repositories and the credential
+# templates. The guard checks them with it.
+setup_argocd_guard() {
+  local api="http://localhost:30081/api/v1" file="${DEV}/argocd-guard-token" session
+  if [[ -s "$file" ]] && [[ "$(curl -fsS -H "Authorization: Bearer $(cat "$file")" "$api/account/can-i/repositories/get/*" 2>/dev/null | jq -r .value)" == yes ]]; then
+    return
+  fi
+  log "making the Argo CD token of the guard"
+  session="$(curl -fsS "$api/session" -H 'Content-Type: application/json' \
+    -d "$(jq -n --arg p "$(k -n argocd get secret argocd-initial-admin-secret -o jsonpath='{.data.password}' | base64 -d)" \
+      '{username: "admin", password: $p}')" | jq -er .token)" || die "cannot sign in to Argo CD as admin"
+  curl -fsS -X POST -H "Authorization: Bearer $session" -H 'Content-Type: application/json' \
+    "$api/account/squared-guard/token" -d '{"name": "squared-guard"}' | jq -er .token > "$file" \
+    || die "cannot make the Argo CD token of the guard"
+  chmod 600 "$file"
+}
+
 deploy_squared() {
   wait_http "${HARBOR_URL}/api/v2.0/ping"
   log "making Squared secrets"
@@ -406,6 +426,7 @@ deploy_squared() {
     --from-literal="harbor-robot-password=$(secret harbor-guard-robot-password)" \
     --from-literal="forgejo-db-password=$(secret forgejo-db-guard-password)" \
     --from-literal="harbor-db-password=$(secret harbor-db-guard-password)" \
+    --from-literal="argocd-token=$(cat "${DEV}/argocd-guard-token")" \
     --dry-run=client -o yaml | k apply -f - >/dev/null
   "$ROOT/hack/kind-deploy.sh"
 }
@@ -423,6 +444,7 @@ setup_forgejo_guard
 setup_harbor
 setup_harbor_guard
 setup_argocd
+setup_argocd_guard
 deploy_squared
 
 cat <<INFO

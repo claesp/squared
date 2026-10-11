@@ -110,8 +110,9 @@ controls that it uses. Read [architecture.md](architecture.md) first.
   users, thus it cannot change memberships. This is a strong account. The guard thus runs
   alone in the namespace `squared-guard`, accepts no connections, reads
   the configurations with read-only Kubernetes roles (named objects where
-  Kubernetes permits it) and a Harbor robot account that can only list
-  projects and members. Its code writes only the resources of one
+  Kubernetes permits it), a Harbor robot account that can only list
+  projects and members, and an Argo CD account that can only read the
+  repositories. Its code writes only the resources of one
   permission and makes groups. Protect its secret like a Keycloak
   administrator password.
 - **Limits of the guard.** It sees only the sources in its configuration.
@@ -228,6 +229,29 @@ controls that it uses. Read [architecture.md](architecture.md) first.
   Kubernetes removes fields that the CRD does not have, thus a new field
   comes only with an upgrade of the CRD. The end-to-end test adds a `g`
   line to a project role and adds an unknown claim to `scopes`.
+- **Repository credentials of Argo CD.** Argo CD reads the GitOps
+  repositories with credentials in Secrets of its namespace. The guard
+  does not read these Secrets: Kubernetes cannot give access to their
+  names without their values. It reads the repositories and the
+  credential templates through the API of Argo CD, which removes the
+  passwords, tokens and keys, with a token of the local account
+  `squared-guard`. That account has only the rights `repositories, get` and
+  `write-repositories, get`, and cannot sign in.
+
+  | Repository or credential template | Result |
+  |---|---|
+  | A template whose address ends in the host name (for example `https://git.example`): Argo CD uses a template for all addresses that start with it, thus also for `https://git.example.evil/` | Error |
+  | A repository or template of the GitOps repositories (`repoPrefixes`) that does not check the TLS certificate or the SSH host key (`insecure`) | Error |
+  | Another repository or template without the check | Warning |
+  | A write repository or write template of the GitOps repositories, while the source hydrator of Argo CD is on: Argo CD can push to them | Error |
+  | No repository or template of the GitOps repositories is visible: Argo CD cannot read them, or the account of the guard has no right | Error |
+
+  When the hydrator is off, Argo CD answers 501 for the write
+  repositories, and nothing pushes. Limit: the API of Argo CD 3.5 shows
+  only the write templates that have the address of a read template, thus
+  the guard can miss a write template while the hydrator is on; it warns
+  about this. The end-to-end test adds a template that ends in the host
+  name and checks the error.
 - **Harbor configuration.** Only the Harbor system administrator can read
   the configuration through the API, and a robot account cannot get that
   right. The table `properties` of the Harbor database has all settings,

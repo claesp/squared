@@ -6,6 +6,8 @@
   "sources": [
     {"type": "argocd-rbac", "service": "Argo CD", "namespace": "argocd", "name": "argocd-rbac-cm"},
     {"type": "argocd-projects", "service": "Argo CD", "namespace": "argocd"},
+    {"type": "argocd-repositories", "service": "Argo CD", "url": "http://argocd-server.argocd.svc.cluster.local",
+     "passwordFile": "/etc/squared/secrets/argocd-token", "repoPrefixes": ["http://forgejo.localhost:30300/squared/"]},
     {"type": "harbor-members", "service": "Harbor", "url": "http://harbor.harbor.svc.cluster.local",
      "user": "robot$squared-guard", "passwordFile": "/etc/squared/secrets/harbor-robot-password"},
     {"type": "harbor-database", "service": "Harbor",

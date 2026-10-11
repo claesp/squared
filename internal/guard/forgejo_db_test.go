@@ -102,7 +102,11 @@ func makeForgejoTables(t *testing.T, conn *pgx.Conn) {
 		CREATE TABLE public_key (id bigserial PRIMARY KEY, owner_id bigint NOT NULL, name text NOT NULL, fingerprint text,
 			content text, type integer NOT NULL, created_unix bigint, updated_unix bigint);
 		CREATE TABLE repository (id bigserial PRIMARY KEY, owner_id bigint NOT NULL, owner_name text NOT NULL, name text NOT NULL,
-			default_branch text NOT NULL DEFAULT 'main', is_archived boolean NOT NULL DEFAULT false, created_unix bigint NOT NULL DEFAULT 0);
+			default_branch text NOT NULL DEFAULT 'main', is_archived boolean NOT NULL DEFAULT false, created_unix bigint NOT NULL DEFAULT 0,
+			is_mirror boolean NOT NULL DEFAULT false);
+		CREATE TABLE mirror (id bigserial PRIMARY KEY, repo_id bigint NOT NULL, encrypted_remote_address text);
+		CREATE TABLE push_mirror (id bigserial PRIMARY KEY, repo_id bigint, remote_name text, remote_address text,
+			private_key text, sync_on_commit boolean NOT NULL DEFAULT true, "interval" bigint);
 		CREATE TABLE protected_branch (id bigserial PRIMARY KEY, repo_id bigint NOT NULL, branch_name text NOT NULL,
 			can_push boolean NOT NULL, enable_whitelist boolean, whitelist_user_i_ds text, whitelist_team_i_ds text,
 			enable_merge_whitelist boolean NOT NULL, whitelist_deploy_keys boolean NOT NULL, merge_whitelist_user_i_ds text,

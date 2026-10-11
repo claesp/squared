@@ -618,6 +618,17 @@ YAML
   wait_for "the guard has no errors after the webhook is removed" 60 guard_clean
   log "the guard checks the webhooks of the GitOps repositories"
 
+  # A push mirror of the platform repository, written into the database as
+  # Forgejo writes it. It never syncs: no interval, no sync at a commit.
+  forgejo_db() { k -n forgejo exec -i statefulset/forgejo-db -- psql -q -U forgejo -d forgejo -v ON_ERROR_STOP=1 -c "$1" >/dev/null; }
+  forgejo_db "INSERT INTO push_mirror (repo_id, remote_name, remote_address, sync_on_commit, interval, created_unix)
+    SELECT id, 'e2e_guard', 'https://e2e-guard.invalid/platform.git', false, 0, extract(epoch from now())::bigint
+    FROM repository WHERE owner_name = 'squared' AND name = 'platform'"
+  guard_reports_writer 'squared/platform has a push mirror to e2e-guard[.]invalid'
+  forgejo_db "DELETE FROM push_mirror WHERE remote_name = 'e2e_guard'"
+  wait_for "the guard has no errors after the push mirror is removed" 60 guard_clean
+  log "the guard checks the mirrors of the GitOps repositories"
+
   # A change of the administrator group in Harbor, through the API as in
   # the web interface.
   local hgroup="e2e-harbor-$TENANT"

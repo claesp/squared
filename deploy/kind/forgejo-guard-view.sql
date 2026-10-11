@@ -1,7 +1,7 @@
 -- Access of the Squared guard to the authentication sources of Forgejo,
 -- to the owners of personal access tokens and SSH keys, to the deploy keys
 -- of the repositories, to the team and collaborator access, to the
--- protection of the default branches, and to the webhooks.
+-- protection of the default branches, to the webhooks, and to the mirrors.
 --
 -- Forgejo has no API for its authentication sources. A change in the
 -- Forgejo web interface is only in the table login_source. The column cfg
@@ -230,3 +230,25 @@ LEFT JOIN "user" o ON w.repo_id = 0 AND w.owner_id > 0 AND o.id = w.owner_id;
 
 REVOKE ALL ON squared_guard_webhooks FROM PUBLIC;
 GRANT SELECT ON squared_guard_webhooks TO squared_guard;
+
+-- The mirrors of the repositories. A pull mirror gets its content from
+-- another repository at intervals; a push mirror copies the content of the
+-- repository to another address. The guard checks that no GitOps
+-- repository is a mirror or has one. The address of a pull mirror is
+-- encrypted, and a push mirror can have an SSH key, thus the view has only
+-- the host of a push mirror, never the address or the keys.
+DROP VIEW IF EXISTS squared_guard_mirrors;
+
+CREATE VIEW squared_guard_mirrors WITH (security_barrier) AS
+SELECT r.owner_name AS owner_name, r.name AS repo_name, r.is_archived AS archived, 'pull' AS kind, '' AS remote_host
+FROM repository r
+WHERE r.is_mirror OR EXISTS (SELECT 1 FROM mirror m WHERE m.repo_id = r.id)
+UNION ALL
+SELECT r.owner_name, r.name, r.is_archived, 'push',
+       lower(coalesce(substring(p.remote_address from '^[A-Za-z][A-Za-z0-9+.-]*://(?:[^@/?#]*@)?([^/:?#]+)'),
+                      substring(p.remote_address from '^(?:[^@/]*@)?([^:/]+):'), ''))
+FROM push_mirror p
+JOIN repository r ON r.id = p.repo_id;
+
+REVOKE ALL ON squared_guard_mirrors FROM PUBLIC;
+GRANT SELECT ON squared_guard_mirrors TO squared_guard;

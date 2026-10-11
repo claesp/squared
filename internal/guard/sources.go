@@ -68,6 +68,9 @@ type SourceConfig struct {
 	//   forgejo-webhooks the webhooks that see the repositories of the organization Org,
 	//                    in the Forgejo database (URL, PasswordFile, Name, Org,
 	//                    Webhooks). No groups, only errors.
+	//   forgejo-mirrors  the pull and push mirrors of the repositories of the
+	//                    organization Org, in the Forgejo database (URL, PasswordFile,
+	//                    Name, Org). No groups, only errors.
 	//   forgejo-config   the sign-in, registration and webhook settings in the Forgejo
 	//                    app.ini, from the sidecar "squared forgejo-config" (URL,
 	//                    WebhookHosts). No groups, only errors.
@@ -89,7 +92,7 @@ type SourceConfig struct {
 	// SourceID is for forgejo-credentials: the ID of the Keycloak authentication
 	// source in Forgejo.
 	SourceID int64 `json:"sourceId,omitempty"`
-	// Org is for forgejo-deploy-keys, forgejo-writers, forgejo-branches and forgejo-webhooks: the Forgejo organization of the
+	// Org is for forgejo-deploy-keys, forgejo-writers, forgejo-branches, forgejo-webhooks and forgejo-mirrors: the Forgejo organization of the
 	// GitOps repositories (default "squared", as SQUARED_GIT_ORG).
 	Org string `json:"org,omitempty"`
 	// Writers is for forgejo-writers and forgejo-branches: the users that may push to the
@@ -108,8 +111,8 @@ type SourceConfig struct {
 	// (identity providers and user federation), forgejo-config
 	// ("<section>.<key>"), forgejo-deploy-keys ("<repository>/<key name>")
 	// forgejo-writers ("team:<team>/<user>" or
-	// "collaborator:<repository>/<user>") and forgejo-branches (repository)
-	// use it.
+	// "collaborator:<repository>/<user>"), forgejo-branches (repository)
+	// and forgejo-mirrors ("<repository>/<pull or push>") use it.
 	IgnoreFields []string `json:"ignoreFields,omitempty"`
 }
 
@@ -244,6 +247,17 @@ func BuildSources(cfg *FileConfig, kc *kube.Client, idp KeycloakReader) ([]Sourc
 				sc.Org = "squared"
 			}
 			sources = append(sources, &forgejoWebhooksSource{sc: sc})
+		case "forgejo-mirrors":
+			if sc.URL == "" || sc.PasswordFile == "" {
+				return nil, fmt.Errorf("source %d: forgejo-mirrors needs url and passwordFile", i)
+			}
+			if sc.Name == "" {
+				sc.Name = "squared_guard_mirrors"
+			}
+			if sc.Org == "" {
+				sc.Org = "squared"
+			}
+			sources = append(sources, &forgejoMirrorsSource{sc: sc})
 		case "forgejo-config":
 			if sc.URL == "" {
 				return nil, fmt.Errorf("source %d: forgejo-config needs url", i)
@@ -834,5 +848,41 @@ func (s *forgejoWebhooksSource) References(ctx context.Context) ([]Reference, []
 		return nil, nil, err
 	}
 	warnings, err := checkForgejoWebhooks(hooks, s.sc.Org, s.sc.Webhooks)
+	return nil, warnings, err
+}
+
+// forgejoMirrorsSource reads the mirrors from a view in the Forgejo
+// database. See checkForgejoMirrors and deploy/kind/forgejo-guard-view.sql.
+type forgejoMirrorsSource struct {
+	sc SourceConfig
+}
+
+func (s *forgejoMirrorsSource) Name() string { return s.sc.Service + " mirrors" }
+
+func (s *forgejoMirrorsSource) References(ctx context.Context) ([]Reference, []string, error) {
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	conn, err := connectDatabase(ctx, s.sc)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer conn.Close(context.Background())
+	rows, err := conn.Query(ctx, `SELECT owner_name, repo_name, archived, kind, remote_host
+		FROM `+pgx.Identifier{s.sc.Name}.Sanitize()+" ORDER BY owner_name, repo_name, kind, remote_host")
+	if err != nil {
+		return nil, nil, fmt.Errorf("read %s (run forgejo-guard-view.sql again after a Forgejo upgrade): %w", s.sc.Name, err)
+	}
+	var mirrors []forgejoMirror
+	for rows.Next() {
+		var m forgejoMirror
+		if err := rows.Scan(&m.Owner, &m.Repo, &m.Archived, &m.Kind, &m.RemoteHost); err != nil {
+			return nil, nil, err
+		}
+		mirrors = append(mirrors, m)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, nil, err
+	}
+	warnings, err := checkForgejoMirrors(mirrors, s.sc.Org, s.sc.IgnoreFields)
 	return nil, warnings, err
 }

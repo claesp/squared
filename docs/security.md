@@ -469,6 +469,21 @@ controls that it uses. Read [architecture.md](architecture.md) first.
   `MINIO_INSECURE_SKIP_VERIFY` from every section that has it. The
   end-to-end test turns on `SKIP_TLS_VERIFY` of `[webhook]` in `app.ini`
   and checks the error.
+- **Mirrors of the GitOps repositories.** A pull mirror gets its content
+  from another repository at intervals: Argo CD would deploy what Squared
+  did not write, and Forgejo refuses the pushes of Squared. A push mirror
+  copies the content of a repository to another address. Squared never
+  makes mirrors. The guard reads the view `squared_guard_mirrors` of
+  [`forgejo-guard-view.sql`](../deploy/kind/forgejo-guard-view.sql) and
+  reports an error for a repository of the organization that is a pull
+  mirror or has a push mirror (archived repositories are not in the
+  check). The address of a pull mirror is encrypted, and a push mirror can
+  have an SSH key, thus the view has only the host of a push mirror. The
+  settings in `[mirror]` of `app.ini` decide only what users can do with
+  the repositories that they administer, thus the guard does not check
+  them; the addresses of mirrors follow `[migrations]` (see above). The
+  end-to-end test adds a push mirror to `squared/platform` in the database
+  and checks the error.
 - **Webhooks of the GitOps repositories.** A webhook sends the events of
   a repository (commit messages, file names, authors) to its address, and
   Forgejo makes the request from inside the cluster: a webhook can send

@@ -482,6 +482,84 @@ YAML
   wait_for "the guard has no errors after the credential template is removed" 60 guard_clean
   log "the guard checks the repository credentials of Argo CD"
 
+  # Another cluster without the check of TLS certificates, as a cluster
+  # Secret. Squared does not deploy there, thus the guard warns. The token
+  # is not a real one.
+  k apply -f - >/dev/null <<YAML
+apiVersion: v1
+kind: Secret
+metadata:
+  name: e2e-guard-cluster
+  namespace: argocd
+  labels:
+    argocd.argoproj.io/secret-type: cluster
+stringData:
+  name: e2e-guard
+  server: https://e2e-guard.invalid:6443
+  config: '{"bearerToken": "not-a-secret", "tlsClientConfig": {"insecure": true}}'
+YAML
+  guard_warns_cluster() {
+    guard_status | jq -e '[.warnings[]? | select(test("cluster https://e2e-guard[.]invalid:6443 [(]e2e-guard[)] does not check the TLS certificate"))] | length > 0' >/dev/null
+  }
+  guard_quiet_cluster() { ! guard_warns_cluster && guard_clean; }
+  wait_for "the guard warns about the cluster without TLS checks" 60 guard_warns_cluster
+  k -n argocd delete secret e2e-guard-cluster >/dev/null
+  wait_for "the guard has no warning after the cluster is removed" 60 guard_quiet_cluster
+  log "the guard checks the clusters of Argo CD"
+
+  # A tenant project that permits all namespaces, and an application in it
+  # that does not sync by itself. Both have the labels of Squared, as a
+  # change by hand of the real objects has. The tenant e2eguard does not
+  # exist, and the application has no automatic sync, thus Argo CD deploys
+  # nothing.
+  local guard_repo="http://forgejo.localhost:30300/squared/tenant-e2eguard.git"
+  k apply -f - >/dev/null <<YAML
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: tenant-e2eguard
+  namespace: argocd
+  labels: { app.kubernetes.io/managed-by: squared, squared.dev/tenant: e2eguard }
+spec:
+  sourceRepos: ["$guard_repo"]
+  destinations: [{ server: "https://kubernetes.default.svc", namespace: "*" }]
+  clusterResourceWhitelist: []
+  namespaceResourceWhitelist: [{ group: apps, kind: Deployment }]
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: e2eguard-dev-web
+  namespace: argocd
+  labels: { app.kubernetes.io/managed-by: squared, squared.dev/managed: "true", squared.dev/tenant: e2eguard }
+spec:
+  project: tenant-e2eguard
+  source: { repoURL: "$guard_repo", targetRevision: "$(printf '0%.0s' {1..40})", path: deployments/dev/web }
+  destination: { server: "https://kubernetes.default.svc", namespace: e2eguard-dev }
+  syncPolicy: { syncOptions: [CreateNamespace=false, PruneLast=true] }
+YAML
+  guard_reports_tenant_argo() {
+    guard_status | jq -e '[.errors[]? | select(test("project tenant-e2eguard: a destination has the namespace \"[*]\""))] | length > 0' >/dev/null &&
+      guard_status | jq -e '[.errors[]? | select(test("application e2eguard-dev-web of tenant e2eguard: it does not sync automatically"))] | length > 0' >/dev/null
+  }
+  wait_for "the guard reports the tenant project for all namespaces and the application without automatic sync" 60 guard_reports_tenant_argo
+  [[ "$(worker_may_add_dev squared-admins)" == 403 ]] || die "the protection of /squared-admins is gone after the changed tenant project"
+  k -n argocd delete application e2eguard-dev-web >/dev/null
+  k -n argocd delete appproject tenant-e2eguard >/dev/null
+  wait_for "the guard has no errors after the tenant project and the application are removed" 60 guard_clean
+  log "the guard checks the tenant projects and the applications of Argo CD"
+
+  # The root application without selfHeal: a change by hand of a tenant
+  # project stays.
+  k -n argocd patch application squared-platform --type merge -p '{"spec":{"syncPolicy":{"automated":{"selfHeal":false}}}}' >/dev/null
+  guard_reports_root() {
+    guard_status | jq -e '[.errors[]? | select(test("root application squared-platform: selfHeal is off"))] | length > 0' >/dev/null
+  }
+  wait_for "the guard reports the root application without selfHeal" 60 guard_reports_root
+  k -n argocd patch application squared-platform --type merge -p '{"spec":{"syncPolicy":{"automated":{"selfHeal":true}}}}' >/dev/null
+  wait_for "the guard has no errors after selfHeal is on again" 60 guard_clean
+  log "the guard checks the sync policy of the root application"
+
   # Keycloak mappers that write the groups claim or the email claim. These
   # are in no token, thus they are harmless, but the guard must report
   # each mapper that does not come from the group membership or the email
@@ -760,6 +838,9 @@ api POST "/tenants/$TENANT/deployments" "$(jq -n \
 wait_for "revision 1 is deployed" 300 deployment_is deployed 1
 expect_greeting "Hello from revision 1"
 api GET "/tenants/$TENANT/deployments/dev/hello" | jq -e '.revisions[0].images.image | test("@sha256:")' >/dev/null
+# The guard compares the application and the project of the tenant with
+# what Squared puts into them.
+wait_for "the guard has no errors with the application and the project of the tenant" 60 guard_clean
 
 step "check the Argo CD rights of the developer"
 out="$("$SSO" -user dev -password-file "$DEV/keycloak-dev-user-password" \

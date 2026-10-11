@@ -40,10 +40,17 @@ type FileConfig struct {
 type SourceConfig struct {
 	// Type is one of:
 	//   argocd-rbac      "g" lines of an Argo CD RBAC ConfigMap (Namespace, Name)
-	//   argocd-projects  roles of all Argo CD projects (Namespace)
+	//   argocd-projects  roles of all Argo CD projects, and the limits of the tenant
+	//                    projects (Namespace, RepoPrefixes, ClusterServers)
+	//   argocd-applications the sync policies and the limits of the Argo CD
+	//                    applications (Namespace, Name of the root application,
+	//                    RepoPrefixes, ClusterServers). No groups, only errors.
 	//   argocd-repositories the repositories and credential templates of Argo CD, from
 	//                    its API, without secrets (URL, PasswordFile with a token,
 	//                    RepoPrefixes). No groups, only errors.
+	//   argocd-clusters  the clusters of Argo CD, from its API, without secrets (URL,
+	//                    PasswordFile with a token, ClusterServers). No groups, only
+	//                    errors.
 	//   harbor-members   group members of all Harbor projects (URL, User, PasswordFile)
 	//   configmap        group paths in a ConfigMap key (Namespace, Name or Selector, Key)
 	//   forgejo-init     the init script of the Forgejo Helm chart (Namespace, Name, Key)
@@ -104,9 +111,14 @@ type SourceConfig struct {
 	// Webhooks is for forgejo-webhooks: the webhook addresses that Squared
 	// expects, or "sha256:<hex>" for an address with a secret.
 	Webhooks []string `json:"webhooks,omitempty"`
-	// RepoPrefixes is for argocd-repositories: the addresses of the GitOps
+	// RepoPrefixes is for argocd-repositories, argocd-projects and
+	// argocd-applications: the addresses of the GitOps
 	// repositories, for example "https://git.example/squared/".
 	RepoPrefixes []string `json:"repoPrefixes,omitempty"`
+	// ClusterServers is for argocd-clusters, argocd-projects and
+	// argocd-applications: the API servers that Squared
+	// deploys to (SQUARED_CLUSTER_SERVER).
+	ClusterServers []string `json:"clusterServers,omitempty"`
 	// WebhookHosts is for forgejo-config: the hosts that ALLOWED_HOST_LIST
 	// may have besides "external", for example the host of Argo CD.
 	WebhookHosts []string `json:"webhookHosts,omitempty"`
@@ -165,18 +177,22 @@ func BuildSources(cfg *FileConfig, kc *kube.Client, idp KeycloakReader) ([]Sourc
 			if sc.URL == "" || sc.PasswordFile == "" || len(sc.RepoPrefixes) == 0 {
 				return nil, fmt.Errorf("source %d: argocd-repositories needs url, passwordFile and repoPrefixes", i)
 			}
-			file := sc.PasswordFile
-			sources = append(sources, &argoReposSource{sc: sc, rest: rest.Client{BaseURL: strings.TrimRight(sc.URL, "/"), HTTP: rest.NewHTTPClient(nil),
-				Auth: func(r *http.Request) error {
-					token, err := os.ReadFile(file)
-					if err != nil {
-						return err
-					}
-					r.Header.Set("Authorization", "Bearer "+strings.TrimSpace(string(token)))
-					return nil
-				}}})
+			sources = append(sources, &argoReposSource{sc: sc, rest: argoAPI(sc)})
+		case "argocd-clusters":
+			if sc.URL == "" || sc.PasswordFile == "" || len(sc.ClusterServers) == 0 {
+				return nil, fmt.Errorf("source %d: argocd-clusters needs url, passwordFile and clusterServers", i)
+			}
+			sources = append(sources, &argoClustersSource{sc: sc, rest: argoAPI(sc)})
 		case "argocd-projects":
+			if len(sc.RepoPrefixes) == 0 || len(sc.ClusterServers) == 0 {
+				return nil, fmt.Errorf("source %d: argocd-projects needs repoPrefixes and clusterServers", i)
+			}
 			sources = append(sources, &argoProjectsSource{sc: sc, kube: kc, tenants: tenants})
+		case "argocd-applications":
+			if sc.Name == "" || len(sc.RepoPrefixes) == 0 || len(sc.ClusterServers) == 0 {
+				return nil, fmt.Errorf("source %d: argocd-applications needs name, repoPrefixes and clusterServers", i)
+			}
+			sources = append(sources, &argoAppsSource{sc: sc, kube: kc})
 		case "harbor-members":
 			password, err := os.ReadFile(sc.PasswordFile)
 			if err != nil {
@@ -354,8 +370,9 @@ func (s *argoProjectsSource) References(ctx context.Context) ([]Reference, []str
 	if err != nil {
 		return nil, nil, err
 	}
+	rules := tenantProjectRules{ClusterServers: s.sc.ClusterServers, RepoPrefixes: s.sc.RepoPrefixes}
 	var refs []Reference
-	var warnings, problems []string
+	var warnings, problems, tenantProblems []string
 	for _, p := range projects {
 		w, pr, err := checkArgoProjectFields(p.Raw, s.sc.IgnoreFields)
 		if err != nil {
@@ -369,6 +386,18 @@ func (s *argoProjectsSource) References(ctx context.Context) ([]Reference, []str
 		}
 		squared := p.Metadata.Labels[render.LabelManagedBy] == render.ManagedBy
 		slug, isTenant := strings.CutPrefix(p.Metadata.Name, "tenant-")
+		switch {
+		case isTenant && !squared:
+			tenantProblems = append(tenantProblems, fmt.Sprintf("project %s has the name of a tenant project, but Squared did not make it", p.Metadata.Name))
+		case isTenant:
+			tp, err := checkTenantProject(slug, p.Raw, rules)
+			if err != nil {
+				return nil, nil, fmt.Errorf("project %s: %w", p.Metadata.Name, err)
+			}
+			for _, m := range tp {
+				tenantProblems = append(tenantProblems, fmt.Sprintf("project %s: %s", p.Metadata.Name, m))
+			}
+		}
 		for _, role := range p.Spec.Roles {
 			where := fmt.Sprintf("project %s role %s", p.Metadata.Name, role.Name)
 			for _, g := range role.Groups {
@@ -383,13 +412,39 @@ func (s *argoProjectsSource) References(ctx context.Context) ([]Reference, []str
 			}
 		}
 	}
+	// Give all groups that the guard could read, and the error. The guard
+	// adds these groups and removes none.
+	var errs []string
+	if len(tenantProblems) > 0 {
+		errs = append(errs, fmt.Sprintf("the tenant projects of Argo CD are not as Squared makes them: %s. The guard keeps the current protection",
+			strings.Join(tenantProblems, "; ")))
+	}
 	if len(problems) > 0 {
-		// Give all groups that the guard could read, and the error. The
-		// guard adds these groups and removes none.
-		return refs, warnings, fmt.Errorf("the fields of Argo CD projects changed: %s. The guard keeps the current protection. Update the guard for this Argo CD version",
-			strings.Join(problems, " | "))
+		errs = append(errs, fmt.Sprintf("the fields of Argo CD projects changed: %s. The guard keeps the current protection. Update the guard for this Argo CD version",
+			strings.Join(problems, " | ")))
+	}
+	if len(errs) > 0 {
+		return refs, warnings, errors.New(strings.Join(errs, " "))
 	}
 	return refs, warnings, nil
+}
+
+type argoAppsSource struct {
+	sc   SourceConfig
+	kube *kube.Client
+}
+
+func (s *argoAppsSource) Name() string { return s.sc.Service + " applications" }
+
+// References checks the applications. It gives no groups.
+func (s *argoAppsSource) References(ctx context.Context) ([]Reference, []string, error) {
+	apps, err := s.kube.ListApplicationObjects(ctx, s.sc.Namespace)
+	if err != nil {
+		return nil, nil, err
+	}
+	rules := tenantProjectRules{ClusterServers: s.sc.ClusterServers, RepoPrefixes: s.sc.RepoPrefixes}
+	warnings, err := checkArgoApplications(apps, s.sc.Name, rules)
+	return nil, warnings, err
 }
 
 type harborMembersSource struct {
@@ -969,5 +1024,56 @@ func (s *argoReposSource) References(ctx context.Context) ([]Reference, []string
 		}
 	}
 	warnings, err := checkArgoRepositories(repos, s.sc.RepoPrefixes, hydratorOn)
+	return nil, warnings, err
+}
+
+// argoAPI returns a client of the API of Argo CD that sends the token of
+// the password file. It reads the file at each request, thus a new token
+// works without a restart.
+func argoAPI(sc SourceConfig) rest.Client {
+	file := sc.PasswordFile
+	return rest.Client{BaseURL: strings.TrimRight(sc.URL, "/"), HTTP: rest.NewHTTPClient(nil),
+		Auth: func(r *http.Request) error {
+			token, err := os.ReadFile(file)
+			if err != nil {
+				return err
+			}
+			r.Header.Set("Authorization", "Bearer "+strings.TrimSpace(string(token)))
+			return nil
+		}}
+}
+
+// argoClustersSource reads the clusters of Argo CD from its API, with a
+// token of a local account that can only read them. The API never shows
+// the tokens, the keys or the settings of exec providers. See
+// checkArgoClusters.
+type argoClustersSource struct {
+	sc   SourceConfig
+	rest rest.Client
+}
+
+func (s *argoClustersSource) Name() string { return s.sc.Service + " clusters" }
+
+func (s *argoClustersSource) References(ctx context.Context) ([]Reference, []string, error) {
+	var list struct {
+		Items []struct {
+			Server  string `json:"server"`
+			Name    string `json:"name"`
+			Project string `json:"project"`
+			Config  struct {
+				TLSClientConfig struct {
+					Insecure bool `json:"insecure"`
+				} `json:"tlsClientConfig"`
+			} `json:"config"`
+		} `json:"items"`
+	}
+	if err := s.rest.Do(ctx, http.MethodGet, "/api/v1/clusters", nil, &list); err != nil {
+		return nil, nil, err
+	}
+	clusters := make([]argoCluster, 0, len(list.Items))
+	for _, c := range list.Items {
+		clusters = append(clusters, argoCluster{Server: c.Server, Name: c.Name, Project: c.Project, Insecure: c.Config.TLSClientConfig.Insecure})
+	}
+	warnings, err := checkArgoClusters(clusters, s.sc.ClusterServers)
 	return nil, warnings, err
 }

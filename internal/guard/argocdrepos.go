@@ -68,7 +68,7 @@ func checkArgoRepositories(repos []argoRepo, prefixes []string, hydratorOn bool)
 		case r.Insecure && gitops:
 			problems = append(problems, fmt.Sprintf("the %s %s does not check the TLS certificate or the SSH host key, thus a person in the network can change what Argo CD deploys", r.kind(), r.URL))
 		case r.Insecure:
-			warnings = append(warnings, fmt.Sprintf("Argo CD %s %s does not check the TLS certificate or the SSH host key", r.kind(), r.URL))
+			warnings = append(warnings, fmt.Sprintf("the %s %s does not check the TLS certificate or the SSH host key", r.kind(), r.URL))
 		}
 		if gitops && !r.Write {
 			read = true

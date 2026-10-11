@@ -11,7 +11,7 @@ rules:
     resourceNames: ["argocd-rbac-cm"]
     verbs: ["get"]
   - apiGroups: ["argoproj.io"]
-    resources: ["appprojects"]
+    resources: ["appprojects", "applications"]
     verbs: ["get", "list"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1

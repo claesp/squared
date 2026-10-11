@@ -191,6 +191,19 @@ func (c *Client) ListApplications(ctx context.Context, namespace, selector strin
 	return out.Items, nil
 }
 
+// ListApplicationObjects returns all Argo CD applications in a namespace
+// as complete objects, for the checks of the guard.
+func (c *Client) ListApplicationObjects(ctx context.Context, namespace string) ([]json.RawMessage, error) {
+	var out struct {
+		Items []json.RawMessage `json:"items"`
+	}
+	path := "/apis/argoproj.io/v1alpha1/namespaces/" + url.PathEscape(namespace) + "/applications"
+	if err := c.rest.Do(ctx, http.MethodGet, path, nil, &out); err != nil {
+		return nil, err
+	}
+	return out.Items, nil
+}
+
 // ApplicationExists tells if an Argo CD application exists.
 func (c *Client) ApplicationExists(ctx context.Context, namespace, name string) (bool, error) {
 	path := "/apis/argoproj.io/v1alpha1/namespaces/" + url.PathEscape(namespace) + "/applications/" + url.PathEscape(name)

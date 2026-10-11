@@ -153,14 +153,43 @@ func TenantScope(slug string) func(string) bool {
 	}
 }
 
+// GroupKind is a Kubernetes kind with its API group.
+type GroupKind struct {
+	Group string `json:"group"`
+	Kind  string `json:"kind"`
+}
+
+// TenantKinds are the only kinds that a tenant project permits: the kinds
+// that the renderer makes. Tenants cannot make cluster objects. This also
+// protects against bad commits to the tenant repository.
+var TenantKinds = []GroupKind{
+	{"", "ServiceAccount"},
+	{"", "Service"},
+	{"", "ConfigMap"},
+	{"apps", "Deployment"},
+	{"batch", "CronJob"},
+	{"networking.k8s.io", "Ingress"},
+	{"policy", "PodDisruptionBudget"},
+}
+
+// MemberRole is the name of the role of the tenant members in a tenant
+// project.
+const MemberRole = "member"
+
+// MemberPolicies are the policies of the role "member" of a tenant
+// project: read access to the applications and the logs.
+func MemberPolicies(slug string) []string {
+	p := ProjectName(slug)
+	return []string{
+		"p, proj:" + p + ":" + MemberRole + ", applications, get, " + p + "/*, allow",
+		"p, proj:" + p + ":" + MemberRole + ", logs, get, " + p + "/*, allow",
+	}
+}
+
 func (c Config) appProject(t *domain.Tenant, envs []domain.Environment) object {
 	type dest struct {
 		Server    string `json:"server"`
 		Namespace string `json:"namespace"`
-	}
-	type kind struct {
-		Group string `json:"group"`
-		Kind  string `json:"kind"`
 	}
 	dests := make([]dest, 0, len(envs))
 	for _, e := range envs {
@@ -181,28 +210,17 @@ func (c Config) appProject(t *domain.Tenant, envs []domain.Environment) object {
 			// Members of the tenant can read their applications and the
 			// logs of their pods in Argo CD. Changes go through Squared.
 			"roles": []map[string]any{{
-				"name":        "member",
+				"name":        MemberRole,
 				"description": "Members of the tenant. Read access to applications and logs.",
-				"policies": []string{
-					"p, proj:" + ProjectName(t.Slug) + ":member, applications, get, " + ProjectName(t.Slug) + "/*, allow",
-					"p, proj:" + ProjectName(t.Slug) + ":member, logs, get, " + ProjectName(t.Slug) + "/*, allow",
-				},
+				"policies":    MemberPolicies(t.Slug),
 				"groups": []string{
 					c.TenantGroupClaim(t.Slug, domain.RoleOwner),
 					c.TenantGroupClaim(t.Slug, domain.RoleDeveloper),
 					c.TenantGroupClaim(t.Slug, domain.RoleViewer),
 				},
 			}},
-			"clusterResourceWhitelist": []kind{},
-			"namespaceResourceWhitelist": []kind{
-				{"", "ServiceAccount"},
-				{"", "Service"},
-				{"", "ConfigMap"},
-				{"apps", "Deployment"},
-				{"batch", "CronJob"},
-				{"networking.k8s.io", "Ingress"},
-				{"policy", "PodDisruptionBudget"},
-			},
+			"clusterResourceWhitelist":   []GroupKind{},
+			"namespaceResourceWhitelist": TenantKinds,
 		},
 	}
 }

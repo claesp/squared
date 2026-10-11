@@ -217,7 +217,10 @@ all `*.localhost` names.
    protected, and that it is released when the line goes. It does the same
    with a `g` line in the policies of an AppProject role, and checks that an
    unknown claim in the Argo CD `scopes` gives an error, that an Argo CD
-   credential template that ends in the host name gives an error, and that Keycloak
+   credential template that ends in the host name gives an error, that a
+   cluster without TLS checks gives a warning, that a tenant project for
+   all namespaces, an application without automatic sync and a root
+   application without `selfHeal` give errors, and that Keycloak
    mappers that write `groups` on the client `argocd` and `email` from
    another attribute on the client `forgejo` give errors. It also turns on
    duplicate email addresses and lets users edit their address in the
@@ -256,7 +259,9 @@ all `*.localhost` names.
 6. Makes a tenant, adds `dev` as developer, and waits until `dev` has the
    Harbor project and can read the Forgejo repository.
 7. Pushes the example image as `dev` with the Harbor CLI secret.
-8. Deploys the image and checks the answer of the service.
+8. Deploys the image and checks the answer of the service. Checks that
+   the guard has no errors with the application and the project of the
+   tenant.
 9. Checks that `dev` can read, but not sync, the application in Argo CD.
 10. Checks that a pod in another namespace cannot connect to the service.
 11. Changes a value (revision 2) and checks the new answer.

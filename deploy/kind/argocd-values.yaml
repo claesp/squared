@@ -17,20 +17,23 @@ configs:
       clientSecret: $oidc.keycloak.clientSecret
       enablePKCEAuthentication: true
       requestedScopes: ["openid", "profile", "email"]
-    # The Squared guard reads the repositories and the credential templates
-    # (never their secrets) with a token of this account. It cannot sign in.
+    # The Squared guard reads the repositories, the credential templates and
+    # the clusters (never their secrets) with a token of this account. It
+    # cannot sign in.
     accounts.squared-guard: apiKey
   rbac:
     # Members of the Keycloak group squared-admins are administrators. The
     # groups claim has full paths: a subgroup with the same name does not
     # match.
     # Other users have no rights: tenants use Squared, not Argo CD.
-    # The account squared-guard can only read the repositories.
+    # The account squared-guard can only read the repositories and the
+    # clusters.
     policy.default: ""
     policy.csv: |
       g, /squared-admins, role:admin
       p, squared-guard, repositories, get, *, allow
       p, squared-guard, write-repositories, get, *, allow
+      p, squared-guard, clusters, get, *, allow
     scopes: "[groups]"
 dex:
   enabled: false

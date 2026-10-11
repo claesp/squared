@@ -382,8 +382,8 @@ setup_argocd() {
 }
 
 # setup_argocd_guard makes the API token of the Argo CD account
-# squared-guard, which can only read the repositories and the credential
-# templates. The guard checks them with it.
+# squared-guard, which can only read the repositories, the credential
+# templates and the clusters. The guard checks them with it.
 setup_argocd_guard() {
   local api="http://localhost:30081/api/v1" file="${DEV}/argocd-guard-token" session
   if [[ -s "$file" ]] && [[ "$(curl -fsS -H "Authorization: Bearer $(cat "$file")" "$api/account/can-i/repositories/get/*" 2>/dev/null | jq -r .value)" == yes ]]; then

@@ -161,7 +161,8 @@ permission `protected-groups` up to date. To install it in production:
 4. In Argo CD, add the account `squared-guard` with only the capability
    `apiKey` (`accounts.squared-guard: apiKey` in `argocd-cm`) and the
    lines `p, squared-guard, repositories, get, *, allow` and
-   `p, squared-guard, write-repositories, get, *, allow` in the RBAC
+   `p, squared-guard, write-repositories, get, *, allow` and
+   `p, squared-guard, clusters, get, *, allow` in the RBAC
    policy, make a token for it, and put the token into the secret of the
    guard. See `setup_argocd_guard` in
    [`hack/kind-up.sh`](../hack/kind-up.sh).

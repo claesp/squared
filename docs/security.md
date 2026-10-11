@@ -112,7 +112,7 @@ controls that it uses. Read [architecture.md](architecture.md) first.
   the configurations with read-only Kubernetes roles (named objects where
   Kubernetes permits it), a Harbor robot account that can only list
   projects and members, and an Argo CD account that can only read the
-  repositories. Its code writes only the resources of one
+  repositories and the clusters. Its code writes only the resources of one
   permission and makes groups. Protect its secret like a Keycloak
   administrator password.
 - **Limits of the guard.** It sees only the sources in its configuration.
@@ -252,6 +252,61 @@ controls that it uses. Read [architecture.md](architecture.md) first.
   the guard can miss a write template while the hydrator is on; it warns
   about this. The end-to-end test adds a template that ends in the host
   name and checks the error.
+- **Cluster credentials of Argo CD.** Argo CD sends the token of a cluster
+  with each request to its API server, and applies the manifests of the
+  tenants there. The guard reads the clusters through the API of Argo CD,
+  which removes the tokens, the keys and the settings of exec providers,
+  with the same account (right `clusters, get`).
+
+  | Cluster | Result |
+  |---|---|
+  | A cluster to which Squared deploys (`clusterServers`) without the check of the TLS certificate (`insecure`) or with an `http://` address: a person in the network can take its token or change the workloads | Error |
+  | Another cluster like that | Warning |
+  | A cluster Secret for `https://kubernetes.default.svc`: Argo CD then uses its credentials instead of its own service account | Warning: check the rights of these credentials |
+  | The cluster of Squared is not visible: Argo CD has no such cluster, or the account of the guard has no right | Error |
+
+  Limit: the API never shows exec providers, which run a command in the
+  pods of Argo CD; only a person who can make cluster Secrets can add one.
+  The end-to-end test adds a cluster Secret for another cluster without
+  the check and checks the warning.
+- **Tenant projects of Argo CD.** The AppProject of a tenant is the
+  second line of the tenant isolation (see
+  [Tenant isolation in the cluster](#tenant-isolation-in-the-cluster)):
+  Argo CD refuses an object outside it, also when a manifest asks for it.
+  The guard reads all AppProjects through the Kubernetes API (right `list`
+  on `appprojects`) and compares each project with a name that starts with
+  `tenant-` with what Squared puts into it.
+
+  | Tenant project | Result |
+  |---|---|
+  | A destination with a cluster that is not in `clusterServers`, or a cluster by its name instead of its address | Error |
+  | A destination with a namespace that is not `<tenant>-<environment>`, for example `*` or `kube-system` | Error |
+  | A source repository that is not the repository of the tenant | Error |
+  | Cluster kinds, no list of namespaced kinds (Argo CD then permits all of them), or namespaced kinds that the renderer does not make | Error |
+  | `sourceNamespaces` or `destinationServiceAccounts` | Error |
+  | A role other than `member`, tokens of a role, or a policy other than the read access of `member` | Error |
+  | A project with the name `tenant-<slug>` that Squared did not make (no label `app.kubernetes.io/managed-by: squared`) | Error |
+
+- **Applications of Argo CD.** An application tells Argo CD what to
+  deploy, from where, and if it changes back changes by hand. The guard
+  reads all applications through the Kubernetes API (right `list` on
+  `applications`).
+
+  | Application | Result |
+  |---|---|
+  | An application of Squared (labels `app.kubernetes.io/managed-by: squared` and `squared.dev/managed: "true"`) without automatic sync, or with `prune` or `selfHeal` off: Git and the cluster can differ | Error |
+  | An application of Squared with another project than `tenant-<slug>`, another repository than the tenant repository, a branch or tag instead of a commit, Helm, Kustomize, a plugin or more than one source | Error |
+  | An application of Squared with a destination that is not in `clusterServers` or not `<tenant>-<environment>` | Error |
+  | An application of Squared with other sync options than `CreateNamespace=false` and `PruneLast=true`, or with `ignoreDifferences` | Error |
+  | An application that Squared did not make in a tenant project | Error |
+  | The root application (`name`) without automatic sync, `prune` or `selfHeal`: a change by hand of a tenant project stays | Error |
+  | The root application is not visible | Error |
+
+  Argo CD changes a tenant project back after a change by hand only while
+  the root application heals itself, thus the two checks work together.
+  The end-to-end test adds a tenant project for all namespaces and an
+  application without automatic sync, and turns off `selfHeal` of the
+  root application, and checks the errors.
 - **Harbor configuration.** Only the Harbor system administrator can read
   the configuration through the API, and a robot account cannot get that
   right. The table `properties` of the Harbor database has all settings,

@@ -67,7 +67,14 @@ ENABLE_OPENID_SIGNIN = false
 EXTERNAL_USER_DISABLE_FEATURES = manage_password
 [migrations]
 ALLOW_LOCALNETWORKS = false
+[mailer]
+PASSWD = s3cret-smtp
+FORCE_TRUST_SERVER_CERT = false
+[storage.minio]
+MINIO_SECRET_ACCESS_KEY = s3cret-minio
+MINIO_INSECURE_SKIP_VERIFY = true
 [webhook]
+SKIP_TLS_VERIFY = false
 ALLOWED_HOST_LIST = argocd-server.argocd.svc.cluster.local
 PROXY_URL = http://user:s3cret-proxy@proxy.example:3128
 [database]
@@ -86,10 +93,12 @@ PASSWD = s3cret-db
 		"openid":        {"ENABLE_OPENID_SIGNIN": "false"},
 		"service": {"DISABLE_REGISTRATION": "false", "ALLOW_ONLY_EXTERNAL_REGISTRATION": "true",
 			"RECAPTCHA_SECRET": HiddenValue}, // The name, not the value.
-		"security":   {"INSTALL_LOCK": "true", "IMPORT_LOCAL_PATHS": "false"}, // Only these keys.
-		"admin":      {"EXTERNAL_USER_DISABLE_FEATURES": "manage_password"},
-		"webhook":    {"ALLOWED_HOST_LIST": "argocd-server.argocd.svc.cluster.local", "PROXY_URL": HiddenValue},
-		"migrations": {"ALLOW_LOCALNETWORKS": "false"},
+		"security":      {"INSTALL_LOCK": "true", "IMPORT_LOCAL_PATHS": "false"}, // Only these keys.
+		"admin":         {"EXTERNAL_USER_DISABLE_FEATURES": "manage_password"},
+		"webhook":       {"ALLOWED_HOST_LIST": "argocd-server.argocd.svc.cluster.local", "SKIP_TLS_VERIFY": "false", "PROXY_URL": HiddenValue},
+		"mailer":        {"FORCE_TRUST_SERVER_CERT": "false"},
+		"storage.minio": {"MINIO_INSECURE_SKIP_VERIFY": "true"},
+		"migrations":    {"ALLOW_LOCALNETWORKS": "false"},
 	}
 	for section, values := range want {
 		if !maps.Equal(rep.Start[section], values) {

@@ -616,7 +616,7 @@ type forgejoConfigSource struct {
 	rest rest.Client
 }
 
-func (s *forgejoConfigSource) Name() string { return s.sc.Service + " sign-in settings" }
+func (s *forgejoConfigSource) Name() string { return s.sc.Service + " settings" }
 
 func (s *forgejoConfigSource) References(ctx context.Context) ([]Reference, []string, error) {
 	var rep forgejo.ConfigReport

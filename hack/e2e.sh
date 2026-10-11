@@ -544,7 +544,17 @@ YAML
   [[ "$(worker_may_add_dev squared-admins)" == 403 ]] || die "the protection of /squared-admins is gone after the app.ini change"
   app_ini_replace 'IMPORT_LOCAL_PATHS = true' '' || die "cannot remove IMPORT_LOCAL_PATHS from app.ini of Forgejo"
   wait_for "the guard has no errors after app.ini is back" 60 guard_clean
-  log "the guard checks the sign-in and registration settings of Forgejo"
+  # A webhook delivery without the check of TLS certificates.
+  k -n forgejo exec deploy/forgejo -c forgejo -- sh -c "! grep -q '^SKIP_TLS_VERIFY' $ini && sed -i '/^\[webhook\]\$/a SKIP_TLS_VERIFY = true' $ini" \
+    || die "cannot add SKIP_TLS_VERIFY to app.ini of Forgejo"
+  guard_reports_tls() {
+    guard_status | jq -e '[.errors[]? | select(test("SKIP_TLS_VERIFY of [[]webhook[]] is on[^;]*[(]after the next start[)]"))] | length > 0' >/dev/null
+  }
+  wait_for "the guard reports SKIP_TLS_VERIFY in app.ini" 60 guard_reports_tls
+  [[ "$(worker_may_add_dev squared-admins)" == 403 ]] || die "the protection of /squared-admins is gone after the app.ini change"
+  app_ini_replace 'SKIP_TLS_VERIFY = true' '' || die "cannot remove SKIP_TLS_VERIFY from app.ini of Forgejo"
+  wait_for "the guard has no errors after app.ini is back" 60 guard_clean
+  log "the guard checks the sign-in, registration, webhook, migration and TLS settings of Forgejo"
 
   # A deploy key that can push to the platform repository, as a Forgejo
   # administrator can add it. A public key only; nobody has the private key.

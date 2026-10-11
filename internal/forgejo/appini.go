@@ -78,9 +78,11 @@ type reportedSection struct {
 // serves only INSTALL_LOCK, which changes the default of
 // ENABLE_OPENID_SIGNIN, and IMPORT_LOCAL_PATHS. [admin]
 // has the features that users cannot use, for example "manage_password".
-// Of [webhook], it serves only the value of ALLOWED_HOST_LIST: PROXY_URL
-// can have a password. [migrations] has the hosts that migrations and
-// mirrors can fetch from.
+// Of [webhook], it serves only the values of ALLOWED_HOST_LIST and
+// SKIP_TLS_VERIFY: PROXY_URL can have a password. [migrations] has the hosts
+// that migrations and mirrors can fetch from. Of [mailer] and
+// [email.incoming], which have passwords, it serves only the keys that
+// turn off the check of TLS certificates.
 var reportedSections = []reportedSection{
 	{name: "admin"},
 	{name: "oauth2_client"},
@@ -94,9 +96,17 @@ var reportedSections = []reportedSection{
 		"SHOW_REGISTRATION_BUTTON", "DEFAULT_USER_IS_RESTRICTED",
 	}},
 	{name: "security", keys: []string{"INSTALL_LOCK", "IMPORT_LOCAL_PATHS"}},
-	{name: "webhook", values: []string{"ALLOWED_HOST_LIST"}},
+	{name: "webhook", values: []string{"ALLOWED_HOST_LIST", "SKIP_TLS_VERIFY"}},
 	{name: "migrations"},
+	{name: "mailer", keys: []string{"FORCE_TRUST_SERVER_CERT", "SKIP_VERIFY"}},
+	{name: "email.incoming", keys: []string{"SKIP_TLS_VERIFY"}},
 }
+
+// keyInAllSections is a key that the reporter serves from every section
+// that has it. Forgejo reads it in [storage], [storage.<name>] and the
+// sections of the parts that keep files (for example [lfs]), and a value
+// in [storage] applies to all of them. It is a boolean, not a secret.
+const keyInAllSections = "MINIO_INSECURE_SKIP_VERIFY"
 
 // readReportedSections returns the served part of the reported sections.
 func readReportedSections(data []byte) map[string]map[string]string {
@@ -115,7 +125,37 @@ func readReportedSections(data []byte) map[string]map[string]string {
 		}
 		out[s.name] = served
 	}
+	for _, name := range iniSectionNames(data) {
+		v, ok := ReadINISection(data, name)[keyInAllSections]
+		if !ok {
+			continue
+		}
+		if out[name] == nil {
+			out[name] = map[string]string{}
+		}
+		if _, served := out[name][keyInAllSections]; !served {
+			out[name][keyInAllSections] = v
+		}
+	}
 	return out
+}
+
+// iniSectionNames returns the names of the sections of an app.ini file,
+// in the order of the file, without duplicates.
+func iniSectionNames(data []byte) []string {
+	var names []string
+	for _, line := range strings.Split(string(data), "\n") {
+		line = strings.TrimSpace(line)
+		if !strings.HasPrefix(line, "[") {
+			continue
+		}
+		if end := strings.IndexByte(line, ']'); end > 0 {
+			if name := strings.TrimSpace(line[1:end]); !slices.Contains(names, name) {
+				names = append(names, name)
+			}
+		}
+	}
+	return names
 }
 
 // ConfigReport is the answer of a ConfigReporter: the served part of the

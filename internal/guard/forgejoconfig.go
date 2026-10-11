@@ -36,8 +36,10 @@ var forgejoKnownKeys = map[string][]string{
 		"REQUIRE_EXTERNAL_REGISTRATION_CAPTCHA", "REQUIRE_EXTERNAL_REGISTRATION_PASSWORD", "REQUIRE_SIGNIN_VIEW",
 		"RESET_PASSWD_CODE_LIVE_MINUTES", "SHOW_MILESTONES_DASHBOARD_PAGE", "SHOW_REGISTRATION_BUTTON",
 		"USER_DELETE_WITH_COMMENTS_MAX_TIME", "USER_LOCATION_MAP_URL", "USERNAME_COOLDOWN_PERIOD", "VALID_SITE_URL_SCHEMES"},
-	"security":   {"IMPORT_LOCAL_PATHS", "INSTALL_LOCK"},
-	"migrations": {"ALLOWED_DOMAINS", "ALLOW_LOCALNETWORKS", "BLOCKED_DOMAINS", "MAX_ATTEMPTS", "RETRY_BACKOFF", "SKIP_TLS_VERIFY"},
+	"security":       {"IMPORT_LOCAL_PATHS", "INSTALL_LOCK"},
+	"mailer":         {"FORCE_TRUST_SERVER_CERT", "SKIP_VERIFY"}, // The reporter serves only these keys.
+	"email.incoming": {"SKIP_TLS_VERIFY"},                        // The reporter serves only this key.
+	"migrations":     {"ALLOWED_DOMAINS", "ALLOW_LOCALNETWORKS", "BLOCKED_DOMAINS", "MAX_ATTEMPTS", "RETRY_BACKOFF", "SKIP_TLS_VERIFY"},
 	"webhook": {"ALLOWED_HOST_LIST", "DELIVER_TIMEOUT", "PAGING_NUM", "PAYLOAD_COMMIT_LIMIT", "PROXY_HOSTS", "PROXY_URL",
 		"QUEUE_LENGTH", "SKIP_TLS_VERIFY"},
 }
@@ -87,6 +89,9 @@ type forgejoSignIn struct {
 	// migrationDomains are the entries of ALLOWED_DOMAINS of [migrations],
 	// in lower case.
 	migrationDomains []string
+	// tlsUnchecked are the settings that turn off the check of TLS
+	// certificates, as "<key> of [<section>]: <what goes without the check>".
+	tlsUnchecked []string
 	// externalPasswords tells that Keycloak users can set a Forgejo
 	// password: "manage_password" is not in USER_DISABLED_FEATURES or
 	// EXTERNAL_USER_DISABLE_FEATURES.
@@ -124,6 +129,7 @@ func forgejoSignInFrom(s map[string]map[string]string) forgejoSignIn {
 		f.webhookHosts = []string{"external"}
 	}
 	f.importLocalPaths = iniBool(s["security"]["IMPORT_LOCAL_PATHS"], false)
+	f.tlsUnchecked = tlsUnchecked(s)
 	mig := s["migrations"]
 	f.allowLocalNetworks = iniBool(mig["ALLOW_LOCALNETWORKS"], false)
 	f.migrationDomains = nil
@@ -158,6 +164,9 @@ func (f forgejoSignIn) problems(allowedHosts []string) []string {
 		if h != "external" && !slices.ContainsFunc(allowedHosts, func(a string) bool { return strings.EqualFold(a, h) }) {
 			hosts = append(hosts, h)
 		}
+	}
+	for _, t := range f.tlsUnchecked {
+		p = append(p, t+", thus a person in the network between Forgejo and the server can read or change the data")
 	}
 	if f.importLocalPaths {
 		p = append(p, "IMPORT_LOCAL_PATHS of [security] is on: Forgejo administrators and users with the flag allow_import_local can copy any directory of the Forgejo server into a repository, for example the repositories of other users")
@@ -239,9 +248,14 @@ func checkForgejoSettings(rep forgejo.ConfigReport, ignore, webhookHosts []strin
 			}
 		}
 	}
-	for _, section := range slices.Sorted(maps.Keys(forgejoKnownKeys)) {
+	sections := slices.Concat(slices.Collect(maps.Keys(rep.Start)), slices.Collect(maps.Keys(rep.Now)))
+	slices.Sort(sections)
+	for _, section := range slices.Compact(sections) {
 		if rep.Now != nil && !maps.Equal(rep.Start[section], rep.Now[section]) {
-			problems = append(problems, fmt.Sprintf("the section [%s] of app.ini changed after the start of Forgejo; Forgejo uses the old values until its next start", section))
+			problems = append(problems, fmt.Sprintf("the section [%s] of app.ini changed after the start of Forgejo, which uses the old values until its next start", section))
+		}
+		if _, known := forgejoKnownKeys[section]; !known {
+			continue // A storage section, with only MINIO_INSECURE_SKIP_VERIFY.
 		}
 		keys := slices.Concat(slices.Collect(maps.Keys(rep.Start[section])), slices.Collect(maps.Keys(rep.Now[section])))
 		slices.Sort(keys)
@@ -259,7 +273,7 @@ func checkForgejoSettings(rep forgejo.ConfigReport, ignore, webhookHosts []strin
 		}
 	}
 	if len(problems) > 0 {
-		return warnings, fmt.Errorf("the sign-in settings of Forgejo are not safe: %s. The guard keeps the current protection",
+		return warnings, fmt.Errorf("the settings of Forgejo are not safe: %s. The guard keeps the current protection",
 			strings.Join(problems, "; "))
 	}
 	return warnings, nil
@@ -283,4 +297,32 @@ func clusterNameFor(pattern string) string {
 		}
 	}
 	return ""
+}
+
+// tlsUnchecked returns the settings that turn off the check of TLS
+// certificates, with the defaults of Forgejo 15 (all off).
+func tlsUnchecked(s map[string]map[string]string) []string {
+	var out []string
+	add := func(on bool, key, section, what string) {
+		if on {
+			out = append(out, fmt.Sprintf("%s of [%s] is on: Forgejo does not check the certificate of %s", key, section, what))
+		}
+	}
+	add(iniBool(s["webhook"]["SKIP_TLS_VERIFY"], false), "SKIP_TLS_VERIFY", "webhook", "the webhook receivers")
+	add(iniBool(s["migrations"]["SKIP_TLS_VERIFY"], false), "SKIP_TLS_VERIFY", "migrations",
+		"the sources of migrations and mirrors, whose content goes into repositories")
+	add(iniBool(s["email.incoming"]["SKIP_TLS_VERIFY"], false), "SKIP_TLS_VERIFY", "email.incoming", "the IMAP server")
+	// SKIP_VERIFY is the old name of FORCE_TRUST_SERVER_CERT; Forgejo reads
+	// it only without the new key.
+	mailer := s["mailer"]
+	if v, ok := mailer["FORCE_TRUST_SERVER_CERT"]; ok {
+		add(iniBool(v, false), "FORCE_TRUST_SERVER_CERT", "mailer", "the SMTP server, which gets the password and the mails")
+	} else {
+		add(iniBool(mailer["SKIP_VERIFY"], false), "SKIP_VERIFY", "mailer", "the SMTP server, which gets the password and the mails")
+	}
+	for _, section := range slices.Sorted(maps.Keys(s)) {
+		add(iniBool(s[section]["MINIO_INSECURE_SKIP_VERIFY"], false), "MINIO_INSECURE_SKIP_VERIFY", section,
+			"the object storage, which keeps files of repositories, LFS, attachments or packages")
+	}
+	return out
 }

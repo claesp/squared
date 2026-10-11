@@ -92,6 +92,22 @@ func TestCheckForgejoSignInProblems(t *testing.T) {
 		}), "ALLOWED_HOST_LIST of [webhook] has private, 10.0.0.0/8"},
 		{"unknown key of webhook", both(func(s map[string]map[string]string) { s["webhook"]["ALLOWED_HOSTS"] = forgejo.HiddenValue }),
 			"unknown key webhook.ALLOWED_HOSTS"},
+		{"webhooks without TLS checks", both(func(s map[string]map[string]string) { s["webhook"]["SKIP_TLS_VERIFY"] = "true" }),
+			"SKIP_TLS_VERIFY of [webhook] is on: Forgejo does not check the certificate of the webhook receivers"},
+		{"migrations without TLS checks", both(func(s map[string]map[string]string) { s["migrations"] = map[string]string{"SKIP_TLS_VERIFY": "on"} }),
+			"SKIP_TLS_VERIFY of [migrations] is on"},
+		{"incoming mail without TLS checks", both(func(s map[string]map[string]string) {
+			s["email.incoming"] = map[string]string{"SKIP_TLS_VERIFY": "1"}
+		}), "SKIP_TLS_VERIFY of [email.incoming] is on"},
+		{"SMTP without TLS checks", both(func(s map[string]map[string]string) {
+			s["mailer"] = map[string]string{"FORCE_TRUST_SERVER_CERT": "true"}
+		}),
+			"FORCE_TRUST_SERVER_CERT of [mailer] is on"},
+		{"SMTP with the old name", both(func(s map[string]map[string]string) { s["mailer"] = map[string]string{"SKIP_VERIFY": "true"} }),
+			"SKIP_VERIFY of [mailer] is on"},
+		{"object storage without TLS checks", both(func(s map[string]map[string]string) {
+			s["storage"] = map[string]string{"MINIO_INSECURE_SKIP_VERIFY": "true"}
+		}), "MINIO_INSECURE_SKIP_VERIFY of [storage] is on"},
 		{"import of local paths", both(func(s map[string]map[string]string) { s["security"]["IMPORT_LOCAL_PATHS"] = "true" }),
 			"IMPORT_LOCAL_PATHS of [security] is on"},
 		{"local networks", both(func(s map[string]map[string]string) {
@@ -211,9 +227,10 @@ func TestCheckForgejoWebhookHosts(t *testing.T) {
 func TestForgejoProblemsHaveNoSemicolon(t *testing.T) {
 	bad := forgejoSignIn{accountLinking: "auto", openIDSignIn: true, openIDSignUp: true, reverseProxyAuth: true,
 		reverseProxyNew: true, internalSignIn: true, externalPasswords: true, webhookHosts: []string{"*"},
-		importLocalPaths: true, allowLocalNetworks: true, migrationDomains: []string{"*"}}
+		importLocalPaths: true, allowLocalNetworks: true, migrationDomains: []string{"*"},
+		tlsUnchecked: []string{"SKIP_TLS_VERIFY of [webhook] is on: Forgejo does not check the certificate of the webhook receivers"}}
 	problems := bad.problems(nil)
-	if len(problems) < 11 {
+	if len(problems) < 12 {
 		t.Fatalf("problems = %q", problems)
 	}
 	for _, p := range append(problems, bad.warnings()...) {
@@ -235,5 +252,26 @@ func TestCheckForgejoMigrations(t *testing.T) {
 		if _, err := checkForgejoSettings(forgejo.ConfigReport{Start: s, Now: cloneSignIn(s)}, nil, argoHosts); err != nil {
 			t.Fatalf("%v: %v", mig, err)
 		}
+	}
+}
+
+// TestCheckForgejoTLS checks the TLS settings that are safe, and that the
+// message about a changed section has no semicolon.
+func TestCheckForgejoTLS(t *testing.T) {
+	s := safeSignIn()
+	// The new key wins over the old name, as in Forgejo.
+	s["mailer"] = map[string]string{"FORCE_TRUST_SERVER_CERT": "false", "SKIP_VERIFY": "true"}
+	s["storage.minio"] = map[string]string{"MINIO_INSECURE_SKIP_VERIFY": "false"}
+	if _, err := checkForgejoSettings(forgejo.ConfigReport{Start: s, Now: cloneSignIn(s)}, nil, argoHosts); err != nil {
+		t.Fatal(err)
+	}
+
+	// Only a change of a storage section: one problem, without ";".
+	now := cloneSignIn(s)
+	now["storage.minio"]["MINIO_INSECURE_SKIP_VERIFY"] = "no"
+	_, err := checkForgejoSettings(forgejo.ConfigReport{Start: s, Now: now}, nil, argoHosts)
+	if err == nil || !strings.Contains(err.Error(), "the section [storage.minio] of app.ini changed") ||
+		strings.Count(err.Error(), ";") != 0 {
+		t.Fatalf("err = %v", err)
 	}
 }

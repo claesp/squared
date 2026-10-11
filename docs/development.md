@@ -219,7 +219,8 @@ all `*.localhost` names.
    unknown claim in the Argo CD `scopes` gives an error, that an Argo CD
    credential template that ends in the host name gives an error, that a
    cluster without TLS checks gives a warning, that a tenant project for
-   all namespaces, an application without automatic sync and a root
+   all namespaces, an application without automatic sync, an application
+   of the project `default` with the platform repository and a root
    application without `selfHeal` give errors, and that Keycloak
    mappers that write `groups` on the client `argocd` and `email` from
    another attribute on the client `forgejo` give errors. It also turns on

@@ -59,6 +59,7 @@ func (c Config) TenantGroup(slug string, role domain.Role) string {
 const (
 	LabelManaged      = "squared.dev/managed"
 	LabelDeploymentID = "squared.dev/deployment-id"
+	LabelEnvironment  = "squared.dev/environment"
 	AnnotRevision     = "squared.dev/revision"
 )
 
@@ -227,7 +228,7 @@ func (c Config) appProject(t *domain.Tenant, envs []domain.Environment) object {
 
 func (c Config) namespace(t *domain.Tenant, e domain.Environment) object {
 	l := labels(t.Slug)
-	l["squared.dev/environment"] = e.Name
+	l[LabelEnvironment] = e.Name
 	// Pod Security Admission blocks pods that do not agree with the
 	// "restricted" standard.
 	l["pod-security.kubernetes.io/enforce"] = "restricted"
@@ -374,7 +375,7 @@ func (c Config) ApplicationFile(in AppInput) (string, []byte, error) {
 	l[LabelManaged] = "true"
 	l[LabelDeploymentID] = d.ID
 	l[render.LabelDeployment] = d.Name
-	l["squared.dev/environment"] = d.Environment
+	l[LabelEnvironment] = d.Environment
 	obj := object{
 		APIVersion: "argoproj.io/v1alpha1",
 		Kind:       "Application",

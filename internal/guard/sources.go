@@ -42,9 +42,10 @@ type SourceConfig struct {
 	//   argocd-rbac      "g" lines of an Argo CD RBAC ConfigMap (Namespace, Name)
 	//   argocd-projects  roles of all Argo CD projects, and the limits of the tenant
 	//                    projects (Namespace, RepoPrefixes, ClusterServers)
-	//   argocd-applications the sync policies and the limits of the Argo CD
-	//                    applications (Namespace, Name of the root application,
-	//                    RepoPrefixes, ClusterServers). No groups, only errors.
+	//   argocd-applications the sync policies, the sources and the limits of the
+	//                    Argo CD applications (Namespace, Name and RootSource of
+	//                    the root application, RepoPrefixes, ClusterServers). No
+	//                    groups, only errors.
 	//   argocd-repositories the repositories and credential templates of Argo CD, from
 	//                    its API, without secrets (URL, PasswordFile with a token,
 	//                    RepoPrefixes). No groups, only errors.
@@ -119,6 +120,9 @@ type SourceConfig struct {
 	// argocd-applications: the API servers that Squared
 	// deploys to (SQUARED_CLUSTER_SERVER).
 	ClusterServers []string `json:"clusterServers,omitempty"`
+	// RootSource is for argocd-applications: the source of the root
+	// application (Name).
+	RootSource *RootSource `json:"rootSource,omitempty"`
 	// WebhookHosts is for forgejo-config: the hosts that ALLOWED_HOST_LIST
 	// may have besides "external", for example the host of Argo CD.
 	WebhookHosts []string `json:"webhookHosts,omitempty"`
@@ -189,8 +193,8 @@ func BuildSources(cfg *FileConfig, kc *kube.Client, idp KeycloakReader) ([]Sourc
 			}
 			sources = append(sources, &argoProjectsSource{sc: sc, kube: kc, tenants: tenants})
 		case "argocd-applications":
-			if sc.Name == "" || len(sc.RepoPrefixes) == 0 || len(sc.ClusterServers) == 0 {
-				return nil, fmt.Errorf("source %d: argocd-applications needs name, repoPrefixes and clusterServers", i)
+			if sc.Name == "" || sc.RootSource == nil || len(sc.RepoPrefixes) == 0 || len(sc.ClusterServers) == 0 {
+				return nil, fmt.Errorf("source %d: argocd-applications needs name, rootSource, repoPrefixes and clusterServers", i)
 			}
 			sources = append(sources, &argoAppsSource{sc: sc, kube: kc})
 		case "harbor-members":
@@ -443,7 +447,7 @@ func (s *argoAppsSource) References(ctx context.Context) ([]Reference, []string,
 		return nil, nil, err
 	}
 	rules := tenantProjectRules{ClusterServers: s.sc.ClusterServers, RepoPrefixes: s.sc.RepoPrefixes}
-	warnings, err := checkArgoApplications(apps, s.sc.Name, rules)
+	warnings, err := checkArgoApplications(apps, s.sc.Name, *s.sc.RootSource, rules)
 	return nil, warnings, err
 }
 

@@ -295,18 +295,32 @@ controls that it uses. Read [architecture.md](architecture.md) first.
   | Application | Result |
   |---|---|
   | An application of Squared (labels `app.kubernetes.io/managed-by: squared` and `squared.dev/managed: "true"`) without automatic sync, or with `prune` or `selfHeal` off: Git and the cluster can differ | Error |
-  | An application of Squared with another project than `tenant-<slug>`, another repository than the tenant repository, a branch or tag instead of a commit, Helm, Kustomize, a plugin or more than one source | Error |
-  | An application of Squared with a destination that is not in `clusterServers` or not `<tenant>-<environment>` | Error |
+  | An application of Squared with another project than `tenant-<slug>`, another repository than the tenant repository, or a branch or tag instead of a commit | Error |
+  | An application of Squared with another source path than the directory of its deployment (`<environment>/<deployment>`): the directory of another deployment or environment has other manifests | Error |
+  | An application of Squared with more than one source, a source hydrator, or a source field other than `repoURL`, `targetRevision` and `path` (for example `helm`, `kustomize`, `plugin`, `chart` or `directory`, which has Jsonnet): Argo CD then changes the manifests before it applies them | Error |
+  | An application of Squared with a destination that is not in `clusterServers` or not the namespace of its environment, or with labels for the environment and the deployment that do not agree with its name | Error |
   | An application of Squared with other sync options than `CreateNamespace=false` and `PruneLast=true`, or with `ignoreDifferences` | Error |
   | An application that Squared did not make in a tenant project | Error |
+  | An application that Squared did not make with a source in the GitOps repositories (`repoPrefixes`), also as one of more sources or for the source hydrator: it applies the manifests of a tenant without the limits of the tenant project, or the platform objects | Error |
   | The root application (`name`) without automatic sync, `prune` or `selfHeal`: a change by hand of a tenant project stays | Error |
+  | The root application with another source than `rootSource`, more than one source, a source hydrator, or a source field other than `directory.recurse`: for example `directory.exclude` can hide the tenant projects from it | Error |
   | The root application is not visible | Error |
 
   Argo CD changes a tenant project back after a change by hand only while
   the root application heals itself, thus the two checks work together.
-  The end-to-end test adds a tenant project for all namespaces and an
-  application without automatic sync, and turns off `selfHeal` of the
-  root application, and checks the errors.
+  The guard compares the addresses of the repositories as Argo CD does:
+  without the user, without `.git` and `/` at the end, and without
+  differences in case. Limit: the guard knows only the addresses in
+  `repoPrefixes`. Put all addresses at which Argo CD can reach Forgejo
+  into it, for example also the address of the Service in the cluster.
+  Limit: the guard reads only the applications in the namespace of Argo
+  CD. Argo CD reads applications in other namespaces only when
+  `application.namespaces` is set; tenant projects with
+  `sourceNamespaces` are an error.
+  The end-to-end test adds a tenant project for all namespaces, an
+  application without automatic sync, and an application of the project
+  `default` with the platform repository in another notation. It turns off
+  `selfHeal` of the root application, and checks the errors.
 - **Harbor configuration.** Only the Harbor system administrator can read
   the configuration through the API, and a robot account cannot get that
   right. The table `properties` of the Harbor database has all settings,

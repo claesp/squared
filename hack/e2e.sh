@@ -403,12 +403,17 @@ guard_reports_app_ini() {
 
 # app_ini_replace LINE NEW replaces the line LINE (the exact text, not a
 # pattern) with NEW in app.ini of the running Forgejo. It writes the file in
-# place, thus the owner and the mode stay.
+# place, thus the owner and the mode stay. All steps run in the pod: the
+# standard input of "kubectl exec" can lose the data, and an empty app.ini
+# stays.
 app_ini_replace() {
-  local ini=/data/gitea/conf/app.ini content
-  content="$(k -n forgejo exec deploy/forgejo -c forgejo -- awk -v a="$1" -v b="$2" \
-    '$0 == a { print b; found = 1; next } { print } END { if (!found) exit 1 }' "$ini")" || return 1
-  printf '%s\n' "$content" | k -n forgejo exec -i deploy/forgejo -c forgejo -- sh -c "cat > $ini"
+  k -n forgejo exec deploy/forgejo -c forgejo -- sh -c '
+    tmp=/tmp/app.ini.e2e
+    awk -v a="$1" -v b="$2" '"'"'$0 == a { print b; found = 1; next } { print } END { if (!found) exit 1 }'"'"' "$0" > "$tmp" &&
+      [ -s "$tmp" ] && cat "$tmp" > "$0"
+    rc=$?
+    rm -f "$tmp"
+    exit $rc' /data/gitea/conf/app.ini "$1" "$2"
 }
 
 check_guard() {
@@ -509,9 +514,10 @@ YAML
 
   # A tenant project that permits all namespaces, and an application in it
   # that does not sync by itself. Both have the labels of Squared, as a
-  # change by hand of the real objects has. The tenant e2eguard does not
-  # exist, and the application has no automatic sync, thus Argo CD deploys
-  # nothing.
+  # change by hand of the real objects has. Also an application of the
+  # project default with the platform repository, in another notation. The
+  # tenant e2eguard does not exist, and the applications have no automatic
+  # sync, thus Argo CD deploys nothing.
   local guard_repo="http://forgejo.localhost:30300/squared/tenant-e2eguard.git"
   k apply -f - >/dev/null <<YAML
 apiVersion: argoproj.io/v1alpha1
@@ -537,17 +543,28 @@ spec:
   source: { repoURL: "$guard_repo", targetRevision: "$(printf '0%.0s' {1..40})", path: deployments/dev/web }
   destination: { server: "https://kubernetes.default.svc", namespace: e2eguard-dev }
   syncPolicy: { syncOptions: [CreateNamespace=false, PruneLast=true] }
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: e2e-guard-copy
+  namespace: argocd
+spec:
+  project: default
+  source: { repoURL: "http://Forgejo.localhost:30300/squared/platform", targetRevision: main, path: tenants }
+  destination: { server: "https://kubernetes.default.svc", namespace: e2eguard-dev }
 YAML
   guard_reports_tenant_argo() {
     guard_status | jq -e '[.errors[]? | select(test("project tenant-e2eguard: a destination has the namespace \"[*]\""))] | length > 0' >/dev/null &&
-      guard_status | jq -e '[.errors[]? | select(test("application e2eguard-dev-web of tenant e2eguard: it does not sync automatically"))] | length > 0' >/dev/null
+      guard_status | jq -e '[.errors[]? | select(test("application e2eguard-dev-web of tenant e2eguard: it does not sync automatically"))] | length > 0' >/dev/null &&
+      guard_status | jq -e '[.errors[]? | select(test("application e2e-guard-copy uses the GitOps repository http://Forgejo[.]localhost:30300/squared/platform,"))] | length > 0' >/dev/null
   }
-  wait_for "the guard reports the tenant project for all namespaces and the application without automatic sync" 60 guard_reports_tenant_argo
+  wait_for "the guard reports the tenant project for all namespaces, the application without automatic sync and the copy of the platform repository" 60 guard_reports_tenant_argo
   [[ "$(worker_may_add_dev squared-admins)" == 403 ]] || die "the protection of /squared-admins is gone after the changed tenant project"
-  k -n argocd delete application e2eguard-dev-web >/dev/null
+  k -n argocd delete application e2eguard-dev-web e2e-guard-copy >/dev/null
   k -n argocd delete appproject tenant-e2eguard >/dev/null
   wait_for "the guard has no errors after the tenant project and the application are removed" 60 guard_clean
-  log "the guard checks the tenant projects and the applications of Argo CD"
+  log "the guard checks the tenant projects, the applications and their sources in Argo CD"
 
   # The root application without selfHeal: a change by hand of a tenant
   # project stays.

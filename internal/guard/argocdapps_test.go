@@ -28,13 +28,23 @@ func renderedApp(t *testing.T) map[string]any {
 	return obj
 }
 
-// rootApp returns the root application of the development environment.
+var devRootSource = RootSource{RepoURL: "http://forgejo.localhost:30300/squared/platform.git", TargetRevision: "main", Path: "tenants"}
+
+// rootApp returns the root application of the development environment
+// (deploy/kind/argocd-platform.yaml).
 func rootApp() map[string]any {
 	return map[string]any{
 		"metadata": map[string]any{"name": "squared-platform"},
 		"spec": map[string]any{"project": "squared-platform",
+			"source": map[string]any{"repoURL": devRootSource.RepoURL, "targetRevision": "main", "path": "tenants",
+				"directory": map[string]any{"recurse": true}},
 			"syncPolicy": map[string]any{"automated": map[string]any{"prune": true, "selfHeal": true}}},
 	}
+}
+
+// otherApp returns an application that Squared did not make.
+func otherApp(name, project string, source map[string]any) map[string]any {
+	return map[string]any{"metadata": map[string]any{"name": name}, "spec": map[string]any{"project": project, "source": source}}
 }
 
 func raws(t *testing.T, objs ...map[string]any) []json.RawMessage {
@@ -47,12 +57,13 @@ func raws(t *testing.T, objs ...map[string]any) []json.RawMessage {
 }
 
 func TestCheckArgoApplicationsRendered(t *testing.T) {
-	if _, err := checkArgoApplications(raws(t, rootApp(), renderedApp(t)), "squared-platform", devProjectRules); err != nil {
+	if _, err := checkArgoApplications(raws(t, rootApp(), renderedApp(t)), "squared-platform", devRootSource, devProjectRules); err != nil {
 		t.Fatalf("the applications that Squared makes have problems: %v", err)
 	}
-	// Another application outside the tenant projects does not matter.
-	other := map[string]any{"metadata": map[string]any{"name": "monitoring"}, "spec": map[string]any{"project": "default"}}
-	if _, err := checkArgoApplications(raws(t, rootApp(), other), "squared-platform", devProjectRules); err != nil {
+	// Another application outside the tenant projects and the GitOps
+	// repositories does not matter.
+	other := otherApp("monitoring", "default", map[string]any{"repoURL": "https://charts.example/", "chart": "monitoring"})
+	if _, err := checkArgoApplications(raws(t, rootApp(), other), "squared-platform", devRootSource, devProjectRules); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -82,7 +93,25 @@ func TestCheckArgoApplicationsChanges(t *testing.T) {
 		}, `its source "https://git.example/x.git"`},
 		{"plugin", func(app, _ map[string]any) {
 			spec(app)["source"].(map[string]any)["plugin"] = map[string]any{"name": "x"}
-		}, "Helm, Kustomize or a plugin"},
+		}, "its source has the field plugin"},
+		{"jsonnet", func(app, _ map[string]any) {
+			spec(app)["source"].(map[string]any)["directory"] = map[string]any{"jsonnet": map[string]any{"libs": []any{"/"}}}
+		}, "its source has the field directory"},
+		{"path of another environment", func(app, _ map[string]any) {
+			spec(app)["source"].(map[string]any)["path"] = "prod/shop"
+		}, `its source path is "prod/shop", not the directory "dev/shop"`},
+		{"path with dots", func(app, _ map[string]any) {
+			spec(app)["source"].(map[string]any)["path"] = "dev/shop/../../prod/shop"
+		}, `its source path is "dev/shop/../../prod/shop"`},
+		{"more sources", func(app, _ map[string]any) {
+			spec(app)["sources"] = []any{map[string]any{"repoURL": "https://charts.example/", "chart": "x", "ref": "values"}}
+		}, "it has more than one source"},
+		{"source hydrator", func(app, _ map[string]any) {
+			spec(app)["sourceHydrator"] = map[string]any{"drySource": map[string]any{"repoURL": "https://git.example/x.git"}}
+		}, "it has a source hydrator"},
+		{"environment label", func(app, _ map[string]any) {
+			app["metadata"].(map[string]any)["labels"].(map[string]any)["squared.dev/environment"] = "prod"
+		}, "do not agree with its name"},
 		{"other namespace", func(app, _ map[string]any) {
 			spec(app)["destination"] = map[string]any{"server": "https://kubernetes.default.svc", "namespace": "kube-system"}
 		}, `the namespace "kube-system"`},
@@ -95,12 +124,24 @@ func TestCheckArgoApplicationsChanges(t *testing.T) {
 		{"root without self-heal", func(_, root map[string]any) {
 			sync(root)["automated"] = map[string]any{"prune": true}
 		}, "the root application squared-platform: selfHeal is off"},
+		{"root from another repository", func(_, root map[string]any) {
+			spec(root)["source"].(map[string]any)["repoURL"] = "https://git.example/platform.git"
+		}, `the root application squared-platform: its source "https://git.example/platform.git" is not the platform repository`},
+		{"root from another branch", func(_, root map[string]any) {
+			spec(root)["source"].(map[string]any)["targetRevision"] = "dev"
+		}, `it follows "dev", not "main"`},
+		{"root with a filter", func(_, root map[string]any) {
+			spec(root)["source"].(map[string]any)["directory"] = map[string]any{"recurse": true, "exclude": "*/appproject.json"}
+		}, "its source has the field directory.exclude"},
+		{"root with Kustomize", func(_, root map[string]any) {
+			spec(root)["source"].(map[string]any)["kustomize"] = map[string]any{"namePrefix": "x"}
+		}, "the root application squared-platform: its source has the field kustomize"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			app, root := renderedApp(t), rootApp()
 			tt.change(app, root)
-			_, err := checkArgoApplications(raws(t, root, app), "squared-platform", devProjectRules)
+			_, err := checkArgoApplications(raws(t, root, app), "squared-platform", devRootSource, devProjectRules)
 			if err == nil || !strings.Contains(err.Error(), tt.want) {
 				t.Fatalf("err = %v, want %q", err, tt.want)
 			}
@@ -109,12 +150,34 @@ func TestCheckArgoApplicationsChanges(t *testing.T) {
 
 	// An application that Squared did not make, in a tenant project.
 	other := map[string]any{"metadata": map[string]any{"name": "sneaky"}, "spec": map[string]any{"project": "tenant-acme"}}
-	if _, err := checkArgoApplications(raws(t, rootApp(), other), "squared-platform", devProjectRules); err == nil ||
+	if _, err := checkArgoApplications(raws(t, rootApp(), other), "squared-platform", devRootSource, devProjectRules); err == nil ||
 		!strings.Contains(err.Error(), "the application sneaky uses the tenant project tenant-acme, but Squared did not make it") {
 		t.Fatalf("err = %v", err)
 	}
+	// Applications that Squared did not make, with a GitOps repository:
+	// in another notation, as one of more sources, or for the source
+	// hydrator.
+	for _, o := range []map[string]any{
+		otherApp("copy", "default", map[string]any{"repoURL": "HTTP://user@Forgejo.localhost:30300/Squared/Tenant-Acme/", "path": "dev/shop"}),
+		{"metadata": map[string]any{"name": "copy"}, "spec": map[string]any{"project": "default", "sources": []any{
+			map[string]any{"repoURL": "https://charts.example/", "chart": "x"},
+			map[string]any{"repoURL": "http://forgejo.localhost:30300/squared/platform", "ref": "values"}}}},
+		{"metadata": map[string]any{"name": "copy"}, "spec": map[string]any{"project": "default", "sourceHydrator": map[string]any{
+			"drySource": map[string]any{"repoURL": "http://forgejo.localhost:30300/squared/tenant-acme.git"}}}},
+	} {
+		if _, err := checkArgoApplications(raws(t, rootApp(), o), "squared-platform", devRootSource, devProjectRules); err == nil ||
+			!strings.Contains(err.Error(), "the application copy uses the GitOps repository") {
+			t.Errorf("err = %v", err)
+		}
+	}
+	// Another organization with the same start of the name.
+	o := otherApp("other", "default", map[string]any{"repoURL": "http://forgejo.localhost:30300/squared-tools/x.git"})
+	if _, err := checkArgoApplications(raws(t, rootApp(), o), "squared-platform", devRootSource, devProjectRules); err != nil {
+		t.Errorf("err = %v", err)
+	}
+
 	// Without the root application.
-	if _, err := checkArgoApplications(nil, "squared-platform", devProjectRules); err == nil ||
+	if _, err := checkArgoApplications(nil, "squared-platform", devRootSource, devProjectRules); err == nil ||
 		!strings.Contains(err.Error(), "does not see the root application") {
 		t.Fatalf("err = %v", err)
 	}

@@ -8,6 +8,7 @@
     {"type": "argocd-projects", "service": "Argo CD", "namespace": "argocd",
      "repoPrefixes": ["http://forgejo.localhost:30300/squared/"], "clusterServers": ["https://kubernetes.default.svc"]},
     {"type": "argocd-applications", "service": "Argo CD", "namespace": "argocd", "name": "squared-platform",
+     "rootSource": {"repoURL": "http://forgejo.localhost:30300/squared/platform.git", "targetRevision": "main", "path": "tenants"},
      "repoPrefixes": ["http://forgejo.localhost:30300/squared/"], "clusterServers": ["https://kubernetes.default.svc"]},
     {"type": "argocd-repositories", "service": "Argo CD", "url": "http://argocd-server.argocd.svc.cluster.local",
      "passwordFile": "/etc/squared/secrets/argocd-token", "repoPrefixes": ["http://forgejo.localhost:30300/squared/"]},

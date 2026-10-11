@@ -12,8 +12,11 @@ import (
 	"squared/internal/forgejo"
 )
 
-// safeSignIn returns the sign-in settings of the development environment,
-// as the reporter serves them.
+// argoHosts are the webhook hosts of the development environment.
+var argoHosts = []string{"argocd-server.argocd.svc.cluster.local"}
+
+// safeSignIn returns the settings of the development environment, as the
+// reporter serves them.
 func safeSignIn() map[string]map[string]string {
 	return map[string]map[string]string{
 		"admin":         {"EXTERNAL_USER_DISABLE_FEATURES": "manage_password"},
@@ -22,6 +25,7 @@ func safeSignIn() map[string]map[string]string {
 		"service": {"DISABLE_REGISTRATION": "false", "ALLOW_ONLY_EXTERNAL_REGISTRATION": "true", "SHOW_REGISTRATION_BUTTON": "false",
 			"ENABLE_INTERNAL_SIGNIN": "false", "REQUIRE_SIGNIN_VIEW": forgejo.HiddenValue},
 		"security": {"INSTALL_LOCK": "true"},
+		"webhook":  {"ALLOWED_HOST_LIST": "argocd-server.argocd.svc.cluster.local", "PROXY_URL": forgejo.HiddenValue},
 	}
 }
 
@@ -35,7 +39,7 @@ func cloneSignIn(s map[string]map[string]string) map[string]map[string]string {
 
 func TestCheckForgejoSignInSafe(t *testing.T) {
 	rep := forgejo.ConfigReport{Start: safeSignIn(), Now: safeSignIn()}
-	if warnings, err := checkForgejoSignIn(rep, nil); err != nil || len(warnings) != 0 {
+	if warnings, err := checkForgejoSettings(rep, nil, argoHosts); err != nil || len(warnings) != 0 {
 		t.Fatalf("err %v, warnings %v", err, warnings)
 	}
 }
@@ -81,6 +85,13 @@ func TestCheckForgejoSignInProblems(t *testing.T) {
 			s["admin"]["EXTERNAL_USERS_DISABLED_FEATURES"] = s["admin"]["EXTERNAL_USER_DISABLE_FEATURES"]
 			delete(s["admin"], "EXTERNAL_USER_DISABLE_FEATURES")
 		}), "unknown key admin.EXTERNAL_USERS_DISABLED_FEATURES"},
+		{"all hosts in the cluster", both(func(s map[string]map[string]string) { s["webhook"]["ALLOWED_HOST_LIST"] = "*.svc.cluster.local" }),
+			"ALLOWED_HOST_LIST of [webhook] has *.svc.cluster.local"},
+		{"private networks", both(func(s map[string]map[string]string) {
+			s["webhook"]["ALLOWED_HOST_LIST"] = "argocd-server.argocd.svc.cluster.local, Private, 10.0.0.0/8"
+		}), "ALLOWED_HOST_LIST of [webhook] has private, 10.0.0.0/8"},
+		{"unknown key of webhook", both(func(s map[string]map[string]string) { s["webhook"]["ALLOWED_HOSTS"] = forgejo.HiddenValue }),
+			"unknown key webhook.ALLOWED_HOSTS"},
 		{"changed file", func(r *forgejo.ConfigReport) { r.Now["service"]["SHOW_REGISTRATION_BUTTON"] = "true" },
 			"the section [service] of app.ini changed after the start"},
 		{"unknown key of oauth2_client", both(func(s map[string]map[string]string) { s["oauth2_client"]["account_linking"] = "auto" }),
@@ -93,7 +104,7 @@ func TestCheckForgejoSignInProblems(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			r := forgejo.ConfigReport{Start: safeSignIn(), Now: safeSignIn()}
 			tt.change(&r)
-			if _, err := checkForgejoSignIn(r, nil); err == nil || !strings.Contains(err.Error(), tt.errMsg) {
+			if _, err := checkForgejoSettings(r, nil, argoHosts); err == nil || !strings.Contains(err.Error(), tt.errMsg) {
 				t.Fatalf("err = %v, want %q", err, tt.errMsg)
 			}
 		})
@@ -108,7 +119,7 @@ func TestCheckForgejoSignInWarnings(t *testing.T) {
 		s := safeSignIn()
 		s["oauth2_client"]["ACCOUNT_LINKING"] = v
 		s["oauth2_client"]["ENABLE_AUTO_REGISTRATION"] = "false"
-		warnings, err := checkForgejoSignIn(forgejo.ConfigReport{Start: s, Now: cloneSignIn(s)}, nil)
+		warnings, err := checkForgejoSettings(forgejo.ConfigReport{Start: s, Now: cloneSignIn(s)}, nil, argoHosts)
 		if err != nil || len(warnings) != 2 || !strings.Contains(warnings[0], "ACCOUNT_LINKING is login") ||
 			!strings.Contains(warnings[1], "does not make accounts for Keycloak users") {
 			t.Fatalf("value %q: err %v, warnings %q", v, err, warnings)
@@ -120,11 +131,11 @@ func TestCheckForgejoSignInWarnings(t *testing.T) {
 	s := safeSignIn()
 	s["service"]["DEFAULT_THEME_COLOR"] = forgejo.HiddenValue
 	r := forgejo.ConfigReport{Start: s, Now: cloneSignIn(s)}
-	warnings, err := checkForgejoSignIn(r, nil)
+	warnings, err := checkForgejoSettings(r, nil, argoHosts)
 	if err != nil || len(warnings) != 1 || !strings.Contains(warnings[0], "service.DEFAULT_THEME_COLOR") {
 		t.Fatalf("err %v, warnings %q", err, warnings)
 	}
-	if warnings, err := checkForgejoSignIn(r, []string{"service.DEFAULT_THEME_COLOR"}); err != nil || len(warnings) != 0 {
+	if warnings, err := checkForgejoSettings(r, []string{"service.DEFAULT_THEME_COLOR"}, argoHosts); err != nil || len(warnings) != 0 {
 		t.Fatalf("ignoreFields: err %v, warnings %q", err, warnings)
 	}
 }
@@ -138,7 +149,7 @@ func TestForgejoConfigSource(t *testing.T) {
 	}))
 	defer srv.Close()
 	sources, err := BuildSources(&FileConfig{Groups: []string{"/a"}, Sources: []SourceConfig{
-		{Type: "forgejo-config", Service: "Forgejo", URL: srv.URL + "/sign-in"}}}, nil, nil)
+		{Type: "forgejo-config", Service: "Forgejo", URL: srv.URL + "/settings"}}}, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -157,8 +168,42 @@ func TestCheckForgejoSignInFeatureLists(t *testing.T) {
 	} {
 		s := safeSignIn()
 		s["admin"] = admin
-		if _, err := checkForgejoSignIn(forgejo.ConfigReport{Start: s, Now: cloneSignIn(s)}, nil); err != nil {
+		if _, err := checkForgejoSettings(forgejo.ConfigReport{Start: s, Now: cloneSignIn(s)}, nil, argoHosts); err != nil {
 			t.Fatalf("%v: %v", admin, err)
+		}
+	}
+}
+
+// TestCheckForgejoWebhookHosts checks the values of ALLOWED_HOST_LIST that
+// are safe.
+func TestCheckForgejoWebhookHosts(t *testing.T) {
+	for _, v := range []string{"", "external", "External, ARGOCD-SERVER.argocd.svc.cluster.local"} {
+		s := safeSignIn()
+		s["webhook"]["ALLOWED_HOST_LIST"] = v
+		if _, err := checkForgejoSettings(forgejo.ConfigReport{Start: s, Now: cloneSignIn(s)}, nil, argoHosts); err != nil {
+			t.Fatalf("%q: %v", v, err)
+		}
+	}
+	// Without webhookHosts, an internal host is an error.
+	s := safeSignIn()
+	if _, err := checkForgejoSettings(forgejo.ConfigReport{Start: s, Now: cloneSignIn(s)}, nil, nil); err == nil {
+		t.Fatal("an internal host without webhookHosts gave no error")
+	}
+}
+
+// TestForgejoProblemsHaveNoSemicolon checks that no message has ";": the
+// guard joins the messages with it, and the tests and the operators split
+// them there.
+func TestForgejoProblemsHaveNoSemicolon(t *testing.T) {
+	bad := forgejoSignIn{accountLinking: "auto", openIDSignIn: true, openIDSignUp: true, reverseProxyAuth: true,
+		reverseProxyNew: true, internalSignIn: true, externalPasswords: true, webhookHosts: []string{"*"}}
+	problems := bad.problems(nil)
+	if len(problems) < 8 {
+		t.Fatalf("problems = %q", problems)
+	}
+	for _, p := range append(problems, bad.warnings()...) {
+		if strings.Contains(p, ";") {
+			t.Errorf("the message has a semicolon: %q", p)
 		}
 	}
 }

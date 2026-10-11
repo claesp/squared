@@ -104,7 +104,10 @@ For the copy of tenant members (decision D13 in the architecture):
    `ACCOUNT_LINKING = disabled` and `USERNAME = nickname`. In `[service]`,
    set `ENABLE_INTERNAL_SIGNIN = false`; in `[admin]`, set
    `EXTERNAL_USER_DISABLE_FEATURES = manage_password`. The local
-   administrator then uses only the API and the command line in the pod. Set
+   administrator then uses only the API and the command line in the pod.
+   In `[webhook]`, set `ALLOWED_HOST_LIST` to `external` and the host of
+   Argo CD only, and put that host into `webhookHosts` of the guard
+   source `forgejo-config`. Set
    `SQUARED_FORGEJO_AUTH_SOURCE_ID` of the worker to the ID of the Keycloak
    authentication source (`forgejo admin auth list`).
 5. If Forgejo has accounts from an earlier version of Squared, which

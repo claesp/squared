@@ -11,7 +11,7 @@ import (
 )
 
 // forgejoKnownKeys are the keys of the sign-in sections in Forgejo 15
-// (modules/setting/admin.go, oauth2.go, service.go and mailer.go). Forgejo reads key
+// (modules/setting/admin.go, oauth2.go, service.go, mailer.go and webhook.go). Forgejo reads key
 // names with the exact case.
 var forgejoKnownKeys = map[string][]string{
 	"admin": {"DEFAULT_EMAIL_NOTIFICATIONS", "DISABLE_REGULAR_ORG_CREATION", "EXTERNAL_USER_DISABLE_FEATURES",
@@ -35,12 +35,14 @@ var forgejoKnownKeys = map[string][]string{
 		"RESET_PASSWD_CODE_LIVE_MINUTES", "SHOW_MILESTONES_DASHBOARD_PAGE", "SHOW_REGISTRATION_BUTTON",
 		"USER_DELETE_WITH_COMMENTS_MAX_TIME", "USER_LOCATION_MAP_URL", "USERNAME_COOLDOWN_PERIOD", "VALID_SITE_URL_SCHEMES"},
 	"security": {"INSTALL_LOCK"},
+	"webhook": {"ALLOWED_HOST_LIST", "DELIVER_TIMEOUT", "PAGING_NUM", "PAYLOAD_COMMIT_LIMIT", "PROXY_HOSTS", "PROXY_URL",
+		"QUEUE_LENGTH", "SKIP_TLS_VERIFY"},
 }
 
 // signInLike matches the names of keys that can change who can sign in or
 // make an account. An unknown key in [service] or [admin] with such a name
 // is an error; other unknown keys of these sections are warnings. All
-// unknown keys of [oauth2_client] and [openid] are errors.
+// unknown keys of [oauth2_client], [openid] and [webhook] are errors.
 var signInLike = regexp.MustCompile(`(?i)regist|sign_?up|sign_?in|login|auth|link|external|internal|proxy|openid|account|passw|featur`)
 
 // iniBool reads a boolean as go-ini does for Forgejo (MustBool): an
@@ -68,6 +70,9 @@ type forgejoSignIn struct {
 	reverseProxyAuth    bool // ENABLE_REVERSE_PROXY_AUTHENTICATION or _API
 	reverseProxyNew     bool // ENABLE_REVERSE_PROXY_AUTO_REGISTRATION
 	internalSignIn      bool // ENABLE_INTERNAL_SIGNIN: the web form accepts passwords.
+	// webhookHosts are the entries of ALLOWED_HOST_LIST, in lower case;
+	// "external" without a value, as in Forgejo.
+	webhookHosts []string
 	// externalPasswords tells that Keycloak users can set a Forgejo
 	// password: "manage_password" is not in USER_DISABLED_FEATURES or
 	// EXTERNAL_USER_DISABLE_FEATURES.
@@ -97,6 +102,13 @@ func forgejoSignInFrom(s map[string]map[string]string) forgejoSignIn {
 		iniBool(svc["ENABLE_REVERSE_PROXY_AUTHENTICATION_API"], false)
 	f.reverseProxyNew = iniBool(svc["ENABLE_REVERSE_PROXY_AUTO_REGISTRATION"], false)
 	f.internalSignIn = iniBool(svc["ENABLE_INTERNAL_SIGNIN"], true)
+	f.webhookHosts = nil
+	for _, e := range iniList(s["webhook"]["ALLOWED_HOST_LIST"]) {
+		f.webhookHosts = append(f.webhookHosts, strings.ToLower(e))
+	}
+	if len(f.webhookHosts) == 0 {
+		f.webhookHosts = []string{"external"}
+	}
 	adm := s["admin"]
 	f.externalPasswords = !slices.Contains(iniList(adm["USER_DISABLED_FEATURES"]), "manage_password") &&
 		!slices.Contains(iniList(adm["EXTERNAL_USER_DISABLE_FEATURES"]), "manage_password")
@@ -115,9 +127,21 @@ func iniList(v string) []string {
 }
 
 // problems returns the settings that let a person get an account or the
-// account of another person without Keycloak.
-func (f forgejoSignIn) problems() []string {
+// account of another person without Keycloak, and the hosts that webhooks
+// can send requests to although allowedHosts does not have them. A
+// message has no ";": the guard joins the messages with it.
+func (f forgejoSignIn) problems(allowedHosts []string) []string {
 	var p []string
+	var hosts []string
+	for _, h := range f.webhookHosts {
+		if h != "external" && !slices.ContainsFunc(allowedHosts, func(a string) bool { return strings.EqualFold(a, h) }) {
+			hosts = append(hosts, h)
+		}
+	}
+	if len(hosts) > 0 {
+		p = append(p, fmt.Sprintf("ALLOWED_HOST_LIST of [webhook] has %s: the webhooks of all Forgejo users, also of personal repositories, can send requests there, and a keyword like private or loopback, a network, or a host pattern reaches the services in the cluster. Permit only external and the hosts in webhookHosts",
+			strings.Join(hosts, ", ")))
+	}
 	if f.accountLinking == "auto" {
 		p = append(p, "ACCOUNT_LINKING is auto: Forgejo gives a sign-in the existing account with the same user name or email address")
 	}
@@ -158,13 +182,14 @@ func (f forgejoSignIn) warnings() []string {
 	return w
 }
 
-// checkForgejoSignIn checks the sign-in and registration settings of
-// Forgejo. Forgejo accounts must come only from Keycloak, and only Forgejo
-// must find the account of a sign-in, by the Keycloak user ID. The guard
-// checks the values that Forgejo uses now (Start) and the values that it
-// uses after the next start (Now). ignore are new keys that an operator
-// checked, as "<section>.<key>".
-func checkForgejoSignIn(rep forgejo.ConfigReport, ignore []string) ([]string, error) {
+// checkForgejoSettings checks the sign-in, registration and webhook
+// settings of Forgejo. Forgejo accounts must come only from Keycloak, only
+// Forgejo must find the account of a sign-in, by the Keycloak user ID, and
+// webhooks must not reach the services in the cluster other than
+// webhookHosts. The guard checks the values that Forgejo uses now (Start)
+// and the values that it uses after the next start (Now). ignore are new
+// keys that an operator checked, as "<section>.<key>".
+func checkForgejoSettings(rep forgejo.ConfigReport, ignore, webhookHosts []string) ([]string, error) {
 	var problems []string
 	if rep.Error != "" {
 		problems = append(problems, "the reporter cannot read app.ini: "+rep.Error)
@@ -172,11 +197,11 @@ func checkForgejoSignIn(rep forgejo.ConfigReport, ignore []string) ([]string, er
 	var warnings []string
 	if rep.Start != nil {
 		now := forgejoSignInFrom(rep.Start)
-		problems = append(problems, now.problems()...)
+		problems = append(problems, now.problems(webhookHosts)...)
 		warnings = now.warnings()
 	}
 	if rep.Now != nil {
-		for _, p := range forgejoSignInFrom(rep.Now).problems() {
+		for _, p := range forgejoSignInFrom(rep.Now).problems(webhookHosts) {
 			if !slices.Contains(problems, p) {
 				problems = append(problems, p+" (after the next start)")
 			}

@@ -64,13 +64,16 @@ ACCOUNT_LINKING = disabled
 ENABLE_OPENID_SIGNIN = false
 [admin]
 EXTERNAL_USER_DISABLE_FEATURES = manage_password
+[webhook]
+ALLOWED_HOST_LIST = argocd-server.argocd.svc.cluster.local
+PROXY_URL = http://user:s3cret-proxy@proxy.example:3128
 [database]
 PASSWD = s3cret-db
 `)
 	r := NewConfigReporter(path)
 	write("[oauth2_client]\nACCOUNT_LINKING = auto\n")
 	rec := httptest.NewRecorder()
-	r.ServeHTTP(rec, httptest.NewRequest("GET", "/sign-in", nil))
+	r.ServeHTTP(rec, httptest.NewRequest("GET", "/settings", nil))
 	var rep ConfigReport
 	if err := json.Unmarshal(rec.Body.Bytes(), &rep); err != nil {
 		t.Fatal(err)
@@ -82,6 +85,7 @@ PASSWD = s3cret-db
 			"RECAPTCHA_SECRET": HiddenValue}, // The name, not the value.
 		"security": {"INSTALL_LOCK": "true"}, // Only this key.
 		"admin":    {"EXTERNAL_USER_DISABLE_FEATURES": "manage_password"},
+		"webhook":  {"ALLOWED_HOST_LIST": "argocd-server.argocd.svc.cluster.local", "PROXY_URL": HiddenValue},
 	}
 	for section, values := range want {
 		if !maps.Equal(rep.Start[section], values) {
@@ -102,7 +106,7 @@ PASSWD = s3cret-db
 func TestConfigReporterWithoutFile(t *testing.T) {
 	r := NewConfigReporter(filepath.Join(t.TempDir(), "missing.ini"))
 	rec := httptest.NewRecorder()
-	r.ServeHTTP(rec, httptest.NewRequest("GET", "/sign-in", nil))
+	r.ServeHTTP(rec, httptest.NewRequest("GET", "/settings", nil))
 	var rep ConfigReport
 	if err := json.Unmarshal(rec.Body.Bytes(), &rep); err != nil {
 		t.Fatal(err)

@@ -392,14 +392,23 @@ guard_reports_keycloak() {
 # guard reports an error that matches the pattern (jq regex), checks that
 # the protection of /squared-admins stays, and puts the line back.
 guard_reports_app_ini() {
-  local line="$1" new="$2" pattern="$3" ini=/data/gitea/conf/app.ini
-  forgejo_sh() { k -n forgejo exec deploy/forgejo -c forgejo -- sh -c "$1"; }
-  forgejo_sh "grep -qx '$line' $ini && sed -i 's/^$line\$/$new/' $ini" || die "app.ini of Forgejo has no line '$line'"
+  local line="$1" new="$2" pattern="$3"
+  app_ini_replace "$line" "$new" || die "app.ini of Forgejo has no line '$line'"
   guard_reports() { guard_status | jq -e --arg p "$pattern" '[.errors[]? | select(test($p))] | length > 0' >/dev/null; }
   wait_for "the guard reports '$new' in app.ini" 60 guard_reports
   [[ "$(worker_may_add_dev squared-admins)" == 403 ]] || die "the protection of /squared-admins is gone after the app.ini change"
-  forgejo_sh "sed -i 's/^$new\$/$line/' $ini"
+  app_ini_replace "$new" "$line" || die "cannot put the line '$line' back into app.ini of Forgejo"
   wait_for "the guard has no errors after app.ini is back" 60 guard_clean
+}
+
+# app_ini_replace LINE NEW replaces the line LINE (the exact text, not a
+# pattern) with NEW in app.ini of the running Forgejo. It writes the file in
+# place, thus the owner and the mode stay.
+app_ini_replace() {
+  local ini=/data/gitea/conf/app.ini content
+  content="$(k -n forgejo exec deploy/forgejo -c forgejo -- awk -v a="$1" -v b="$2" \
+    '$0 == a { print b; found = 1; next } { print } END { if (!found) exit 1 }' "$ini")" || return 1
+  printf '%s\n' "$content" | k -n forgejo exec -i deploy/forgejo -c forgejo -- sh -c "cat > $ini"
 }
 
 check_guard() {
@@ -511,6 +520,8 @@ YAML
     'local registration is open[^;]*[(]after the next start[)]'
   guard_reports_app_ini 'ENABLE_INTERNAL_SIGNIN = false' 'ENABLE_INTERNAL_SIGNIN = true' \
     'ENABLE_INTERNAL_SIGNIN is on[^;]*[(]after the next start[)]'
+  guard_reports_app_ini 'ALLOWED_HOST_LIST = external,argocd-server.argocd.svc.cluster.local' 'ALLOWED_HOST_LIST = *.svc.cluster.local' \
+    'ALLOWED_HOST_LIST of [[]webhook[]] has [*][.]svc[.]cluster[.]local[^;]*[(]after the next start[)]'
   log "the guard checks the sign-in and registration settings of Forgejo"
 
   # A deploy key that can push to the platform repository, as a Forgejo
@@ -650,6 +661,13 @@ api POST /tenants "$(jq -n --arg s "$TENANT" --arg o "$ADMIN_EMAIL" \
 wait_for "tenant is ready" 300 tenant_ready
 k get namespace "$NS" >/dev/null
 k -n "$NS" get secret squared-registry >/dev/null
+# The webhook to Argo CD still works with the short ALLOWED_HOST_LIST: the
+# last delivery of the organization webhook succeeded.
+hook_ok() {
+  [[ "$(k -n forgejo exec statefulset/forgejo-db -- psql -U forgejo -d forgejo -Atc \
+    "SELECT t.is_succeed FROM hook_task t JOIN webhook w ON w.id = t.hook_id WHERE w.repo_id = 0 AND w.owner_id > 0 AND t.is_delivered ORDER BY t.id DESC LIMIT 1")" == t ]]
+}
+wait_for "the webhook to Argo CD delivers" 60 hook_ok
 fj_admin "/repos/squared/tenant-$TENANT/branch_protections/main" \
   | jq -e '.push_whitelist_usernames == ["squared-bot"] and .merge_whitelist_usernames == ["squared-bot"] and .apply_to_admins' >/dev/null \
   || die "the tenant repository has no branch protection for Squared only"

@@ -71,13 +71,15 @@ type reportedSection struct {
 	values []string
 }
 
-// signInSections are the sections with the sign-in and registration
-// settings. [service] has secrets (for example RECAPTCHA_SECRET), thus the
-// reporter serves its key names, but only the values of the sign-in and
-// registration settings. Of [security], it serves only INSTALL_LOCK, which
-// changes the default of ENABLE_OPENID_SIGNIN. [admin] has the features
-// that users cannot use, for example "manage_password".
-var signInSections = []reportedSection{
+// reportedSections are the sections with the sign-in, registration and
+// webhook settings. [service] has secrets (for example RECAPTCHA_SECRET),
+// thus the reporter serves its key names, but only the values of the
+// sign-in and registration settings. Of [security], it serves only
+// INSTALL_LOCK, which changes the default of ENABLE_OPENID_SIGNIN. [admin]
+// has the features that users cannot use, for example "manage_password".
+// Of [webhook], it serves only the value of ALLOWED_HOST_LIST: PROXY_URL
+// can have a password.
+var reportedSections = []reportedSection{
 	{name: "admin"},
 	{name: "oauth2_client"},
 	{name: "openid"},
@@ -90,12 +92,13 @@ var signInSections = []reportedSection{
 		"SHOW_REGISTRATION_BUTTON", "DEFAULT_USER_IS_RESTRICTED",
 	}},
 	{name: "security", keys: []string{"INSTALL_LOCK"}},
+	{name: "webhook", values: []string{"ALLOWED_HOST_LIST"}},
 }
 
-// readSignInSections returns the served part of the sign-in sections.
-func readSignInSections(data []byte) map[string]map[string]string {
+// readReportedSections returns the served part of the reported sections.
+func readReportedSections(data []byte) map[string]map[string]string {
 	out := map[string]map[string]string{}
-	for _, s := range signInSections {
+	for _, s := range reportedSections {
 		section := ReadINISection(data, s.name)
 		served := map[string]string{}
 		for k, v := range section {
@@ -113,7 +116,7 @@ func readSignInSections(data []byte) map[string]map[string]string {
 }
 
 // ConfigReport is the answer of a ConfigReporter: the served part of the
-// sign-in sections, by section and key.
+// reported sections, by section and key.
 type ConfigReport struct {
 	// Start are the values when the reporter started. The reporter runs in
 	// the pod of Forgejo and starts with Forgejo, after the init containers
@@ -127,8 +130,8 @@ type ConfigReport struct {
 	Error string                       `json:"error,omitempty"`
 }
 
-// ConfigReporter serves the sign-in sections of app.ini as JSON (see
-// signInSections). It never serves secrets.
+// ConfigReporter serves the reported sections of app.ini as JSON (see
+// reportedSections). It never serves secrets.
 type ConfigReporter struct {
 	path      string
 	start     map[string]map[string]string
@@ -146,7 +149,7 @@ func NewConfigReporter(path string) *ConfigReporter {
 	if err != nil {
 		r.startErr = err
 	} else {
-		r.start = readSignInSections(data)
+		r.start = readReportedSections(data)
 	}
 	return r
 }
@@ -160,7 +163,7 @@ func (r *ConfigReporter) ServeHTTP(w http.ResponseWriter, _ *http.Request) {
 	if data, err := os.ReadFile(r.path); err != nil {
 		errs = append(errs, fmt.Sprintf("read app.ini: %v", err))
 	} else {
-		rep.Now = readSignInSections(data)
+		rep.Now = readReportedSections(data)
 	}
 	rep.Error = strings.Join(errs, "; ")
 	w.Header().Set("Content-Type", "application/json")

@@ -225,8 +225,9 @@ all `*.localhost` names.
    command line, which writes the same table as the web interface. Then it
    renames the field `AdminGroup` in the database, as an upgrade could, and
    checks that the guard reports it and keeps the protection. It writes
-   `ACCOUNT_LINKING = auto`, `ALLOW_ONLY_EXTERNAL_REGISTRATION = false`
-   and `ENABLE_INTERNAL_SIGNIN = true` into `app.ini` of the running
+   `ACCOUNT_LINKING = auto`, `ALLOW_ONLY_EXTERNAL_REGISTRATION = false`,
+   `ENABLE_INTERNAL_SIGNIN = true` and
+   `ALLOWED_HOST_LIST = *.svc.cluster.local` into `app.ini` of the running
    Forgejo pod and checks that the guard reports them. It adds a deploy
    key with write access to `squared/platform` and checks the error. It
    gives `argocd-reader` write access as a collaborator, and then through a
@@ -234,7 +235,8 @@ all `*.localhost` names.
    administrator cannot write to `squared/platform`, and that the guard
    reports a branch rule that does not apply to administrators, and a
    webhook of `squared/platform` to an unexpected address. After the
-   tenant is made, it checks that the tenant repository has the rule. It does the
+   tenant is made, it checks that the tenant repository has the rule, and
+   that the last delivery of the webhook to Argo CD succeeded. It does the
    same for Harbor: it changes the administrator group through the Harbor
    API, then renames the key `oidc_admin_group` in the database.
 5. Signs in to Argo CD, Harbor and Forgejo through Keycloak as both users,

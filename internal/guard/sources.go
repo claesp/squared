@@ -68,9 +68,9 @@ type SourceConfig struct {
 	//   forgejo-webhooks the webhooks that see the repositories of the organization Org,
 	//                    in the Forgejo database (URL, PasswordFile, Name, Org,
 	//                    Webhooks). No groups, only errors.
-	//   forgejo-config   the sign-in and registration settings in the Forgejo app.ini,
-	//                    from the sidecar "squared forgejo-config" (URL). No groups,
-	//                    only errors.
+	//   forgejo-config   the sign-in, registration and webhook settings in the Forgejo
+	//                    app.ini, from the sidecar "squared forgejo-config" (URL,
+	//                    WebhookHosts). No groups, only errors.
 	Type         string `json:"type"`
 	Service      string `json:"service"`
 	Namespace    string `json:"namespace,omitempty"`
@@ -98,6 +98,9 @@ type SourceConfig struct {
 	// Webhooks is for forgejo-webhooks: the webhook addresses that Squared
 	// expects, or "sha256:<hex>" for an address with a secret.
 	Webhooks []string `json:"webhooks,omitempty"`
+	// WebhookHosts is for forgejo-config: the hosts that ALLOWED_HOST_LIST
+	// may have besides "external", for example the host of Argo CD.
+	WebhookHosts []string `json:"webhookHosts,omitempty"`
 	// IgnoreFields are new fields of a service configuration that an
 	// operator checked: they give no rights. The types argocd-rbac (keys),
 	// argocd-projects ("spec.<field>" or "roles.<field>"), forgejo-database,
@@ -604,10 +607,10 @@ func (s *keycloakRealmSource) References(ctx context.Context) ([]Reference, []st
 	return nil, warnings, err
 }
 
-// forgejoConfigSource reads the sign-in and registration settings of
-// Forgejo from the sidecar "squared forgejo-config" in the pod of Forgejo.
-// Forgejo has no API for them, and they are only in app.ini. See
-// checkForgejoSignIn.
+// forgejoConfigSource reads the sign-in, registration and webhook settings
+// of Forgejo from the sidecar "squared forgejo-config" in the pod of
+// Forgejo. Forgejo has no API for them, and they are only in app.ini. See
+// checkForgejoSettings.
 type forgejoConfigSource struct {
 	sc   SourceConfig
 	rest rest.Client
@@ -621,9 +624,9 @@ func (s *forgejoConfigSource) References(ctx context.Context) ([]Reference, []st
 		return nil, nil, err
 	}
 	if rep.Start == nil && rep.Error == "" {
-		return nil, nil, fmt.Errorf("the answer of %s is not a report of the sign-in settings", s.sc.URL)
+		return nil, nil, fmt.Errorf("the answer of %s is not a report of the Forgejo settings", s.sc.URL)
 	}
-	warnings, err := checkForgejoSignIn(rep, s.sc.IgnoreFields)
+	warnings, err := checkForgejoSettings(rep, s.sc.IgnoreFields, s.sc.WebhookHosts)
 	return nil, warnings, err
 }
 

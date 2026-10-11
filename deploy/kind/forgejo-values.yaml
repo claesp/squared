@@ -81,8 +81,11 @@ gitea:
       USER: forgejo
       SSL_MODE: disable
     webhook:
-      # Allow the push webhook to Argo CD inside the cluster.
-      ALLOWED_HOST_LIST: "*.svc.cluster.local"
+      # Webhooks can send requests only to the internet and to Argo CD.
+      # A pattern like "*.svc.cluster.local" would let the webhooks of all
+      # users, also of personal repositories, reach every service in the
+      # cluster. The guard checks this (webhookHosts in guard.json).
+      ALLOWED_HOST_LIST: "external,argocd-server.argocd.svc.cluster.local"
     security:
       INSTALL_LOCK: true
     repository:

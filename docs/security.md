@@ -299,6 +299,7 @@ controls that it uses. Read [architecture.md](architecture.md) first.
   | `ENABLE_OPENID_SIGNIN` is on (the default before the installation): people sign in with OpenID 2.0 addresses that they add to their accounts, without Keycloak, also after Keycloak disabled them | Error |
   | `ENABLE_OPENID_SIGNUP` is on: anybody with an OpenID 2.0 provider can make an account | Error |
   | `ENABLE_REVERSE_PROXY_AUTHENTICATION` or `..._API` is on: Forgejo accepts the user name in a header from every client | Error |
+  | `ALLOWED_HOST_LIST` of `[webhook]` has an entry other than `external` and the hosts in `webhookHosts`: a keyword like `private` or `loopback`, a network, or a host pattern like `*.svc.cluster.local` | Error |
   | `ENABLE_INTERNAL_SIGNIN` is on (the default): the web form accepts passwords, thus local accounts, and Keycloak users with a Forgejo password, sign in without Keycloak | Error |
   | `manage_password` is not in `EXTERNAL_USER_DISABLE_FEATURES` (or `USER_DISABLED_FEATURES`) of `[admin]` (the default): a Keycloak user can set a Forgejo password | Error |
   | A section changed after the start: the running Forgejo can differ from the file | Error |
@@ -420,13 +421,26 @@ controls that it uses. Read [architecture.md](architecture.md) first.
   test checks that the local Forgejo administrator cannot write to
   `squared/platform`, that a new tenant repository has the rule, and that
   the guard reports a rule that does not apply to administrators.
+- **Hosts that webhooks can reach.** Every Forgejo user can add a
+  webhook to a personal repository, and the webhook check of the
+  organization does not see it. Forgejo makes the request from inside the
+  cluster, thus `ALLOWED_HOST_LIST` decides which services a user can send
+  requests to. Without a value, Forgejo permits only hosts on the
+  internet (`external`). The webhook to Argo CD needs one host in the
+  cluster: the development environment permits exactly
+  `argocd-server.argocd.svc.cluster.local` and the internet, not the
+  pattern `*.svc.cluster.local`, which would let every user send requests
+  to every service, for example the Squared API or Keycloak. The guard
+  reads the value from the sidecar (the other values of `[webhook]` stay
+  hidden: `PROXY_URL` can have a password), and the end-to-end test checks
+  that the webhook to Argo CD still delivers, and writes the pattern into
+  `app.ini` and checks the error.
 - **Webhooks of the GitOps repositories.** A webhook sends the events of
   a repository (commit messages, file names, authors) to its address, and
   Forgejo makes the request from inside the cluster: a webhook can send
-  GitOps data out, or send requests to services in the cluster
-  (`ALLOWED_HOST_LIST` of the development environment permits
-  `*.svc.cluster.local`, for the webhook of Argo CD). The only webhook
-  that Squared expects is the webhook of the organization to Argo CD. The
+  GitOps data out, or send requests to services in the cluster. The only
+  webhook that Squared expects is the webhook of the organization to Argo
+  CD. The
   guard reads the view `squared_guard_webhooks` of
   [`forgejo-guard-view.sql`](../deploy/kind/forgejo-guard-view.sql): the
   scope, the type, the state and the host of each webhook, and the

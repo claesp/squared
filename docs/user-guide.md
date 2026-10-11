@@ -17,6 +17,16 @@ If your organization does not use Keycloak, sign in with your email
 address and password. An administrator gives you your first password.
 Change it on the **Account** page.
 
+## Navigation
+
+The column at the left has all pages. **Platform** has the list of your
+tenants and the catalog of packages. When you open a tenant, a group for
+the tenant shows its pages: **Overview**, **Members**, **Audit log** and,
+for platform administrators, **Settings**. Platform administrators also
+see **Administration**: users, a new tenant and the audit log of the
+platform. **You** has your account. On a narrow screen, the column is a
+row of links at the top of the page.
+
 ## Roles
 
 Members of the Keycloak group `squared-admins` are platform
@@ -39,7 +49,7 @@ tenant, and remove a tenant.
 
 ## Remove a tenant
 
-A platform administrator removes a tenant on the **Settings** tab of the
+A platform administrator removes a tenant on the **Settings** page of the
 tenant. First remove all deployments of the tenant. Squared then removes
 the Argo CD project, the quotas and the access rules, archives the Git
 repository and removes the tenant and its members from the database. The
@@ -145,7 +155,7 @@ namespaces automatically.
 - A `degraded` status means that Argo CD applied the manifests, but the
   pods are not healthy. Check the health check path and the logs of your
   program.
-- The **Audit log** tab shows all changes of the tenant.
+- The **Audit log** page of the tenant shows all changes of the tenant.
 
 ## API tokens
 

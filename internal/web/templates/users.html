@@ -1,10 +1,6 @@
 {{define "content"}}
-<h1>Administration</h1>
-<nav class="tabs" aria-label="Administration">
-  <a href="/admin/users" aria-current="page">Users</a>
-  <a href="/admin/tenants/new">New tenant</a>
-  <a href="/admin/audit">Audit log</a>
-</nav>
+<p class="crumb">Administration</p>
+<h1>Users</h1>
 {{- with .Errors}}<p class="error" role="alert">{{.Error}}</p>{{end}}
 <table>
   <thead><tr><th>Email</th><th>Name</th><th>Role</th><th>Sign-in</th><th>State</th><th>Created</th><th>Actions</th></tr></thead>

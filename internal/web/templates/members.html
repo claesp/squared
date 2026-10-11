@@ -1,4 +1,5 @@
 {{define "content"}}
+<h2>Members</h2>
 {{- with .Errors}}<p class="error" role="alert">{{.Error}}</p>{{end}}
 <table>
   <thead><tr><th>Email</th><th>Name</th><th>Role</th><th>Since</th>{{if can .Access "owner"}}<th></th>{{end}}</tr></thead>

@@ -1,11 +1,9 @@
 {{define "content"}}
 {{- if not .Access}}
-<h1>Administration</h1>
-<nav class="tabs" aria-label="Administration">
-  <a href="/admin/users">Users</a>
-  <a href="/admin/tenants/new">New tenant</a>
-  <a href="/admin/audit" aria-current="page">Audit log</a>
-</nav>
+<p class="crumb">Administration</p>
+<h1>Audit log</h1>
+{{- else}}
+<h2>Audit log</h2>
 {{- end}}
 {{- if .Data}}
 <table>

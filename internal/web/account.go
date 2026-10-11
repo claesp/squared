@@ -206,7 +206,7 @@ func (s *Server) showUsers(w http.ResponseWriter, r *http.Request, formErr error
 	if s.cfg.SSO != nil {
 		data.AdminManaged = s.cfg.SSO.Config().AdminGroup != ""
 	}
-	p := page{Title: "Users", Nav: "admin", Data: data}
+	p := page{Title: "Users", Nav: "admin-users", Data: data}
 	if formErr != nil {
 		return s.invalid(w, r, formErr, "users", p)
 	}
@@ -251,5 +251,5 @@ func (s *Server) platformAuditPage(w http.ResponseWriter, r *http.Request) error
 	if err != nil {
 		return err
 	}
-	return s.render(w, r, "audit", page{Title: "Audit log", Nav: "admin", Data: events})
+	return s.render(w, r, "audit", page{Title: "Audit log", Nav: "admin-audit", Data: events})
 }

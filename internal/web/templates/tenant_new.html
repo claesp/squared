@@ -1,12 +1,7 @@
 {{define "content"}}
-<h1>Administration</h1>
-<nav class="tabs" aria-label="Administration">
-  <a href="/admin/users">Users</a>
-  <a href="/admin/tenants/new" aria-current="page">New tenant</a>
-  <a href="/admin/audit">Audit log</a>
-</nav>
+<p class="crumb">Administration</p>
+<h1>New tenant</h1>
 <section class="card">
-  <h2>New tenant</h2>
   <p class="muted">Squared makes a registry project, a Git repository, an Argo CD project and one namespace for each environment.</p>
   <form method="post" action="/admin/tenants">
     <input type="hidden" name="csrf" value="{{.CSRF}}">

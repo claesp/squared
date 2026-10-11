@@ -22,7 +22,7 @@ func (s *Server) newTenantPage(w http.ResponseWriter, r *http.Request) error {
 		"quota_memory": q.Memory,
 		"quota_pods":   strconv.Itoa(q.Pods),
 	}
-	return s.render(w, r, "tenant_new", page{Title: "New tenant", Nav: "admin", Form: form})
+	return s.render(w, r, "tenant_new", page{Title: "New tenant", Nav: "admin-tenant-new", Form: form})
 }
 
 func splitList(s string) []string {
@@ -53,7 +53,7 @@ func (s *Server) createTenant(w http.ResponseWriter, r *http.Request) error {
 		Quota:        quotaFrom(r),
 	})
 	if err != nil {
-		return s.invalid(w, r, err, "tenant_new", page{Title: "New tenant", Nav: "admin"})
+		return s.invalid(w, r, err, "tenant_new", page{Title: "New tenant", Nav: "admin-tenant-new"})
 	}
 	return s.redirect(w, r, tenantURL(t.Slug), "The tenant is added. The worker now prepares it.")
 }

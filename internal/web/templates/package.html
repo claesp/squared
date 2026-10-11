@@ -1,23 +1,26 @@
 {{define "content"}}
 {{- $p := index .Data 0}}
-<p class="crumb"><a href="/catalog">Catalog</a> /</p>
+<p class="crumb"><a href="/catalog">Catalog</a> <span aria-hidden="true">/</span></p>
 <h1>{{$p.Title}}</h1>
 <p>{{$p.Description}}</p>
 <p class="muted">Name <code>{{$p.Name}}</code>. Versions: {{range $i, $v := .Data}}{{if $i}}, {{end}}{{$v.Version}}{{end}}.</p>
 <h2>Parameters of version {{$p.Version}}</h2>
-<table>
-  <thead><tr><th>Name</th><th>Type</th><th>Default</th><th>Description</th></tr></thead>
-  <tbody>
-  {{- range $p.Parameters}}
-  <tr>
-    <td><strong>{{.Title}}</strong><br><code>{{.Name}}</code>{{if .Required}} <span class="badge busy">required</span>{{end}}</td>
-    <td>{{.Type}}{{with .Enum}}<br><span class="muted">one of {{range $i, $e := .}}{{if $i}}, {{end}}{{$e}}{{end}}</span>{{end}}{{if .Min}}<br><span class="muted">from {{.Min}}</span>{{end}}{{if .Max}} <span class="muted">to {{.Max}}</span>{{end}}</td>
-    <td>{{with .Default}}<code>{{formValue .}}</code>{{end}}</td>
-    <td>{{.Description}}</td>
-  </tr>
-  {{- end}}
-  </tbody>
-</table>
+<ul class="params">
+{{- range $p.Parameters}}
+  <li>
+    <div class="param-head">
+      <code class="param-name">{{.Name}}</code>
+      <span class="param-type">{{.Type}}</span>
+      {{- if .Required}}<span class="param-req">Required</span>{{else}}<span class="param-opt">Optional</span>{{end}}
+    </div>
+    <p class="param-title">{{.Title}}</p>
+    {{- with .Description}}<p>{{.}}</p>{{end}}
+    {{- with .Enum}}<p>One of {{range $i, $e := .}}{{if $i}}, {{end}}<code>{{$e}}</code>{{end}}.</p>{{end}}
+    {{- if and .Min .Max}}<p>From {{.Min}} to {{.Max}}.</p>{{else if .Min}}<p>At least {{.Min}}.</p>{{else if .Max}}<p>At most {{.Max}}.</p>{{end}}
+    {{- with .Default}}<p>Defaults to <code>{{formValue .}}</code>.</p>{{end}}
+  </li>
+{{- end}}
+</ul>
 <h2>Components</h2>
 <ul>
 {{- range $p.Components}}

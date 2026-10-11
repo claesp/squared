@@ -74,11 +74,13 @@ type reportedSection struct {
 // reportedSections are the sections with the sign-in, registration and
 // webhook settings. [service] has secrets (for example RECAPTCHA_SECRET),
 // thus the reporter serves its key names, but only the values of the
-// sign-in and registration settings. Of [security], it serves only
-// INSTALL_LOCK, which changes the default of ENABLE_OPENID_SIGNIN. [admin]
+// sign-in and registration settings. Of [security], which has secrets, it
+// serves only INSTALL_LOCK, which changes the default of
+// ENABLE_OPENID_SIGNIN, and IMPORT_LOCAL_PATHS. [admin]
 // has the features that users cannot use, for example "manage_password".
 // Of [webhook], it serves only the value of ALLOWED_HOST_LIST: PROXY_URL
-// can have a password.
+// can have a password. [migrations] has the hosts that migrations and
+// mirrors can fetch from.
 var reportedSections = []reportedSection{
 	{name: "admin"},
 	{name: "oauth2_client"},
@@ -91,8 +93,9 @@ var reportedSections = []reportedSection{
 		"REGISTER_EMAIL_CONFIRM", "REGISTER_MANUAL_CONFIRM", "REQUIRE_EXTERNAL_REGISTRATION_PASSWORD",
 		"SHOW_REGISTRATION_BUTTON", "DEFAULT_USER_IS_RESTRICTED",
 	}},
-	{name: "security", keys: []string{"INSTALL_LOCK"}},
+	{name: "security", keys: []string{"INSTALL_LOCK", "IMPORT_LOCAL_PATHS"}},
 	{name: "webhook", values: []string{"ALLOWED_HOST_LIST"}},
+	{name: "migrations"},
 }
 
 // readReportedSections returns the served part of the reported sections.

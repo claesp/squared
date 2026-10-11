@@ -52,6 +52,7 @@ func TestConfigReporter(t *testing.T) {
 	}
 	write(`[security]
 INSTALL_LOCK = true
+IMPORT_LOCAL_PATHS = false
 SECRET_KEY = s3cret-key
 INTERNAL_TOKEN = s3cret-token
 [service]
@@ -64,6 +65,8 @@ ACCOUNT_LINKING = disabled
 ENABLE_OPENID_SIGNIN = false
 [admin]
 EXTERNAL_USER_DISABLE_FEATURES = manage_password
+[migrations]
+ALLOW_LOCALNETWORKS = false
 [webhook]
 ALLOWED_HOST_LIST = argocd-server.argocd.svc.cluster.local
 PROXY_URL = http://user:s3cret-proxy@proxy.example:3128
@@ -83,9 +86,10 @@ PASSWD = s3cret-db
 		"openid":        {"ENABLE_OPENID_SIGNIN": "false"},
 		"service": {"DISABLE_REGISTRATION": "false", "ALLOW_ONLY_EXTERNAL_REGISTRATION": "true",
 			"RECAPTCHA_SECRET": HiddenValue}, // The name, not the value.
-		"security": {"INSTALL_LOCK": "true"}, // Only this key.
-		"admin":    {"EXTERNAL_USER_DISABLE_FEATURES": "manage_password"},
-		"webhook":  {"ALLOWED_HOST_LIST": "argocd-server.argocd.svc.cluster.local", "PROXY_URL": HiddenValue},
+		"security":   {"INSTALL_LOCK": "true", "IMPORT_LOCAL_PATHS": "false"}, // Only these keys.
+		"admin":      {"EXTERNAL_USER_DISABLE_FEATURES": "manage_password"},
+		"webhook":    {"ALLOWED_HOST_LIST": "argocd-server.argocd.svc.cluster.local", "PROXY_URL": HiddenValue},
+		"migrations": {"ALLOW_LOCALNETWORKS": "false"},
 	}
 	for section, values := range want {
 		if !maps.Equal(rep.Start[section], values) {

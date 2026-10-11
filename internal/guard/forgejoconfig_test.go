@@ -92,6 +92,20 @@ func TestCheckForgejoSignInProblems(t *testing.T) {
 		}), "ALLOWED_HOST_LIST of [webhook] has private, 10.0.0.0/8"},
 		{"unknown key of webhook", both(func(s map[string]map[string]string) { s["webhook"]["ALLOWED_HOSTS"] = forgejo.HiddenValue }),
 			"unknown key webhook.ALLOWED_HOSTS"},
+		{"import of local paths", both(func(s map[string]map[string]string) { s["security"]["IMPORT_LOCAL_PATHS"] = "true" }),
+			"IMPORT_LOCAL_PATHS of [security] is on"},
+		{"local networks", both(func(s map[string]map[string]string) {
+			s["migrations"] = map[string]string{"ALLOW_LOCALNETWORKS": "true"}
+		}),
+			"ALLOW_LOCALNETWORKS of [migrations] is on"},
+		{"domain pattern of the cluster", both(func(s map[string]map[string]string) {
+			s["migrations"] = map[string]string{"ALLOWED_DOMAINS": "github.com, *.SVC.cluster.local"}
+		}), "ALLOWED_DOMAINS of [migrations] has *.svc.cluster.local, which matches the name kubernetes.default.svc.cluster.local"},
+		{"short names", both(func(s map[string]map[string]string) { s["migrations"] = map[string]string{"ALLOWED_DOMAINS": "*.*"} }),
+			"ALLOWED_DOMAINS of [migrations] has *.*, which matches the name kubernetes.default"},
+		{"unknown key of migrations", both(func(s map[string]map[string]string) {
+			s["migrations"] = map[string]string{"ALLOW_LOCAL_NETWORKS": "true"}
+		}), "unknown key migrations.ALLOW_LOCAL_NETWORKS"},
 		{"changed file", func(r *forgejo.ConfigReport) { r.Now["service"]["SHOW_REGISTRATION_BUTTON"] = "true" },
 			"the section [service] of app.ini changed after the start"},
 		{"unknown key of oauth2_client", both(func(s map[string]map[string]string) { s["oauth2_client"]["account_linking"] = "auto" }),
@@ -196,14 +210,30 @@ func TestCheckForgejoWebhookHosts(t *testing.T) {
 // them there.
 func TestForgejoProblemsHaveNoSemicolon(t *testing.T) {
 	bad := forgejoSignIn{accountLinking: "auto", openIDSignIn: true, openIDSignUp: true, reverseProxyAuth: true,
-		reverseProxyNew: true, internalSignIn: true, externalPasswords: true, webhookHosts: []string{"*"}}
+		reverseProxyNew: true, internalSignIn: true, externalPasswords: true, webhookHosts: []string{"*"},
+		importLocalPaths: true, allowLocalNetworks: true, migrationDomains: []string{"*"}}
 	problems := bad.problems(nil)
-	if len(problems) < 8 {
+	if len(problems) < 11 {
 		t.Fatalf("problems = %q", problems)
 	}
 	for _, p := range append(problems, bad.warnings()...) {
 		if strings.Contains(p, ";") {
 			t.Errorf("the message has a semicolon: %q", p)
+		}
+	}
+}
+
+// TestCheckForgejoMigrations checks the values of [migrations] that are
+// safe.
+func TestCheckForgejoMigrations(t *testing.T) {
+	for _, mig := range []map[string]string{
+		{},
+		{"ALLOW_LOCALNETWORKS": "false", "ALLOWED_DOMAINS": "github.com,*.github.com,codeberg.org", "BLOCKED_DOMAINS": "*"},
+	} {
+		s := safeSignIn()
+		s["migrations"] = mig
+		if _, err := checkForgejoSettings(forgejo.ConfigReport{Start: s, Now: cloneSignIn(s)}, nil, argoHosts); err != nil {
+			t.Fatalf("%v: %v", mig, err)
 		}
 	}
 }

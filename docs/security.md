@@ -300,6 +300,9 @@ controls that it uses. Read [architecture.md](architecture.md) first.
   | `ENABLE_OPENID_SIGNUP` is on: anybody with an OpenID 2.0 provider can make an account | Error |
   | `ENABLE_REVERSE_PROXY_AUTHENTICATION` or `..._API` is on: Forgejo accepts the user name in a header from every client | Error |
   | `ALLOWED_HOST_LIST` of `[webhook]` has an entry other than `external` and the hosts in `webhookHosts`: a keyword like `private` or `loopback`, a network, or a host pattern like `*.svc.cluster.local` | Error |
+  | `ALLOW_LOCALNETWORKS` of `[migrations]` is on: migrations and mirrors can fetch from private and loopback addresses | Error |
+  | `IMPORT_LOCAL_PATHS` of `[security]` is on: Forgejo administrators and users with the flag `allow_import_local` can copy any directory of the Forgejo server into a repository, for example the repositories of other users | Error |
+  | `ALLOWED_DOMAINS` of `[migrations]` has a pattern that matches a name in the cluster: `kubernetes`, `kubernetes.default`, `kubernetes.default.svc`, `kubernetes.default.svc.cluster.local`, `localhost`, `node.local` or `metadata.internal` (for example `*`, `*.*` or `*.svc.cluster.local`) | Error |
   | `ENABLE_INTERNAL_SIGNIN` is on (the default): the web form accepts passwords, thus local accounts, and Keycloak users with a Forgejo password, sign in without Keycloak | Error |
   | `manage_password` is not in `EXTERNAL_USER_DISABLE_FEATURES` (or `USER_DISABLED_FEATURES`) of `[admin]` (the default): a Keycloak user can set a Forgejo password | Error |
   | A section changed after the start: the running Forgejo can differ from the file | Error |
@@ -435,6 +438,24 @@ controls that it uses. Read [architecture.md](architecture.md) first.
   hidden: `PROXY_URL` can have a password), and the end-to-end test checks
   that the webhook to Argo CD still delivers, and writes the pattern into
   `app.ini` and checks the error.
+- **Hosts that migrations and mirrors can fetch from.** Every Forgejo
+  user can migrate a repository from an address, or mirror one, and
+  Forgejo fetches it from inside the cluster. By default
+  (`ALLOW_LOCALNETWORKS = false`, no `ALLOWED_DOMAINS`), Forgejo fetches
+  only from addresses on the internet. `ALLOW_LOCALNETWORKS = true` adds
+  the private and loopback networks, which have all the services of the
+  cluster. A pattern in `ALLOWED_DOMAINS` permits a host by its name,
+  whatever its address; with the DNS search domains of Kubernetes, even a
+  short name like `service.namespace` reaches a service. The guard checks
+  each pattern against names in the cluster, as Forgejo matches them. The
+  sidecar serves all of `[migrations]` (it has no secrets). The end-to-end
+  test adds `ALLOW_LOCALNETWORKS = true` to `app.ini` and checks the error.
+  The same is true for the import of directories of the Forgejo server
+  (`IMPORT_LOCAL_PATHS` of `[security]`, off by default): the sidecar
+  serves this value and `INSTALL_LOCK` of `[security]`, never its secrets,
+  and the end-to-end test turns it on in `app.ini` and checks the error.
+  The flag `allow_import_local` of a user has no effect while the setting
+  is off, thus the guard does not read the flags.
 - **Webhooks of the GitOps repositories.** A webhook sends the events of
   a repository (commit messages, file names, authors) to its address, and
   Forgejo makes the request from inside the cluster: a webhook can send

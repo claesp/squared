@@ -522,6 +522,28 @@ YAML
     'ENABLE_INTERNAL_SIGNIN is on[^;]*[(]after the next start[)]'
   guard_reports_app_ini 'ALLOWED_HOST_LIST = external,argocd-server.argocd.svc.cluster.local' 'ALLOWED_HOST_LIST = *.svc.cluster.local' \
     'ALLOWED_HOST_LIST of [[]webhook[]] has [*][.]svc[.]cluster[.]local[^;]*[(]after the next start[)]'
+  # [migrations] is not in app.ini of the development environment (the
+  # defaults are safe), thus the test adds the section at the end.
+  local ini=/data/gitea/conf/app.ini
+  k -n forgejo exec deploy/forgejo -c forgejo -- sh -c "! grep -q '^\[migrations\]' $ini && printf '\n[migrations]\nALLOW_LOCALNETWORKS = true\n' >> $ini" \
+    || die "cannot add [migrations] to app.ini of Forgejo"
+  guard_reports_migrations() {
+    guard_status | jq -e '[.errors[]? | select(test("ALLOW_LOCALNETWORKS of [[]migrations[]] is on[^;]*[(]after the next start[)]"))] | length > 0' >/dev/null
+  }
+  wait_for "the guard reports ALLOW_LOCALNETWORKS in app.ini" 60 guard_reports_migrations
+  [[ "$(worker_may_add_dev squared-admins)" == 403 ]] || die "the protection of /squared-admins is gone after the app.ini change"
+  k -n forgejo exec deploy/forgejo -c forgejo -- sh -c "sed -i '/^\[migrations\]\$/,\$d' $ini"
+  wait_for "the guard has no errors after app.ini is back" 60 guard_clean
+  # IMPORT_LOCAL_PATHS is not in app.ini either: add it to [security].
+  k -n forgejo exec deploy/forgejo -c forgejo -- sh -c "! grep -q '^IMPORT_LOCAL_PATHS' $ini && sed -i '/^\[security\]\$/a IMPORT_LOCAL_PATHS = true' $ini" \
+    || die "cannot add IMPORT_LOCAL_PATHS to app.ini of Forgejo"
+  guard_reports_import() {
+    guard_status | jq -e '[.errors[]? | select(test("IMPORT_LOCAL_PATHS of [[]security[]] is on[^;]*[(]after the next start[)]"))] | length > 0' >/dev/null
+  }
+  wait_for "the guard reports IMPORT_LOCAL_PATHS in app.ini" 60 guard_reports_import
+  [[ "$(worker_may_add_dev squared-admins)" == 403 ]] || die "the protection of /squared-admins is gone after the app.ini change"
+  app_ini_replace 'IMPORT_LOCAL_PATHS = true' '' || die "cannot remove IMPORT_LOCAL_PATHS from app.ini of Forgejo"
+  wait_for "the guard has no errors after app.ini is back" 60 guard_clean
   log "the guard checks the sign-in and registration settings of Forgejo"
 
   # A deploy key that can push to the platform repository, as a Forgejo

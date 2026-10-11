@@ -3,6 +3,7 @@ package guard
 import (
 	"fmt"
 	"maps"
+	"path"
 	"regexp"
 	"slices"
 	"strings"
@@ -11,7 +12,8 @@ import (
 )
 
 // forgejoKnownKeys are the keys of the sign-in sections in Forgejo 15
-// (modules/setting/admin.go, oauth2.go, service.go, mailer.go and webhook.go). Forgejo reads key
+// (modules/setting/admin.go, oauth2.go, service.go, mailer.go, webhook.go
+// and migrations.go). Forgejo reads key
 // names with the exact case.
 var forgejoKnownKeys = map[string][]string{
 	"admin": {"DEFAULT_EMAIL_NOTIFICATIONS", "DISABLE_REGULAR_ORG_CREATION", "EXTERNAL_USER_DISABLE_FEATURES",
@@ -34,7 +36,8 @@ var forgejoKnownKeys = map[string][]string{
 		"REQUIRE_EXTERNAL_REGISTRATION_CAPTCHA", "REQUIRE_EXTERNAL_REGISTRATION_PASSWORD", "REQUIRE_SIGNIN_VIEW",
 		"RESET_PASSWD_CODE_LIVE_MINUTES", "SHOW_MILESTONES_DASHBOARD_PAGE", "SHOW_REGISTRATION_BUTTON",
 		"USER_DELETE_WITH_COMMENTS_MAX_TIME", "USER_LOCATION_MAP_URL", "USERNAME_COOLDOWN_PERIOD", "VALID_SITE_URL_SCHEMES"},
-	"security": {"INSTALL_LOCK"},
+	"security":   {"IMPORT_LOCAL_PATHS", "INSTALL_LOCK"},
+	"migrations": {"ALLOWED_DOMAINS", "ALLOW_LOCALNETWORKS", "BLOCKED_DOMAINS", "MAX_ATTEMPTS", "RETRY_BACKOFF", "SKIP_TLS_VERIFY"},
 	"webhook": {"ALLOWED_HOST_LIST", "DELIVER_TIMEOUT", "PAGING_NUM", "PAYLOAD_COMMIT_LIMIT", "PROXY_HOSTS", "PROXY_URL",
 		"QUEUE_LENGTH", "SKIP_TLS_VERIFY"},
 }
@@ -42,7 +45,8 @@ var forgejoKnownKeys = map[string][]string{
 // signInLike matches the names of keys that can change who can sign in or
 // make an account. An unknown key in [service] or [admin] with such a name
 // is an error; other unknown keys of these sections are warnings. All
-// unknown keys of [oauth2_client], [openid] and [webhook] are errors.
+// unknown keys of [oauth2_client], [openid], [webhook] and [migrations] are
+// errors.
 var signInLike = regexp.MustCompile(`(?i)regist|sign_?up|sign_?in|login|auth|link|external|internal|proxy|openid|account|passw|featur`)
 
 // iniBool reads a boolean as go-ini does for Forgejo (MustBool): an
@@ -73,6 +77,16 @@ type forgejoSignIn struct {
 	// webhookHosts are the entries of ALLOWED_HOST_LIST, in lower case;
 	// "external" without a value, as in Forgejo.
 	webhookHosts []string
+	// importLocalPaths is IMPORT_LOCAL_PATHS of [security]: administrators
+	// and users with the flag allow_import_local can import directories of
+	// the server.
+	importLocalPaths bool
+	// allowLocalNetworks is ALLOW_LOCALNETWORKS of [migrations]: migrations
+	// and mirrors can fetch from private and loopback addresses.
+	allowLocalNetworks bool
+	// migrationDomains are the entries of ALLOWED_DOMAINS of [migrations],
+	// in lower case.
+	migrationDomains []string
 	// externalPasswords tells that Keycloak users can set a Forgejo
 	// password: "manage_password" is not in USER_DISABLED_FEATURES or
 	// EXTERNAL_USER_DISABLE_FEATURES.
@@ -109,6 +123,13 @@ func forgejoSignInFrom(s map[string]map[string]string) forgejoSignIn {
 	if len(f.webhookHosts) == 0 {
 		f.webhookHosts = []string{"external"}
 	}
+	f.importLocalPaths = iniBool(s["security"]["IMPORT_LOCAL_PATHS"], false)
+	mig := s["migrations"]
+	f.allowLocalNetworks = iniBool(mig["ALLOW_LOCALNETWORKS"], false)
+	f.migrationDomains = nil
+	for _, e := range iniList(mig["ALLOWED_DOMAINS"]) {
+		f.migrationDomains = append(f.migrationDomains, strings.ToLower(e))
+	}
 	adm := s["admin"]
 	f.externalPasswords = !slices.Contains(iniList(adm["USER_DISABLED_FEATURES"]), "manage_password") &&
 		!slices.Contains(iniList(adm["EXTERNAL_USER_DISABLE_FEATURES"]), "manage_password")
@@ -136,6 +157,17 @@ func (f forgejoSignIn) problems(allowedHosts []string) []string {
 	for _, h := range f.webhookHosts {
 		if h != "external" && !slices.ContainsFunc(allowedHosts, func(a string) bool { return strings.EqualFold(a, h) }) {
 			hosts = append(hosts, h)
+		}
+	}
+	if f.importLocalPaths {
+		p = append(p, "IMPORT_LOCAL_PATHS of [security] is on: Forgejo administrators and users with the flag allow_import_local can copy any directory of the Forgejo server into a repository, for example the repositories of other users")
+	}
+	if f.allowLocalNetworks {
+		p = append(p, "ALLOW_LOCALNETWORKS of [migrations] is on: users can make Forgejo fetch repositories (migrations and mirrors) from private and loopback addresses, for example the services in the cluster")
+	}
+	for _, d := range f.migrationDomains {
+		if probe := clusterNameFor(d); probe != "" {
+			p = append(p, fmt.Sprintf("ALLOWED_DOMAINS of [migrations] has %s, which matches the name %s in the cluster: users can make Forgejo fetch repositories from the services in the cluster", d, probe))
 		}
 	}
 	if len(hosts) > 0 {
@@ -231,4 +263,24 @@ func checkForgejoSettings(rep forgejo.ConfigReport, ignore, webhookHosts []strin
 			strings.Join(problems, "; "))
 	}
 	return warnings, nil
+}
+
+// clusterProbes are names that reach services in the cluster or on the
+// node. With the DNS search domains of Kubernetes, a short name like
+// "service" or "service.namespace" also reaches a service.
+var clusterProbes = []string{
+	"kubernetes", "kubernetes.default", "kubernetes.default.svc", "kubernetes.default.svc.cluster.local",
+	"localhost", "node.local", "metadata.internal",
+}
+
+// clusterNameFor returns a probe name that the pattern of ALLOWED_DOMAINS
+// matches, or "". Forgejo matches the patterns as file name patterns
+// (path.Match), in lower case.
+func clusterNameFor(pattern string) string {
+	for _, probe := range clusterProbes {
+		if ok, _ := path.Match(pattern, probe); ok {
+			return probe
+		}
+	}
+	return ""
 }

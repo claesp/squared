@@ -228,7 +228,9 @@ all `*.localhost` names.
    `ACCOUNT_LINKING = auto`, `ALLOW_ONLY_EXTERNAL_REGISTRATION = false`,
    `ENABLE_INTERNAL_SIGNIN = true` and
    `ALLOWED_HOST_LIST = *.svc.cluster.local` into `app.ini` of the running
-   Forgejo pod and checks that the guard reports them. It adds a deploy
+   Forgejo pod, adds `ALLOW_LOCALNETWORKS = true` in `[migrations]` and
+   `IMPORT_LOCAL_PATHS = true` in `[security]`, and checks that the guard
+   reports them. It adds a deploy
    key with write access to `squared/platform` and checks the error. It
    gives `argocd-reader` write access as a collaborator, and then through a
    new team, and checks the errors. It checks that the local Forgejo

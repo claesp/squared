@@ -224,7 +224,8 @@ all `*.localhost` names.
    application without `selfHeal`, and `application.namespaces` with an
    application in the namespace `default`, an ApplicationSet that reads
    the platform repository, SCM generators without limits, and an
-   ApplicationSet that takes over an application of Squared, and the
+   ApplicationSet that takes over an application of Squared, a template
+   patch with the finalizer of Argo CD, and the
    ApplicationSet policy `sync` give errors,
    and that Keycloak
    mappers that write `groups` on the client `argocd` and `email` from

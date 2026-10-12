@@ -69,7 +69,11 @@ func TestCheckArgoAppSets(t *testing.T) {
 			s["generators"] = []any{map[string]any{"list": map[string]any{"elements": []any{},
 				"template": map[string]any{"metadata": map[string]any{"name": "squared-platform"}, "spec": map[string]any{}}}}}
 		}, "in the template of a generator, it makes the application squared-platform"},
-		{"template patch", func(s map[string]any) { s["templatePatch"] = "spec:\n  project: tenant-acme\n" }, "it has a templatePatch"},
+		{"template patch", func(s map[string]any) { s["templatePatch"] = "spec:\n  project: tenant-acme\n" },
+			"in its templatePatch, its applications use the tenant project tenant-acme"},
+		{"finalizer", func(s map[string]any) {
+			template(s)["metadata"].(map[string]any)["finalizers"] = []any{"resources-finalizer.argocd.argoproj.io/background"}
+		}, "its applications get the finalizer resources-finalizer.argocd.argoproj.io/background"},
 		{"Git generator", func(s map[string]any) {
 			s["generators"] = []any{map[string]any{"git": map[string]any{"repoURL": devAppRules.Root.RepoURL, "revision": "main",
 				"directories": []any{map[string]any{"path": "tenants/*"}}}}}

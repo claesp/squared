@@ -31,7 +31,14 @@ type argoAppSet struct {
 }
 
 // templated tells if a value comes from the parameters of the generators.
-func templated(s string) bool { return strings.Contains(s, "{{") }
+func templated(s string) bool {
+	return strings.Contains(s, "{{") || strings.Contains(s, patchParameter)
+}
+
+// resourcesFinalizer is the finalizer of Argo CD that removes the objects of
+// an application with it, also with the suffixes /background and
+// /foreground.
+const resourcesFinalizer = "resources-finalizer.argocd.argoproj.io"
 
 // checkAppTemplate returns the problems of an application template: of
 // the ApplicationSet, or of a generator, which changes some fields of it.
@@ -49,6 +56,11 @@ func checkAppTemplate(raw json.RawMessage, prefixes []string, names map[string]b
 		return nil, err
 	}
 	var p []string
+	for _, f := range a.Metadata.Finalizers {
+		if f == resourcesFinalizer || strings.HasPrefix(f, resourcesFinalizer+"/") {
+			p = append(p, fmt.Sprintf("its applications get the finalizer %s: their removal removes their objects, also with preserveResourcesOnDeletion", f))
+		}
+	}
 	if n := a.Metadata.Name; names[n] {
 		p = append(p, fmt.Sprintf("it makes the application %s, thus it takes over the application of Squared with that name", n))
 	}
@@ -199,7 +211,11 @@ func checkArgoAppSets(raws []json.RawMessage, r argoAppRules, names map[string]b
 			p = append(p, tp...)
 		}
 		if strings.TrimSpace(s.Spec.TemplatePatch) != "" {
-			p = append(p, "it has a templatePatch, which can change the project and the sources of its applications")
+			pp, err := checkTemplatePatch(s.Spec.TemplatePatch, r.RepoPrefixes, own)
+			if err != nil {
+				pp = []string{fmt.Sprintf("the guard cannot read its templatePatch (%s), which can change all fields of its applications", strings.ReplaceAll(err.Error(), ";", ","))}
+			}
+			p = append(p, pp...)
 		}
 		for _, g := range s.Spec.Generators {
 			var v any

@@ -40,8 +40,8 @@ through [RabbitMQ](https://www.rabbitmq.com).
   idempotent tasks, retries with delays and a dead queue.
 - **Audit log** of all changes, in the database and in Git.
 - **Small dependency set**: the Go standard library, plus clients for
-  PostgreSQL and RabbitMQ, `x/crypto` for Argon2id, and `go-oidc` with
-  `x/oauth2` for OpenID Connect.
+  PostgreSQL and RabbitMQ, `x/crypto` for Argon2id, `go-oidc` with
+  `x/oauth2` for OpenID Connect, and `sigs.k8s.io/yaml` for the guard.
 
 ## Quick start
 

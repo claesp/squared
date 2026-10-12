@@ -604,9 +604,11 @@ YAML
   log "the guard checks the namespaces in which Argo CD reads applications"
 
   # An ApplicationSet that reads the platform repository, with a project
-  # from the parameters, and a pull request generator that sends a token
-  # without the check of the TLS certificate. No directory matches the
-  # path, and the SCM generators are off, thus it makes no applications.
+  # from the parameters, a pull request generator that sends a token
+  # without the check of the TLS certificate, and a template patch with the
+  # finalizer of Argo CD and a tenant project in a branch. No directory
+  # matches the path, and the SCM generators are off, thus it makes no
+  # applications.
   k apply -f - >/dev/null <<YAML
 apiVersion: argoproj.io/v1alpha1
 kind: ApplicationSet
@@ -625,12 +627,22 @@ spec:
       project: "{{.path.basename}}"
       source: { repoURL: "https://git.example.invalid/e2e.git", targetRevision: main, path: "{{.path.path}}" }
       destination: { server: "https://kubernetes.default.svc", namespace: e2e-guard }
+  templatePatch: |
+    metadata:
+      finalizers: [resources-finalizer.argocd.argoproj.io]
+    spec:
+    {{- if eq .path.basename "shop" }}
+      project: tenant-e2eguard
+    {{- end }}
+      destination: { namespace: e2e-guard }
 YAML
   guard_reports_appset() {
     guard_status | jq -e '[.errors[]? | select(test("the ApplicationSet e2e-guard-set: a generator reads the GitOps repository"))] | length > 0' >/dev/null &&
       guard_status | jq -e '[.errors[]? | select(test("e2e-guard-set: the project .* of its applications comes from the generators"))] | length > 0' >/dev/null &&
       guard_status | jq -e '[.errors[]? | select(test("e2e-guard-set: a generator sends credentials to https://git.example.invalid without the check"))] | length > 0' >/dev/null &&
-      guard_status | jq -e '[.errors[]? | select(test("e2e-guard-set: preserveResourcesOnDeletion is not true"))] | length > 0' >/dev/null
+      guard_status | jq -e '[.errors[]? | select(test("e2e-guard-set: preserveResourcesOnDeletion is not true"))] | length > 0' >/dev/null &&
+      guard_status | jq -e '[.errors[]? | select(test("e2e-guard-set: in its templatePatch, its applications get the finalizer resources-finalizer"))] | length > 0' >/dev/null &&
+      guard_status | jq -e '[.errors[]? | select(test("e2e-guard-set: in its templatePatch, its applications use the tenant project tenant-e2eguard"))] | length > 0' >/dev/null
   }
   wait_for "the guard reports the ApplicationSet with the platform repository and a project from the parameters" 60 guard_reports_appset
   [[ "$(worker_may_add_dev squared-admins)" == 403 ]] || die "the protection of /squared-admins is gone after the ApplicationSet"

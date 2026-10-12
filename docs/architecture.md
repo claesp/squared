@@ -239,6 +239,7 @@ modules:
 | `golang.org/x/crypto` | Argon2id password hashes. Security code from the Go team. |
 | `github.com/coreos/go-oidc/v3` | OpenID Connect discovery and token verification (uses `go-jose`). |
 | `golang.org/x/oauth2` | OAuth 2.0 authorization code flow with PKCE. |
+| `sigs.k8s.io/yaml` | YAML for the guard, which reads the template patches of Argo CD ApplicationSets. Argo CD reads them with the same module, thus both read a patch in the same way. |
 
 ### D10: One binary, configuration from the environment
 

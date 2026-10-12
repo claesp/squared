@@ -353,7 +353,9 @@ controls that it uses. Read [architecture.md](architecture.md) first.
   |---|---|
   | The template, or the template of a generator, has a tenant project, a GitOps repository (`repoPrefixes`), or a label of Squared (`app.kubernetes.io/managed-by`, `squared.dev/managed`, `squared.dev/tenant`) | Error |
   | The project or a repository of the template comes from the parameters (`{{ ... }}`): the guard cannot know the value | Error |
-  | A `templatePatch`, which can change all fields of the applications | Error |
+  | The template patch (`templatePatch`) has one of the problems in the rows above (the text after the table tells how the guard reads it) | Error |
+  | The guard cannot read the template patch: a line writes text from the parameters (for example `{{ toYaml .x }}`), an action has more than one line, a key comes from the parameters, two branches have the same key, or the YAML is not correct | Error |
+  | The template, the template of a generator, or the template patch gives the applications the finalizer `resources-finalizer.argocd.argoproj.io` (also with `/background` or `/foreground`): their removal then removes their objects, also with `preserveResourcesOnDeletion` | Error |
   | `syncPolicy.preserveResourcesOnDeletion` is not `true` | Error |
   | The template, or the template of a generator, has the name of an application of Squared or of the root application, as text | Error |
   | A generator reads a GitOps repository: a Git generator with such a `repoURL` (also from parameters), or an SCM provider or pull request generator for the organization of Squared on Forgejo | Error |
@@ -361,6 +363,16 @@ controls that it uses. Read [architecture.md](architecture.md) first.
 
   An ApplicationSet of another team writes the project and the
   repositories as text.
+
+  Argo CD applies the template patch to each application after the
+  template, also without `goTemplate`. The patch is a Go template that
+  writes YAML. The guard reads it for all values of the parameters at the
+  same time: it removes the lines with only control actions (`if`,
+  `else`, `end`, `range`, `with`, comments and variables), thus it keeps
+  the lines of all branches, and it puts a marker in the place of each
+  other action. Then it reads the YAML as Argo CD does, and checks the
+  name, the labels, the finalizers, the project and the sources as in a
+  template. A value with the marker comes from the parameters.
 
   An ApplicationSet that makes an application with the name of an
   existing application takes it over: it writes its template into the
@@ -421,7 +433,9 @@ controls that it uses. Read [architecture.md](architecture.md) first.
   adds an ApplicationSet with a Git generator for the platform repository,
   a project from the parameters and a pull request generator with a token
   and `insecure: true`, and checks the errors. It turns on the SCM
-  generators without limits and checks the errors. It lets an
+  generators without limits and checks the errors. The ApplicationSet
+  also has a template patch with the finalizer of Argo CD and a tenant
+  project in a branch. It lets an
   ApplicationSet take over a test application with the labels of Squared,
   checks the errors, and checks that Kubernetes removes the application
   with the ApplicationSet. It sets the policy `sync`, then turns on the

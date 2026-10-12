@@ -603,6 +603,36 @@ YAML
   wait_for "the guard has no errors after the application namespace is removed" 60 guard_clean
   log "the guard checks the namespaces in which Argo CD reads applications"
 
+  # An ApplicationSet that reads the platform repository, with a project
+  # from the parameters. No directory matches the path, thus it makes no
+  # applications.
+  k apply -f - >/dev/null <<YAML
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: e2e-guard-set
+  namespace: argocd
+spec:
+  goTemplate: true
+  generators:
+    - git: { repoURL: "http://forgejo.localhost:30300/squared/platform.git", revision: main, directories: [{ path: e2e-none/* }] }
+  template:
+    metadata: { name: "e2e-guard-{{.path.basename}}" }
+    spec:
+      project: "{{.path.basename}}"
+      source: { repoURL: "https://git.example.invalid/e2e.git", targetRevision: main, path: "{{.path.path}}" }
+      destination: { server: "https://kubernetes.default.svc", namespace: e2e-guard }
+YAML
+  guard_reports_appset() {
+    guard_status | jq -e '[.errors[]? | select(test("the ApplicationSet e2e-guard-set: a generator reads the GitOps repository"))] | length > 0' >/dev/null &&
+      guard_status | jq -e '[.errors[]? | select(test("e2e-guard-set: the project .* of its applications comes from the generators"))] | length > 0' >/dev/null
+  }
+  wait_for "the guard reports the ApplicationSet with the platform repository and a project from the parameters" 60 guard_reports_appset
+  [[ "$(worker_may_add_dev squared-admins)" == 403 ]] || die "the protection of /squared-admins is gone after the ApplicationSet"
+  k -n argocd delete applicationset e2e-guard-set >/dev/null
+  wait_for "the guard has no errors after the ApplicationSet is removed" 60 guard_clean
+  log "the guard checks the ApplicationSets of Argo CD"
+
   # Keycloak mappers that write the groups claim or the email claim. These
   # are in no token, thus they are harmless, but the guard must report
   # each mapper that does not come from the group membership or the email

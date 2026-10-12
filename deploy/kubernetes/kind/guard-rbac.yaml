@@ -32,15 +32,15 @@ roleRef: { apiGroup: rbac.authorization.k8s.io, kind: Role, name: squared-guard 
 subjects:
   - { kind: ServiceAccount, name: squared-guard, namespace: squared-guard }
 ---
-# Argo CD can read applications in other namespaces, thus the guard reads
-# them in all namespaces.
+# Argo CD can read applications and ApplicationSets in other namespaces,
+# thus the guard reads them in all namespaces.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
   name: squared-guard-applications
 rules:
   - apiGroups: ["argoproj.io"]
-    resources: ["applications"]
+    resources: ["applications", "applicationsets"]
     verbs: ["list"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1

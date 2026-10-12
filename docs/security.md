@@ -341,6 +341,25 @@ controls that it uses. Read [architecture.md](architecture.md) first.
   the applications in all namespaces in any case. The end-to-end test
   sets `application.namespaces` to `default`, adds an application there
   with the platform repository, and checks both errors.
+- **ApplicationSets of Argo CD.** An ApplicationSet makes applications
+  from a template and the parameters of its generators. Squared makes no
+  ApplicationSets. The guard checks the applications that they make, but
+  an ApplicationSet makes an application again after a removal, thus the
+  guard also checks the ApplicationSets in all namespaces (right `list` on
+  `applicationsets` in the cluster).
+
+  | ApplicationSet | Result |
+  |---|---|
+  | The template, or the template of a generator, has a tenant project, a GitOps repository (`repoPrefixes`), or a label of Squared (`app.kubernetes.io/managed-by`, `squared.dev/managed`, `squared.dev/tenant`) | Error |
+  | The project or a repository of the template comes from the parameters (`{{ ... }}`): the guard cannot know the value | Error |
+  | A `templatePatch`, which can change all fields of the applications | Error |
+  | A generator reads a GitOps repository: a Git generator with such a `repoURL` (also from parameters), or an SCM provider or pull request generator for the organization of Squared on Forgejo | Error |
+
+  An ApplicationSet of another team writes the project and the
+  repositories as text. Limit: the guard does not know what a plugin
+  generator or a cluster decision resource gives. The end-to-end test
+  adds an ApplicationSet with a Git generator for the platform repository
+  and a project from the parameters, and checks the errors.
 - **Harbor configuration.** Only the Harbor system administrator can read
   the configuration through the API, and a robot account cannot get that
   right. The table `properties` of the Harbor database has all settings,

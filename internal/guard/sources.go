@@ -46,8 +46,9 @@ type SourceConfig struct {
 	//   argocd-projects  roles of all Argo CD projects, and the limits of the tenant
 	//                    projects (Namespace, RepoPrefixes, ClusterServers)
 	//   argocd-applications the sync policies, the sources and the limits of the
-	//                    Argo CD applications in all namespaces, and the
-	//                    namespaces in which Argo CD reads them (Namespace, Name
+	//                    Argo CD applications and ApplicationSets in all
+	//                    namespaces, and the namespaces in which Argo CD reads
+	//                    them (Namespace, Name
 	//                    and RootSource of the root application, RepoPrefixes,
 	//                    ClusterServers, AppNamespaces). No groups, only errors.
 	//   argocd-repositories the repositories and credential templates of Argo CD, from
@@ -449,7 +450,8 @@ type argoAppsSource struct {
 func (s *argoAppsSource) Name() string { return s.sc.Service + " applications" }
 
 // References checks the namespaces in which Argo CD reads applications,
-// and the applications in all namespaces. It gives no groups.
+// and the applications and the ApplicationSets in all namespaces. It gives
+// no groups.
 func (s *argoAppsSource) References(ctx context.Context) ([]Reference, []string, error) {
 	var params map[string]string
 	cm, err := s.kube.GetConfigMap(ctx, s.sc.Namespace, argoParamsConfigMap)
@@ -481,16 +483,32 @@ func (s *argoAppsSource) References(ctx context.Context) ([]Reference, []string,
 		RootApp:            s.sc.Name,
 		Root:               *s.sc.RootSource,
 	}
-	warnings, err := checkArgoApplications(apps, rules)
-	if len(problems) > 0 {
-		msgs := []string{fmt.Sprintf("Argo CD reads applications in other namespaces: %s. The guard keeps the current protection",
-			strings.Join(problems, "; "))}
-		if err != nil {
-			msgs = append(msgs, err.Error())
-		}
-		err = errors.New(joinSentences(msgs))
+	sets, err := s.kube.ListApplicationSetObjects(ctx)
+	if err != nil {
+		return nil, nil, err
 	}
-	return nil, warnings, err
+	setProblems, err := checkArgoAppSets(sets, rules)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	var msgs []string
+	if len(problems) > 0 {
+		msgs = append(msgs, fmt.Sprintf("Argo CD reads applications in other namespaces: %s. The guard keeps the current protection",
+			strings.Join(problems, "; ")))
+	}
+	if len(setProblems) > 0 {
+		msgs = append(msgs, fmt.Sprintf("the ApplicationSets of Argo CD can make applications that Squared does not permit: %s. The guard keeps the current protection",
+			strings.Join(setProblems, "; ")))
+	}
+	warnings, err := checkArgoApplications(apps, rules)
+	if err != nil {
+		msgs = append(msgs, err.Error())
+	}
+	if len(msgs) > 0 {
+		return nil, warnings, errors.New(joinSentences(msgs))
+	}
+	return nil, warnings, nil
 }
 
 // joinSentences joins messages that end without a full stop into one

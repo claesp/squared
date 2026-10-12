@@ -204,6 +204,18 @@ func (c *Client) ListApplicationObjects(ctx context.Context) ([]json.RawMessage,
 	return out.Items, nil
 }
 
+// ListApplicationSetObjects returns all Argo CD ApplicationSets in all
+// namespaces as complete objects, for the checks of the guard.
+func (c *Client) ListApplicationSetObjects(ctx context.Context) ([]json.RawMessage, error) {
+	var out struct {
+		Items []json.RawMessage `json:"items"`
+	}
+	if err := c.rest.Do(ctx, http.MethodGet, "/apis/argoproj.io/v1alpha1/applicationsets", nil, &out); err != nil {
+		return nil, err
+	}
+	return out.Items, nil
+}
+
 // Container is the part of a container that tells its settings.
 type Container struct {
 	Name    string   `json:"name"`

@@ -157,7 +157,8 @@ func checkGenerator(v any, prefixes []string, names map[string]bool) ([]string, 
 // checkArgoAppSets checks the ApplicationSets of Argo CD in all
 // namespaces. Squared makes none. The guard also checks the applications
 // that they make, but an ApplicationSet makes them again after a removal.
-// names are the applications of Squared in the namespace of Argo CD.
+// names are the applications of Squared in the namespace of Argo CD, and
+// policy is the policy of the ApplicationSet controller.
 //
 // An ApplicationSet must have preserveResourcesOnDeletion: it can take
 // over an application of Squared with the same name, also with the policy
@@ -165,7 +166,7 @@ func checkGenerator(v any, prefixes []string, names map[string]bool) ([]string, 
 // of Argo CD, and the removal of the ApplicationSet, or of the
 // application by the policy, removes the objects of the tenant too. With
 // it, only the application goes, and the root application makes it again.
-func checkArgoAppSets(raws []json.RawMessage, r argoAppRules, names map[string]bool) ([]string, error) {
+func checkArgoAppSets(raws []json.RawMessage, r argoAppRules, names map[string]bool, policy argoSetPolicy) ([]string, error) {
 	var problems []string
 	for _, raw := range raws {
 		var s argoAppSet
@@ -182,9 +183,14 @@ func checkArgoAppSets(raws []json.RawMessage, r argoAppRules, names map[string]b
 			own = nil
 		}
 		var p []string
+		var ownPolicy string
 		if s.Spec.SyncPolicy == nil || !s.Spec.SyncPolicy.PreserveResourcesOnDeletion {
 			p = append(p, "preserveResourcesOnDeletion is not true: when it takes over an application of Squared with the same name, also with the policy create-only, its removal removes the objects of the tenant")
 		}
+		if s.Spec.SyncPolicy != nil {
+			ownPolicy = s.Spec.SyncPolicy.ApplicationsSync
+		}
+		p = append(p, appSetPolicyProblems(policy, ownPolicy)...)
 		if len(s.Spec.Template) > 0 {
 			tp, err := checkAppTemplate(s.Spec.Template, r.RepoPrefixes, own)
 			if err != nil {

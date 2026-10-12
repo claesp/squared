@@ -397,7 +397,26 @@ controls that it uses. Read [architecture.md](architecture.md) first.
 
   Limit: the list of addresses does not apply to the generators without
   an API address, for example GitHub without `api`. The strict mode
-  protects their tokens. Limit: the guard does not know what a plugin
+  protects their tokens.
+
+  The policy of the ApplicationSet controller tells what an ApplicationSet
+  can do with the applications that it made: `sync` (create, update and
+  delete), `create-only`, `create-update` or `create-delete`. Without
+  `applicationsetcontroller.policy`, ApplicationSets use `sync`. With it,
+  an ApplicationSet can choose another policy only while
+  `applicationsetcontroller.enable.policy.override` is on (the default).
+  The policy does not stop a takeover (see above). But with updates, an
+  ApplicationSet that took over an application of Squared writes its
+  template into it again after each repair by the root application, and
+  Argo CD can each time remove the objects of the tenant that are not in
+  the template. The development environment sets `create-only` and turns
+  the override off.
+
+  | Policy | Result |
+  |---|---|
+  | `applicationsetcontroller.policy` is empty, `sync` or `create-update` | Error |
+  | An unknown policy, or a value of the override that is not `true` or `false` | Error |
+  | The override is on, and an ApplicationSet chooses `sync` or `create-update` | Error | Limit: the guard does not know what a plugin
   generator or a cluster decision resource gives. The end-to-end test
   adds an ApplicationSet with a Git generator for the platform repository,
   a project from the parameters and a pull request generator with a token
@@ -405,7 +424,9 @@ controls that it uses. Read [architecture.md](architecture.md) first.
   generators without limits and checks the errors. It lets an
   ApplicationSet take over a test application with the labels of Squared,
   checks the errors, and checks that Kubernetes removes the application
-  with the ApplicationSet.
+  with the ApplicationSet. It sets the policy `sync`, then turns on the
+  override and adds an ApplicationSet with the policy `sync`, and checks
+  the errors.
 - **Harbor configuration.** Only the Harbor system administrator can read
   the configuration through the API, and a robot account cannot get that
   right. The table `properties` of the Harbor database has all settings,

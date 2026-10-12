@@ -698,6 +698,39 @@ YAML
   wait_for "the guard has no errors after the SCM generators are off" 60 guard_clean
   log "the guard checks the SCM settings of the ApplicationSet controller"
 
+  # The policy sync for the controller. Then create-only with the override
+  # on, and an ApplicationSet with the policy sync. Its list is empty, thus
+  # it makes no applications.
+  local params='{"data":{"applicationsetcontroller.policy":"create-only","applicationsetcontroller.enable.policy.override":"false"}}'
+  k -n argocd patch configmap argocd-cmd-params-cm --type merge -p '{"data":{"applicationsetcontroller.policy":"sync"}}' >/dev/null
+  guard_reports_policy() { guard_status | jq -e '[.errors[]? | select(test("has the policy sync in applicationsetcontroller.policy"))] | length > 0' >/dev/null; }
+  wait_for "the guard reports the policy sync of the ApplicationSet controller" 60 guard_reports_policy
+  k -n argocd patch configmap argocd-cmd-params-cm --type merge -p '{"data":{"applicationsetcontroller.policy":"create-only","applicationsetcontroller.enable.policy.override":"true"}}' >/dev/null
+  k apply -f - >/dev/null <<YAML
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: e2e-guard-updater
+  namespace: argocd
+spec:
+  syncPolicy: { applicationsSync: sync, preserveResourcesOnDeletion: true }
+  generators: [{ list: { elements: [] } }]
+  template:
+    metadata: { name: e2e-guard-updater }
+    spec:
+      project: default
+      source: { repoURL: "https://git.example.invalid/e2e.git", targetRevision: main, path: e2e }
+      destination: { server: "https://kubernetes.default.svc", namespace: e2e-guard }
+YAML
+  guard_reports_set_policy() {
+    guard_status | jq -e '[.errors[]? | select(test("e2e-guard-updater: its policy sync permits updates of its applications"))] | length > 0' >/dev/null
+  }
+  wait_for "the guard reports the ApplicationSet with the policy sync" 60 guard_reports_set_policy
+  k -n argocd delete applicationset e2e-guard-updater >/dev/null
+  k -n argocd patch configmap argocd-cmd-params-cm --type merge -p "$params" >/dev/null
+  wait_for "the guard has no errors after the policy is back" 60 guard_clean
+  log "the guard checks the policy of the ApplicationSet controller"
+
   # Keycloak mappers that write the groups claim or the email claim. These
   # are in no token, thus they are harmless, but the guard must report
   # each mapper that does not come from the group membership or the email

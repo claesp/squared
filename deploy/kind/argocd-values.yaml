@@ -7,6 +7,11 @@ configs:
     # an ApplicationSet can send the token of a Secret in its namespace to
     # a server (see docs/security.md).
     applicationsetcontroller.enable.scm.providers: false
+    # An ApplicationSet must not update the applications that it made: one
+    # that takes over an application of Squared would write its template
+    # into it again after each repair (see docs/security.md).
+    applicationsetcontroller.policy: create-only
+    applicationsetcontroller.enable.policy.override: false
   cm:
     url: http://localhost:30081
     # Forgejo sends a webhook after each push. The poll interval is only a

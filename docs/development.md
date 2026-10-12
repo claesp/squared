@@ -224,7 +224,8 @@ all `*.localhost` names.
    application without `selfHeal`, and `application.namespaces` with an
    application in the namespace `default`, an ApplicationSet that reads
    the platform repository, SCM generators without limits, and an
-   ApplicationSet that takes over an application of Squared give errors,
+   ApplicationSet that takes over an application of Squared, and the
+   ApplicationSet policy `sync` give errors,
    and that Keycloak
    mappers that write `groups` on the client `argocd` and `email` from
    another attribute on the client `forgejo` give errors. It also turns on

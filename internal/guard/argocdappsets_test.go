@@ -32,7 +32,7 @@ func appSet(t *testing.T, change func(spec map[string]any)) json.RawMessage {
 var squaredNames = map[string]bool{"squared-platform": true, "acme-dev-shop": true}
 
 func TestCheckArgoAppSets(t *testing.T) {
-	if p, err := checkArgoAppSets([]json.RawMessage{appSet(t, nil)}, devAppRules, squaredNames); err != nil || len(p) != 0 {
+	if p, err := checkArgoAppSets([]json.RawMessage{appSet(t, nil)}, devAppRules, squaredNames, argoSetPolicy{}); err != nil || len(p) != 0 {
 		t.Fatalf("problems = %q, err %v", p, err)
 	}
 
@@ -99,7 +99,7 @@ func TestCheckArgoAppSets(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			p, err := checkArgoAppSets([]json.RawMessage{appSet(t, tt.change)}, devAppRules, squaredNames)
+			p, err := checkArgoAppSets([]json.RawMessage{appSet(t, tt.change)}, devAppRules, squaredNames, argoSetPolicy{})
 			if err != nil || !strings.Contains(strings.Join(p, " | "), "the ApplicationSet team: "+tt.want) {
 				t.Fatalf("problems = %q, err %v, want %q", p, err, tt.want)
 			}
@@ -116,7 +116,7 @@ func TestCheckArgoAppSets(t *testing.T) {
 		s["generators"] = []any{map[string]any{"scmProvider": map[string]any{"gitea": map[string]any{
 			"api": "http://forgejo.localhost:30300", "owner": "team"}}}}
 	})
-	if p, err := checkArgoAppSets([]json.RawMessage{other}, devAppRules, squaredNames); err != nil || len(p) != 0 {
+	if p, err := checkArgoAppSets([]json.RawMessage{other}, devAppRules, squaredNames, argoSetPolicy{}); err != nil || len(p) != 0 {
 		t.Fatalf("problems = %q, err %v", p, err)
 	}
 }
@@ -132,7 +132,7 @@ func TestCheckArgoAppSetsOtherNamespace(t *testing.T) {
 		t.Fatal(err)
 	}
 	obj["metadata"].(map[string]any)["namespace"] = "team-a"
-	if p, err := checkArgoAppSets([]json.RawMessage{projectJSON(t, obj)}, devAppRules, squaredNames); err != nil || len(p) != 0 {
+	if p, err := checkArgoAppSets([]json.RawMessage{projectJSON(t, obj)}, devAppRules, squaredNames, argoSetPolicy{}); err != nil || len(p) != 0 {
 		t.Fatalf("problems = %q, err %v", p, err)
 	}
 }

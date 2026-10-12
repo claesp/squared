@@ -220,8 +220,9 @@ all `*.localhost` names.
    credential template that ends in the host name gives an error, that a
    cluster without TLS checks gives a warning, that a tenant project for
    all namespaces, an application without automatic sync, an application
-   of the project `default` with the platform repository and a root
-   application without `selfHeal` give errors, and that Keycloak
+   of the project `default` with the platform repository, a root
+   application without `selfHeal`, and `application.namespaces` with an
+   application in the namespace `default` give errors, and that Keycloak
    mappers that write `groups` on the client `argocd` and `email` from
    another attribute on the client `forgejo` give errors. It also turns on
    duplicate email addresses and lets users edit their address in the

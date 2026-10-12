@@ -289,8 +289,8 @@ controls that it uses. Read [architecture.md](architecture.md) first.
 
 - **Applications of Argo CD.** An application tells Argo CD what to
   deploy, from where, and if it changes back changes by hand. The guard
-  reads all applications through the Kubernetes API (right `list` on
-  `applications`).
+  reads the applications in all namespaces through the Kubernetes API
+  (right `list` on `applications` in the cluster).
 
   | Application | Result |
   |---|---|
@@ -300,6 +300,7 @@ controls that it uses. Read [architecture.md](architecture.md) first.
   | An application of Squared with more than one source, a source hydrator, or a source field other than `repoURL`, `targetRevision` and `path` (for example `helm`, `kustomize`, `plugin`, `chart` or `directory`, which has Jsonnet): Argo CD then changes the manifests before it applies them | Error |
   | An application of Squared with a destination that is not in `clusterServers` or not the namespace of its environment, or with labels for the environment and the deployment that do not agree with its name | Error |
   | An application of Squared with other sync options than `CreateNamespace=false` and `PruneLast=true`, or with `ignoreDifferences` | Error |
+  | An application of Squared in another namespace than the namespace of Argo CD | Error |
   | An application that Squared did not make in a tenant project | Error |
   | An application that Squared did not make with a source in the GitOps repositories (`repoPrefixes`), also as one of more sources or for the source hydrator: it applies the manifests of a tenant without the limits of the tenant project, or the platform objects | Error |
   | The root application (`name`) without automatic sync, `prune` or `selfHeal`: a change by hand of a tenant project stays | Error |
@@ -313,14 +314,33 @@ controls that it uses. Read [architecture.md](architecture.md) first.
   differences in case. Limit: the guard knows only the addresses in
   `repoPrefixes`. Put all addresses at which Argo CD can reach Forgejo
   into it, for example also the address of the Service in the cluster.
-  Limit: the guard reads only the applications in the namespace of Argo
-  CD. Argo CD reads applications in other namespaces only when
-  `application.namespaces` is set; tenant projects with
-  `sourceNamespaces` are an error.
+  The guard names an application in another namespace as
+  `<namespace>/<name>`.
   The end-to-end test adds a tenant project for all namespaces, an
   application without automatic sync, and an application of the project
   `default` with the platform repository in another notation. It turns off
   `selfHeal` of the root application, and checks the errors.
+- **Application namespaces of Argo CD.** Argo CD reads applications only
+  in its own namespace, unless `application.namespaces` names more
+  namespaces. A person who can make applications in such a namespace
+  deploys with each project that lists the namespace in
+  `sourceNamespaces`. `applicationsetcontroller.namespaces` does the same
+  for ApplicationSets, which make applications. Squared needs neither.
+  The guard reads the two keys in the ConfigMap `argocd-cmd-params-cm`,
+  and the flags and the environment variables of the application
+  controller, the API server and the ApplicationSet controller, which can
+  set other values.
+
+  | Setting | Result |
+  |---|---|
+  | A namespace (also a pattern such as `*` or `/regex/`) other than the namespace of Argo CD that is not in `applicationNamespaces` | Error |
+  | A container that reads the variable from another ConfigMap or a Secret, or that has `envFrom` | Error |
+
+  The guard compares the values as text: an operator who permits a
+  pattern adds the same text to `applicationNamespaces`. The guard checks
+  the applications in all namespaces in any case. The end-to-end test
+  sets `application.namespaces` to `default`, adds an application there
+  with the platform repository, and checks both errors.
 - **Harbor configuration.** Only the Harbor system administrator can read
   the configuration through the API, and a robot account cannot get that
   right. The table `properties` of the Harbor database has all settings,

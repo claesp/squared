@@ -8,11 +8,20 @@ metadata:
 rules:
   - apiGroups: [""]
     resources: ["configmaps"]
-    resourceNames: ["argocd-rbac-cm"]
+    resourceNames: ["argocd-rbac-cm", "argocd-cmd-params-cm"]
     verbs: ["get"]
   - apiGroups: ["argoproj.io"]
-    resources: ["appprojects", "applications"]
+    resources: ["appprojects"]
     verbs: ["get", "list"]
+  # The settings of the namespaces in which Argo CD reads applications.
+  - apiGroups: ["apps"]
+    resources: ["statefulsets"]
+    resourceNames: ["argocd-application-controller"]
+    verbs: ["get"]
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    resourceNames: ["argocd-server", "argocd-applicationset-controller"]
+    verbs: ["get"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
@@ -20,6 +29,25 @@ metadata:
   name: squared-guard
   namespace: argocd
 roleRef: { apiGroup: rbac.authorization.k8s.io, kind: Role, name: squared-guard }
+subjects:
+  - { kind: ServiceAccount, name: squared-guard, namespace: squared-guard }
+---
+# Argo CD can read applications in other namespaces, thus the guard reads
+# them in all namespaces.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: squared-guard-applications
+rules:
+  - apiGroups: ["argoproj.io"]
+    resources: ["applications"]
+    verbs: ["list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: squared-guard-applications
+roleRef: { apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: squared-guard-applications }
 subjects:
   - { kind: ServiceAccount, name: squared-guard, namespace: squared-guard }
 ---

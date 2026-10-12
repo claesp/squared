@@ -7,8 +7,11 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"slices"
 	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/jackc/pgx/v5"
 
@@ -43,9 +46,10 @@ type SourceConfig struct {
 	//   argocd-projects  roles of all Argo CD projects, and the limits of the tenant
 	//                    projects (Namespace, RepoPrefixes, ClusterServers)
 	//   argocd-applications the sync policies, the sources and the limits of the
-	//                    Argo CD applications (Namespace, Name and RootSource of
-	//                    the root application, RepoPrefixes, ClusterServers). No
-	//                    groups, only errors.
+	//                    Argo CD applications in all namespaces, and the
+	//                    namespaces in which Argo CD reads them (Namespace, Name
+	//                    and RootSource of the root application, RepoPrefixes,
+	//                    ClusterServers, AppNamespaces). No groups, only errors.
 	//   argocd-repositories the repositories and credential templates of Argo CD, from
 	//                    its API, without secrets (URL, PasswordFile with a token,
 	//                    RepoPrefixes). No groups, only errors.
@@ -123,6 +127,10 @@ type SourceConfig struct {
 	// RootSource is for argocd-applications: the source of the root
 	// application (Name).
 	RootSource *RootSource `json:"rootSource,omitempty"`
+	// AppNamespaces is for argocd-applications: the values of
+	// application.namespaces and applicationsetcontroller.namespaces of
+	// Argo CD that an operator checked. Squared needs none.
+	AppNamespaces []string `json:"applicationNamespaces,omitempty"`
 	// WebhookHosts is for forgejo-config: the hosts that ALLOWED_HOST_LIST
 	// may have besides "external", for example the host of Argo CD.
 	WebhookHosts []string `json:"webhookHosts,omitempty"`
@@ -428,7 +436,7 @@ func (s *argoProjectsSource) References(ctx context.Context) ([]Reference, []str
 			strings.Join(problems, " | ")))
 	}
 	if len(errs) > 0 {
-		return refs, warnings, errors.New(strings.Join(errs, " "))
+		return refs, warnings, errors.New(joinSentences(errs))
 	}
 	return refs, warnings, nil
 }
@@ -440,15 +448,60 @@ type argoAppsSource struct {
 
 func (s *argoAppsSource) Name() string { return s.sc.Service + " applications" }
 
-// References checks the applications. It gives no groups.
+// References checks the namespaces in which Argo CD reads applications,
+// and the applications in all namespaces. It gives no groups.
 func (s *argoAppsSource) References(ctx context.Context) ([]Reference, []string, error) {
-	apps, err := s.kube.ListApplicationObjects(ctx, s.sc.Namespace)
+	var params map[string]string
+	cm, err := s.kube.GetConfigMap(ctx, s.sc.Namespace, argoParamsConfigMap)
+	switch {
+	case rest.HasStatus(err, http.StatusNotFound):
+	case err != nil:
+		return nil, nil, err
+	default:
+		params = cm.Data
+	}
+	containers := map[string][]kube.Container{}
+	for _, w := range argoNamespaceWorkloads {
+		c, err := s.kube.GetContainers(ctx, s.sc.Namespace, w.Resource, w.Name)
+		if err != nil {
+			return nil, nil, err
+		}
+		containers[w.Name] = c
+	}
+	values, problems := argoNamespaceValues(params, containers)
+	problems = append(problems, checkArgoNamespaces(values, s.sc.Namespace, s.sc.AppNamespaces)...)
+
+	apps, err := s.kube.ListApplicationObjects(ctx)
 	if err != nil {
 		return nil, nil, err
 	}
-	rules := tenantProjectRules{ClusterServers: s.sc.ClusterServers, RepoPrefixes: s.sc.RepoPrefixes}
-	warnings, err := checkArgoApplications(apps, s.sc.Name, *s.sc.RootSource, rules)
+	rules := argoAppRules{
+		tenantProjectRules: tenantProjectRules{ClusterServers: s.sc.ClusterServers, RepoPrefixes: s.sc.RepoPrefixes},
+		Namespace:          s.sc.Namespace,
+		RootApp:            s.sc.Name,
+		Root:               *s.sc.RootSource,
+	}
+	warnings, err := checkArgoApplications(apps, rules)
+	if len(problems) > 0 {
+		msgs := []string{fmt.Sprintf("Argo CD reads applications in other namespaces: %s. The guard keeps the current protection",
+			strings.Join(problems, "; "))}
+		if err != nil {
+			msgs = append(msgs, err.Error())
+		}
+		err = errors.New(joinSentences(msgs))
+	}
 	return nil, warnings, err
+}
+
+// joinSentences joins messages that end without a full stop into one
+// text, with a full stop and a capital letter between them.
+func joinSentences(msgs []string) string {
+	out := slices.Clone(msgs)
+	for i := 1; i < len(out); i++ {
+		r, size := utf8.DecodeRuneInString(out[i])
+		out[i] = string(unicode.ToUpper(r)) + out[i][size:]
+	}
+	return strings.Join(out, ". ")
 }
 
 type harborMembersSource struct {

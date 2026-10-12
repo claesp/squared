@@ -20,8 +20,9 @@ import (
 // deploys, from where, and how Argo CD keeps it in sync.
 type argoApp struct {
 	Metadata struct {
-		Name   string            `json:"name"`
-		Labels map[string]string `json:"labels"`
+		Name      string            `json:"name"`
+		Namespace string            `json:"namespace"`
+		Labels    map[string]string `json:"labels"`
 	} `json:"metadata"`
 	Spec struct {
 		Project string `json:"project"`
@@ -267,18 +268,28 @@ func checkRootApplication(a argoApp, root RootSource) ([]string, error) {
 	return p, nil
 }
 
-// checkArgoApplications checks the applications of Argo CD:
+// argoAppRules are what the applications of Argo CD may have.
+type argoAppRules struct {
+	tenantProjectRules
+	Namespace string     // The namespace of Argo CD.
+	RootApp   string     // The name of the root application.
+	Root      RootSource // The source of the root application.
+}
+
+// checkArgoApplications checks the applications of Argo CD in all
+// namespaces:
 //   - each application that Squared made for a deployment, as
-//     checkTenantApplication;
+//     checkTenantApplication. Squared makes them only in the namespace of
+//     Argo CD;
 //   - an application that Squared did not make in a tenant project, or
 //     with a source in the GitOps repositories: only Squared writes what
 //     Argo CD deploys from them, and only with the limits of the tenant
 //     project;
-//   - the root application (rootApp), which applies the platform
+//   - the root application (RootApp), which applies the platform
 //     repository with the tenant projects, as checkRootApplication. It
 //     must heal itself, so that a change by hand of a tenant project goes
 //     back.
-func checkArgoApplications(raws []json.RawMessage, rootApp string, root RootSource, r tenantProjectRules) ([]string, error) {
+func checkArgoApplications(raws []json.RawMessage, r argoAppRules) ([]string, error) {
 	var problems []string
 	rootSeen := false
 	for _, raw := range raws {
@@ -288,21 +299,26 @@ func checkArgoApplications(raws []json.RawMessage, rootApp string, root RootSour
 		}
 		l := a.Metadata.Labels
 		name := a.Metadata.Name
+		if a.Metadata.Namespace != r.Namespace {
+			name = a.Metadata.Namespace + "/" + name
+		}
 		slug := l[render.LabelTenant]
 		squared := l[render.LabelManagedBy] == render.ManagedBy && l[gitops.LabelManaged] == "true"
 		var p []string
 		var err error
 		switch {
-		case name == rootApp:
+		case name == r.RootApp:
 			rootSeen = true
-			p, err = checkRootApplication(a, root)
+			p, err = checkRootApplication(a, r.Root)
 			for i := range p {
 				p[i] = fmt.Sprintf("the root application %s: %s", name, p[i])
 			}
+		case squared && a.Metadata.Namespace != r.Namespace:
+			p = []string{fmt.Sprintf("the application %s of Squared is not in the namespace %s", name, r.Namespace)}
 		case squared && slug == "":
 			p = []string{fmt.Sprintf("the application %s of Squared has no label %s", name, render.LabelTenant)}
 		case squared:
-			p, err = checkTenantApplication(slug, a, r)
+			p, err = checkTenantApplication(slug, a, r.tenantProjectRules)
 			for i := range p {
 				p[i] = fmt.Sprintf("the application %s of tenant %s: %s", name, slug, p[i])
 			}
@@ -323,8 +339,8 @@ func checkArgoApplications(raws []json.RawMessage, rootApp string, root RootSour
 		}
 		problems = append(problems, p...)
 	}
-	if rootApp != "" && !rootSeen {
-		problems = append(problems, fmt.Sprintf("the guard does not see the root application %s", rootApp))
+	if !rootSeen {
+		problems = append(problems, fmt.Sprintf("the guard does not see the root application %s", r.RootApp))
 	}
 	if len(problems) > 0 {
 		return nil, fmt.Errorf("the applications of Argo CD are not as Squared makes them: %s. The guard keeps the current protection",

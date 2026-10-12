@@ -577,6 +577,32 @@ YAML
   wait_for "the guard has no errors after selfHeal is on again" 60 guard_clean
   log "the guard checks the sync policy of the root application"
 
+  # Argo CD reads applications also in the namespace default, and an
+  # application there has the platform repository. The project default
+  # does not permit applications from other namespaces, thus Argo CD
+  # deploys nothing.
+  k -n argocd patch configmap argocd-cmd-params-cm --type merge -p '{"data":{"application.namespaces":"default"}}' >/dev/null
+  k apply -f - >/dev/null <<YAML
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: e2e-guard-elsewhere
+  namespace: default
+spec:
+  project: default
+  source: { repoURL: "http://forgejo.localhost:30300/squared/platform.git", targetRevision: main, path: tenants }
+  destination: { server: "https://kubernetes.default.svc", namespace: default }
+YAML
+  guard_reports_app_namespace() {
+    guard_status | jq -e '[.errors[]? | select(test("application.namespaces [(]argocd-cmd-params-cm[)] has the namespace \"default\""))] | length > 0' >/dev/null &&
+      guard_status | jq -e '[.errors[]? | select(test("the application default/e2e-guard-elsewhere uses the GitOps repository"))] | length > 0' >/dev/null
+  }
+  wait_for "the guard reports the application namespace and the application in it" 60 guard_reports_app_namespace
+  k -n default delete application e2e-guard-elsewhere >/dev/null
+  k -n argocd patch configmap argocd-cmd-params-cm --type json -p '[{"op":"remove","path":"/data/application.namespaces"}]' >/dev/null
+  wait_for "the guard has no errors after the application namespace is removed" 60 guard_clean
+  log "the guard checks the namespaces in which Argo CD reads applications"
+
   # Keycloak mappers that write the groups claim or the email claim. These
   # are in no token, thus they are harmless, but the guard must report
   # each mapper that does not come from the group membership or the email

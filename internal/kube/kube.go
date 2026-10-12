@@ -191,17 +191,61 @@ func (c *Client) ListApplications(ctx context.Context, namespace, selector strin
 	return out.Items, nil
 }
 
-// ListApplicationObjects returns all Argo CD applications in a namespace
-// as complete objects, for the checks of the guard.
-func (c *Client) ListApplicationObjects(ctx context.Context, namespace string) ([]json.RawMessage, error) {
+// ListApplicationObjects returns all Argo CD applications in all
+// namespaces as complete objects, for the checks of the guard.
+func (c *Client) ListApplicationObjects(ctx context.Context) ([]json.RawMessage, error) {
 	var out struct {
 		Items []json.RawMessage `json:"items"`
 	}
-	path := "/apis/argoproj.io/v1alpha1/namespaces/" + url.PathEscape(namespace) + "/applications"
+	path := "/apis/argoproj.io/v1alpha1/applications"
 	if err := c.rest.Do(ctx, http.MethodGet, path, nil, &out); err != nil {
 		return nil, err
 	}
 	return out.Items, nil
+}
+
+// Container is the part of a container that tells its settings.
+type Container struct {
+	Name    string   `json:"name"`
+	Command []string `json:"command"`
+	Args    []string `json:"args"`
+	Env     []struct {
+		Name      string `json:"name"`
+		Value     string `json:"value"`
+		ValueFrom *struct {
+			ConfigMapKeyRef *struct {
+				Name string `json:"name"`
+				Key  string `json:"key"`
+			} `json:"configMapKeyRef"`
+		} `json:"valueFrom"`
+	} `json:"env"`
+	EnvFrom []json.RawMessage `json:"envFrom"`
+}
+
+// GetContainers returns the containers of the pod template of a workload,
+// for example resource "statefulsets" or "deployments" of the group apps.
+// It returns nil and no error when the workload does not exist.
+func (c *Client) GetContainers(ctx context.Context, namespace, resource, name string) ([]Container, error) {
+	var w struct {
+		Spec struct {
+			Template struct {
+				Spec struct {
+					InitContainers []Container `json:"initContainers"`
+					Containers     []Container `json:"containers"`
+				} `json:"spec"`
+			} `json:"template"`
+		} `json:"spec"`
+	}
+	path := "/apis/apps/v1/namespaces/" + url.PathEscape(namespace) + "/" + url.PathEscape(resource) + "/" + url.PathEscape(name)
+	err := c.rest.Do(ctx, http.MethodGet, path, nil, &w)
+	if rest.HasStatus(err, http.StatusNotFound) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	s := w.Spec.Template.Spec
+	return append(s.InitContainers, s.Containers...), nil
 }
 
 // ApplicationExists tells if an Argo CD application exists.

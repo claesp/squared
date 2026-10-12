@@ -28,15 +28,20 @@ func renderedApp(t *testing.T) map[string]any {
 	return obj
 }
 
-var devRootSource = RootSource{RepoURL: "http://forgejo.localhost:30300/squared/platform.git", TargetRevision: "main", Path: "tenants"}
+var devAppRules = argoAppRules{
+	tenantProjectRules: devProjectRules,
+	Namespace:          "argocd",
+	RootApp:            "squared-platform",
+	Root:               RootSource{RepoURL: "http://forgejo.localhost:30300/squared/platform.git", TargetRevision: "main", Path: "tenants"},
+}
 
 // rootApp returns the root application of the development environment
 // (deploy/kind/argocd-platform.yaml).
 func rootApp() map[string]any {
 	return map[string]any{
-		"metadata": map[string]any{"name": "squared-platform"},
+		"metadata": map[string]any{"name": "squared-platform", "namespace": "argocd"},
 		"spec": map[string]any{"project": "squared-platform",
-			"source": map[string]any{"repoURL": devRootSource.RepoURL, "targetRevision": "main", "path": "tenants",
+			"source": map[string]any{"repoURL": devAppRules.Root.RepoURL, "targetRevision": "main", "path": "tenants",
 				"directory": map[string]any{"recurse": true}},
 			"syncPolicy": map[string]any{"automated": map[string]any{"prune": true, "selfHeal": true}}},
 	}
@@ -44,7 +49,7 @@ func rootApp() map[string]any {
 
 // otherApp returns an application that Squared did not make.
 func otherApp(name, project string, source map[string]any) map[string]any {
-	return map[string]any{"metadata": map[string]any{"name": name}, "spec": map[string]any{"project": project, "source": source}}
+	return map[string]any{"metadata": map[string]any{"name": name, "namespace": "argocd"}, "spec": map[string]any{"project": project, "source": source}}
 }
 
 func raws(t *testing.T, objs ...map[string]any) []json.RawMessage {
@@ -57,13 +62,13 @@ func raws(t *testing.T, objs ...map[string]any) []json.RawMessage {
 }
 
 func TestCheckArgoApplicationsRendered(t *testing.T) {
-	if _, err := checkArgoApplications(raws(t, rootApp(), renderedApp(t)), "squared-platform", devRootSource, devProjectRules); err != nil {
+	if _, err := checkArgoApplications(raws(t, rootApp(), renderedApp(t)), devAppRules); err != nil {
 		t.Fatalf("the applications that Squared makes have problems: %v", err)
 	}
 	// Another application outside the tenant projects and the GitOps
 	// repositories does not matter.
 	other := otherApp("monitoring", "default", map[string]any{"repoURL": "https://charts.example/", "chart": "monitoring"})
-	if _, err := checkArgoApplications(raws(t, rootApp(), other), "squared-platform", devRootSource, devProjectRules); err != nil {
+	if _, err := checkArgoApplications(raws(t, rootApp(), other), devAppRules); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -141,7 +146,7 @@ func TestCheckArgoApplicationsChanges(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			app, root := renderedApp(t), rootApp()
 			tt.change(app, root)
-			_, err := checkArgoApplications(raws(t, root, app), "squared-platform", devRootSource, devProjectRules)
+			_, err := checkArgoApplications(raws(t, root, app), devAppRules)
 			if err == nil || !strings.Contains(err.Error(), tt.want) {
 				t.Fatalf("err = %v, want %q", err, tt.want)
 			}
@@ -149,8 +154,8 @@ func TestCheckArgoApplicationsChanges(t *testing.T) {
 	}
 
 	// An application that Squared did not make, in a tenant project.
-	other := map[string]any{"metadata": map[string]any{"name": "sneaky"}, "spec": map[string]any{"project": "tenant-acme"}}
-	if _, err := checkArgoApplications(raws(t, rootApp(), other), "squared-platform", devRootSource, devProjectRules); err == nil ||
+	other := map[string]any{"metadata": map[string]any{"name": "sneaky", "namespace": "argocd"}, "spec": map[string]any{"project": "tenant-acme"}}
+	if _, err := checkArgoApplications(raws(t, rootApp(), other), devAppRules); err == nil ||
 		!strings.Contains(err.Error(), "the application sneaky uses the tenant project tenant-acme, but Squared did not make it") {
 		t.Fatalf("err = %v", err)
 	}
@@ -159,26 +164,60 @@ func TestCheckArgoApplicationsChanges(t *testing.T) {
 	// hydrator.
 	for _, o := range []map[string]any{
 		otherApp("copy", "default", map[string]any{"repoURL": "HTTP://user@Forgejo.localhost:30300/Squared/Tenant-Acme/", "path": "dev/shop"}),
-		{"metadata": map[string]any{"name": "copy"}, "spec": map[string]any{"project": "default", "sources": []any{
+		{"metadata": map[string]any{"name": "copy", "namespace": "argocd"}, "spec": map[string]any{"project": "default", "sources": []any{
 			map[string]any{"repoURL": "https://charts.example/", "chart": "x"},
 			map[string]any{"repoURL": "http://forgejo.localhost:30300/squared/platform", "ref": "values"}}}},
-		{"metadata": map[string]any{"name": "copy"}, "spec": map[string]any{"project": "default", "sourceHydrator": map[string]any{
+		{"metadata": map[string]any{"name": "copy", "namespace": "argocd"}, "spec": map[string]any{"project": "default", "sourceHydrator": map[string]any{
 			"drySource": map[string]any{"repoURL": "http://forgejo.localhost:30300/squared/tenant-acme.git"}}}},
 	} {
-		if _, err := checkArgoApplications(raws(t, rootApp(), o), "squared-platform", devRootSource, devProjectRules); err == nil ||
+		if _, err := checkArgoApplications(raws(t, rootApp(), o), devAppRules); err == nil ||
 			!strings.Contains(err.Error(), "the application copy uses the GitOps repository") {
 			t.Errorf("err = %v", err)
 		}
 	}
 	// Another organization with the same start of the name.
 	o := otherApp("other", "default", map[string]any{"repoURL": "http://forgejo.localhost:30300/squared-tools/x.git"})
-	if _, err := checkArgoApplications(raws(t, rootApp(), o), "squared-platform", devRootSource, devProjectRules); err != nil {
+	if _, err := checkArgoApplications(raws(t, rootApp(), o), devAppRules); err != nil {
 		t.Errorf("err = %v", err)
 	}
 
 	// Without the root application.
-	if _, err := checkArgoApplications(nil, "squared-platform", devRootSource, devProjectRules); err == nil ||
+	if _, err := checkArgoApplications(nil, devAppRules); err == nil ||
 		!strings.Contains(err.Error(), "does not see the root application") {
 		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestCheckArgoApplicationsOtherNamespaces(t *testing.T) {
+	inNamespace := func(o map[string]any, ns string) map[string]any {
+		o["metadata"].(map[string]any)["namespace"] = ns
+		return o
+	}
+	tests := []struct {
+		name string
+		app  map[string]any
+		want string
+	}{
+		{"application of Squared", inNamespace(renderedApp(t), "team-a"), "the application team-a/acme-dev-shop of Squared is not in the namespace argocd"},
+		{"root application", inNamespace(rootApp(), "team-a"), "the guard does not see the root application squared-platform"},
+		{"GitOps repository", inNamespace(otherApp("copy", "team", map[string]any{"repoURL": devAppRules.Root.RepoURL}), "team-a"),
+			"the application team-a/copy uses the GitOps repository"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			objs := []map[string]any{tt.app}
+			if tt.name != "root application" {
+				objs = append(objs, rootApp())
+			}
+			_, err := checkArgoApplications(raws(t, objs...), devAppRules)
+			if err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("err = %v, want %q", err, tt.want)
+			}
+		})
+	}
+	// Another application there is the business of the operator.
+	o := inNamespace(otherApp("monitoring", "team", map[string]any{"repoURL": "https://git.example/team.git"}), "team-a")
+	if _, err := checkArgoApplications(raws(t, rootApp(), o), devAppRules); err != nil {
+		t.Fatal(err)
 	}
 }

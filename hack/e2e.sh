@@ -606,7 +606,8 @@ YAML
   # An ApplicationSet that reads the platform repository, with a project
   # from the parameters, a pull request generator that sends a token
   # without the check of the TLS certificate, and a template patch with the
-  # finalizer of Argo CD and a tenant project in a branch. No directory
+  # finalizer of Argo CD and a tenant project in a branch. The Git
+  # generator has a template with another tenant project. No directory
   # matches the path, and the SCM generators are off, thus it makes no
   # applications.
   k apply -f - >/dev/null <<YAML
@@ -618,7 +619,13 @@ metadata:
 spec:
   goTemplate: true
   generators:
-    - git: { repoURL: "http://forgejo.localhost:30300/squared/platform.git", revision: main, directories: [{ path: e2e-none/* }] }
+    - git:
+        repoURL: "http://forgejo.localhost:30300/squared/platform.git"
+        revision: main
+        directories: [{ path: e2e-none/* }]
+        template:
+          metadata: {}
+          spec: { project: tenant-e2egen, destination: { namespace: e2e-guard } }
     - pullRequest:
         gitea: { api: "https://git.example.invalid", owner: e2e, repo: e2e, insecure: true, tokenRef: { secretName: e2e-guard, key: token } }
   template:
@@ -642,7 +649,8 @@ YAML
       guard_status | jq -e '[.errors[]? | select(test("e2e-guard-set: a generator sends credentials to https://git.example.invalid without the check"))] | length > 0' >/dev/null &&
       guard_status | jq -e '[.errors[]? | select(test("e2e-guard-set: preserveResourcesOnDeletion is not true"))] | length > 0' >/dev/null &&
       guard_status | jq -e '[.errors[]? | select(test("e2e-guard-set: in its templatePatch, its applications get the finalizer resources-finalizer"))] | length > 0' >/dev/null &&
-      guard_status | jq -e '[.errors[]? | select(test("e2e-guard-set: in its templatePatch, its applications use the tenant project tenant-e2eguard"))] | length > 0' >/dev/null
+      guard_status | jq -e '[.errors[]? | select(test("e2e-guard-set: in its templatePatch, its applications use the tenant project tenant-e2eguard"))] | length > 0' >/dev/null &&
+      guard_status | jq -e '[.errors[]? | select(test("e2e-guard-set: in the template of a git generator, its applications use the tenant project tenant-e2egen"))] | length > 0' >/dev/null
   }
   wait_for "the guard reports the ApplicationSet with the platform repository and a project from the parameters" 60 guard_reports_appset
   [[ "$(worker_may_add_dev squared-admins)" == 403 ]] || die "the protection of /squared-admins is gone after the ApplicationSet"

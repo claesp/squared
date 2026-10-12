@@ -32,7 +32,7 @@ func appSet(t *testing.T, change func(spec map[string]any)) json.RawMessage {
 var squaredNames = map[string]bool{"squared-platform": true, "acme-dev-shop": true}
 
 func TestCheckArgoAppSets(t *testing.T) {
-	if p, err := checkArgoAppSets([]json.RawMessage{appSet(t, nil)}, devAppRules, squaredNames, argoSetPolicy{}); err != nil || len(p) != 0 {
+	if p, _, err := checkArgoAppSets([]json.RawMessage{appSet(t, nil)}, devAppRules, squaredNames, argoSetPolicy{}); err != nil || len(p) != 0 {
 		t.Fatalf("problems = %q, err %v", p, err)
 	}
 
@@ -68,7 +68,7 @@ func TestCheckArgoAppSets(t *testing.T) {
 		{"name of the root application in a generator template", func(s map[string]any) {
 			s["generators"] = []any{map[string]any{"list": map[string]any{"elements": []any{},
 				"template": map[string]any{"metadata": map[string]any{"name": "squared-platform"}, "spec": map[string]any{}}}}}
-		}, "in the template of a generator, it makes the application squared-platform"},
+		}, "in the template of a list generator, it makes the application squared-platform"},
 		{"template patch", func(s map[string]any) { s["templatePatch"] = "spec:\n  project: tenant-acme\n" },
 			"in its templatePatch, its applications use the tenant project tenant-acme"},
 		{"finalizer", func(s map[string]any) {
@@ -99,11 +99,31 @@ func TestCheckArgoAppSets(t *testing.T) {
 		{"template of a generator", func(s map[string]any) {
 			s["generators"] = []any{map[string]any{"list": map[string]any{"elements": []any{},
 				"template": map[string]any{"metadata": map[string]any{}, "spec": map[string]any{"project": "tenant-acme"}}}}}
-		}, "in the template of a generator, its applications use the tenant project tenant-acme"},
+		}, "in the template of a list generator, its applications use the tenant project tenant-acme"},
+		{"template of a generator in a matrix", func(s map[string]any) {
+			s["generators"] = []any{map[string]any{"matrix": map[string]any{"generators": []any{
+				map[string]any{"clusters": map[string]any{}},
+				map[string]any{"git": map[string]any{"repoURL": "https://git.example/team.git", "revision": "main",
+					"template": map[string]any{"metadata": map[string]any{"finalizers": []any{"resources-finalizer.argocd.argoproj.io"}}, "spec": map[string]any{}}}}}}}}
+		}, "in the template of a git generator, its applications get the finalizer resources-finalizer.argocd.argoproj.io"},
+		{"template of a generator in a nested merge", func(s map[string]any) {
+			s["generators"] = []any{map[string]any{"matrix": map[string]any{"generators": []any{
+				map[string]any{"list": map[string]any{"elements": []any{}}},
+				map[string]any{"merge": map[string]any{"mergeKeys": []any{"x"}, "generators": []any{
+					map[string]any{"list": map[string]any{"elements": []any{},
+						"template": map[string]any{"spec": map[string]any{"source": map[string]any{"repoURL": "{{.url}}"}}}}}}}}}}}}
+		}, `in the template of a list generator, the repository "{{.url}}" of its applications comes from the generators`},
+		{"template of the matrix generator", func(s map[string]any) {
+			s["generators"] = []any{map[string]any{"matrix": map[string]any{"generators": []any{},
+				"template": map[string]any{"metadata": map[string]any{"name": "squared-platform"}}}}}
+		}, "in the template of a matrix generator, it makes the application squared-platform"},
+		{"template that is not an object", func(s map[string]any) {
+			s["generators"] = []any{map[string]any{"git": map[string]any{"repoURL": "https://git.example/team.git", "template": "x"}}}
+		}, "in the template of a git generator, the guard cannot read it"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			p, err := checkArgoAppSets([]json.RawMessage{appSet(t, tt.change)}, devAppRules, squaredNames, argoSetPolicy{})
+			p, _, err := checkArgoAppSets([]json.RawMessage{appSet(t, tt.change)}, devAppRules, squaredNames, argoSetPolicy{})
 			if err != nil || !strings.Contains(strings.Join(p, " | "), "the ApplicationSet team: "+tt.want) {
 				t.Fatalf("problems = %q, err %v, want %q", p, err, tt.want)
 			}
@@ -120,7 +140,7 @@ func TestCheckArgoAppSets(t *testing.T) {
 		s["generators"] = []any{map[string]any{"scmProvider": map[string]any{"gitea": map[string]any{
 			"api": "http://forgejo.localhost:30300", "owner": "team"}}}}
 	})
-	if p, err := checkArgoAppSets([]json.RawMessage{other}, devAppRules, squaredNames, argoSetPolicy{}); err != nil || len(p) != 0 {
+	if p, _, err := checkArgoAppSets([]json.RawMessage{other}, devAppRules, squaredNames, argoSetPolicy{}); err != nil || len(p) != 0 {
 		t.Fatalf("problems = %q, err %v", p, err)
 	}
 }
@@ -136,7 +156,33 @@ func TestCheckArgoAppSetsOtherNamespace(t *testing.T) {
 		t.Fatal(err)
 	}
 	obj["metadata"].(map[string]any)["namespace"] = "team-a"
-	if p, err := checkArgoAppSets([]json.RawMessage{projectJSON(t, obj)}, devAppRules, squaredNames, argoSetPolicy{}); err != nil || len(p) != 0 {
+	if p, _, err := checkArgoAppSets([]json.RawMessage{projectJSON(t, obj)}, devAppRules, squaredNames, argoSetPolicy{}); err != nil || len(p) != 0 {
 		t.Fatalf("problems = %q, err %v", p, err)
+	}
+}
+
+// TestCheckArgoAppSetsParameters checks that the parameters of a list
+// generator are not templates and not addresses that it reads.
+func TestCheckArgoAppSetsParameters(t *testing.T) {
+	set := appSet(t, func(s map[string]any) {
+		s["generators"] = []any{map[string]any{"list": map[string]any{
+			"elements": []any{map[string]any{"template": map[string]any{"metadata": map[string]any{"name": "acme-dev-shop"}},
+				"repoURL": "http://forgejo.localhost:30300/squared/platform.git"}},
+			"elementsYaml": "- repoURL: http://forgejo.localhost:30300/squared/platform.git"}}}
+	})
+	if p, w, err := checkArgoAppSets([]json.RawMessage{set}, devAppRules, squaredNames, argoSetPolicy{}); err != nil || len(p) != 0 || len(w) != 0 {
+		t.Fatalf("problems = %q, warnings = %q, err %v", p, w, err)
+	}
+}
+
+// TestCheckArgoAppSetsUnknownGenerator checks that a generator of a newer
+// Argo CD gives a warning.
+func TestCheckArgoAppSetsUnknownGenerator(t *testing.T) {
+	set := appSet(t, func(s map[string]any) {
+		s["generators"] = []any{map[string]any{"oci": map[string]any{"repoURL": "oci://registry.example/x"}, "selector": map[string]any{}}}
+	})
+	p, w, err := checkArgoAppSets([]json.RawMessage{set}, devAppRules, squaredNames, argoSetPolicy{})
+	if err != nil || len(p) != 0 || len(w) != 1 || !strings.Contains(w[0], "the ApplicationSet team: a generator has the kind oci, which the guard does not know") {
+		t.Fatalf("problems = %q, warnings = %q, err %v", p, w, err)
 	}
 }

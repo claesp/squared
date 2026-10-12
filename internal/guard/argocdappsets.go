@@ -94,21 +94,94 @@ func checkAppTemplate(raw json.RawMessage, prefixes []string, names map[string]b
 // generators that name credentials.
 var scmCredentialFields = []string{"tokenRef", "passwordRef", "basicAuth", "bearerToken", "appSecretName", "accessTokenRef"}
 
-// checkGenerator returns the problems of a generator and of the
-// generators in it (matrix, merge). A generator that reads a GitOps
-// repository, through Git or through the API of Forgejo, gives
-// parameters from it to the applications. A generator can also have its
-// own template.
-func checkGenerator(v any, prefixes []string, names map[string]bool) ([]string, error) {
+// generatorKinds are the generators of Argo CD 3.5.
+var generatorKinds = []string{"clusterDecisionResource", "clusters", "git", "list", "matrix", "merge", "plugin", "pullRequest", "scmProvider"}
+
+// checkGenerators returns the problems and the warnings of a list of
+// generators: of an ApplicationSet, or in a matrix or merge generator.
+// Each generator has one kind, an optional selector, and in the kind an
+// optional template, which changes fields of the template of the
+// ApplicationSet for the applications of this generator.
+func checkGenerators(gens []any, prefixes []string, names map[string]bool) (problems, warnings []string) {
+	for _, g := range gens {
+		m, ok := g.(map[string]any)
+		if !ok {
+			problems = append(problems, "the guard cannot read a generator, which is not an object")
+			continue
+		}
+		for _, kind := range slices.Sorted(maps.Keys(m)) {
+			if kind == "selector" {
+				continue
+			}
+			if !slices.Contains(generatorKinds, kind) {
+				warnings = append(warnings, fmt.Sprintf("a generator has the kind %s, which the guard does not know: it checks only the applications that it makes", kind))
+				continue
+			}
+			body, ok := m[kind].(map[string]any)
+			if !ok {
+				problems = append(problems, fmt.Sprintf("the guard cannot read a %s generator, which is not an object", kind))
+				continue
+			}
+			reads := map[string]any{}
+			for k, v := range body {
+				switch {
+				case k == "template":
+					problems = append(problems, checkGeneratorTemplate(kind, v, prefixes, names)...)
+				case k == "generators" && (kind == "matrix" || kind == "merge"):
+					children, ok := v.([]any)
+					if !ok {
+						problems = append(problems, fmt.Sprintf("the guard cannot read the generators of a %s generator", kind))
+						continue
+					}
+					cp, cw := checkGenerators(children, prefixes, names)
+					problems = append(problems, cp...)
+					warnings = append(warnings, cw...)
+				case k == "values" || kind == "list" && (k == "elements" || k == "elementsYaml"):
+					// Parameters, not addresses that the generator reads.
+					// The checks of the templates find a project or a
+					// repository from the parameters.
+				default:
+					reads[k] = v
+				}
+			}
+			problems = append(problems, checkGeneratorReads(reads, prefixes)...)
+		}
+	}
+	return problems, warnings
+}
+
+// checkGeneratorTemplate returns the problems of the template of a
+// generator. It has the same checks as the template of the ApplicationSet.
+func checkGeneratorTemplate(kind string, v any, prefixes []string, names map[string]bool) []string {
+	prefix := fmt.Sprintf("in the template of a %s generator, ", kind)
+	t, ok := v.(map[string]any)
+	if !ok {
+		return []string{prefix + "the guard cannot read it, because it is not an object"}
+	}
+	raw, err := json.Marshal(t)
+	if err != nil {
+		return []string{fmt.Sprintf("%sthe guard cannot read it (%s)", prefix, strings.ReplaceAll(err.Error(), ";", ","))}
+	}
+	p, err := checkAppTemplate(raw, prefixes, names)
+	if err != nil {
+		return []string{fmt.Sprintf("%sthe guard cannot read it (%s)", prefix, strings.ReplaceAll(err.Error(), ";", ","))}
+	}
+	for i := range p {
+		p[i] = prefix + p[i]
+	}
+	return p
+}
+
+// checkGeneratorReads returns the problems of what a generator reads,
+// and of the credentials that it sends. A generator that reads a GitOps
+// repository, through Git or through the API of Forgejo, gives parameters
+// from it to the applications.
+func checkGeneratorReads(v any, prefixes []string) []string {
 	var p []string
 	switch v := v.(type) {
 	case []any:
 		for _, e := range v {
-			ep, err := checkGenerator(e, prefixes, names)
-			if err != nil {
-				return nil, err
-			}
-			p = append(p, ep...)
+			p = append(p, checkGeneratorReads(e, prefixes)...)
 		}
 	case map[string]any:
 		if repo, ok := v["repoURL"].(string); ok {
@@ -140,30 +213,10 @@ func checkGenerator(v any, prefixes []string, names map[string]bool) ([]string, 
 			}
 		}
 		for _, k := range slices.Sorted(maps.Keys(v)) {
-			if t, ok := v[k].(map[string]any); ok && k == "template" {
-				raw, err := json.Marshal(t)
-				if err != nil {
-					return nil, err
-				}
-				tp, err := checkAppTemplate(raw, prefixes, names)
-				if err != nil {
-					// For example a parameter with the name "template" of a
-					// list generator.
-					tp = []string{fmt.Sprintf("the guard cannot read it (%v)", err)}
-				}
-				for _, m := range tp {
-					p = append(p, "in the template of a generator, "+m)
-				}
-				continue
-			}
-			kp, err := checkGenerator(v[k], prefixes, names)
-			if err != nil {
-				return nil, err
-			}
-			p = append(p, kp...)
+			p = append(p, checkGeneratorReads(v[k], prefixes)...)
 		}
 	}
-	return p, nil
+	return p
 }
 
 // checkArgoAppSets checks the ApplicationSets of Argo CD in all
@@ -178,12 +231,11 @@ func checkGenerator(v any, prefixes []string, names map[string]bool) ([]string, 
 // of Argo CD, and the removal of the ApplicationSet, or of the
 // application by the policy, removes the objects of the tenant too. With
 // it, only the application goes, and the root application makes it again.
-func checkArgoAppSets(raws []json.RawMessage, r argoAppRules, names map[string]bool, policy argoSetPolicy) ([]string, error) {
-	var problems []string
+func checkArgoAppSets(raws []json.RawMessage, r argoAppRules, names map[string]bool, policy argoSetPolicy) (problems, warnings []string, err error) {
 	for _, raw := range raws {
 		var s argoAppSet
 		if err := json.Unmarshal(raw, &s); err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		name := s.Metadata.Name
 		if s.Metadata.Namespace != r.Namespace {
@@ -206,7 +258,7 @@ func checkArgoAppSets(raws []json.RawMessage, r argoAppRules, names map[string]b
 		if len(s.Spec.Template) > 0 {
 			tp, err := checkAppTemplate(s.Spec.Template, r.RepoPrefixes, own)
 			if err != nil {
-				return nil, fmt.Errorf("ApplicationSet %s: %w", name, err)
+				return nil, nil, fmt.Errorf("ApplicationSet %s: %w", name, err)
 			}
 			p = append(p, tp...)
 		}
@@ -217,20 +269,22 @@ func checkArgoAppSets(raws []json.RawMessage, r argoAppRules, names map[string]b
 			}
 			p = append(p, pp...)
 		}
+		var gens []any
 		for _, g := range s.Spec.Generators {
 			var v any
 			if err := json.Unmarshal(g, &v); err != nil {
-				return nil, fmt.Errorf("ApplicationSet %s: %w", name, err)
+				return nil, nil, fmt.Errorf("ApplicationSet %s: %w", name, err)
 			}
-			gp, err := checkGenerator(v, r.RepoPrefixes, own)
-			if err != nil {
-				return nil, fmt.Errorf("ApplicationSet %s: %w", name, err)
-			}
-			p = append(p, gp...)
+			gens = append(gens, v)
 		}
+		gp, gw := checkGenerators(gens, r.RepoPrefixes, own)
+		p = append(p, gp...)
 		for _, m := range p {
 			problems = append(problems, fmt.Sprintf("the ApplicationSet %s: %s", name, m))
 		}
+		for _, m := range gw {
+			warnings = append(warnings, fmt.Sprintf("the ApplicationSet %s: %s", name, m))
+		}
 	}
-	return problems, nil
+	return problems, warnings, nil
 }

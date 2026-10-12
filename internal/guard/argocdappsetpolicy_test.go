@@ -97,7 +97,7 @@ func TestAppSetPolicyProblems(t *testing.T) {
 	set := appSet(t, func(s map[string]any) {
 		s["syncPolicy"] = map[string]any{"applicationsSync": "sync", "preserveResourcesOnDeletion": true}
 	})
-	p, err := checkArgoAppSets([]json.RawMessage{set}, devAppRules, squaredNames, override)
+	p, _, err := checkArgoAppSets([]json.RawMessage{set}, devAppRules, squaredNames, override)
 	if err != nil || !strings.Contains(strings.Join(p, " | "), "the ApplicationSet team: its policy sync permits updates") {
 		t.Fatalf("problems = %q, err %v", p, err)
 	}

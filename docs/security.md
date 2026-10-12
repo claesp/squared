@@ -374,6 +374,19 @@ controls that it uses. Read [architecture.md](architecture.md) first.
   name, the labels, the finalizers, the project and the sources as in a
   template. A value with the marker comes from the parameters.
 
+  The guard reads the generators by their structure. Each generator has
+  one kind and an optional `selector`. Each kind can have a `template`,
+  which changes fields of the template of the ApplicationSet for the
+  applications of that generator. The matrix and merge generators have
+  generators in them, also in more levels. The guard checks each of these
+  templates as the template of the ApplicationSet. The `elements` and
+  `elementsYaml` of a list generator and the `values` of a generator are
+  parameters, not templates or addresses that the generator reads: the
+  checks of the templates find a project or a repository from them. A
+  kind that the guard does not know, for example from a newer Argo CD,
+  gives a warning: the guard then checks only the applications that the
+  generator makes.
+
   An ApplicationSet that makes an application with the name of an
   existing application takes it over: it writes its template into the
   application and becomes its owner. Argo CD 3.5 does this with each
@@ -428,14 +441,17 @@ controls that it uses. Read [architecture.md](architecture.md) first.
   |---|---|
   | `applicationsetcontroller.policy` is empty, `sync` or `create-update` | Error |
   | An unknown policy, or a value of the override that is not `true` or `false` | Error |
-  | The override is on, and an ApplicationSet chooses `sync` or `create-update` | Error | Limit: the guard does not know what a plugin
-  generator or a cluster decision resource gives. The end-to-end test
+  | The override is on, and an ApplicationSet chooses `sync` or `create-update` | Error |
+
+  Limit: the guard does not know what a plugin generator or a cluster
+  decision resource gives. The end-to-end test
   adds an ApplicationSet with a Git generator for the platform repository,
   a project from the parameters and a pull request generator with a token
   and `insecure: true`, and checks the errors. It turns on the SCM
   generators without limits and checks the errors. The ApplicationSet
   also has a template patch with the finalizer of Argo CD and a tenant
-  project in a branch. It lets an
+  project in a branch, and a Git generator with a template with a tenant
+  project. It lets an
   ApplicationSet take over a test application with the labels of Squared,
   checks the errors, and checks that Kubernetes removes the application
   with the ApplicationSet. It sets the policy `sync`, then turns on the

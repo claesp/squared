@@ -493,7 +493,7 @@ func (s *argoAppsSource) References(ctx context.Context) ([]Reference, []string,
 	if err != nil {
 		return nil, nil, err
 	}
-	setProblems, err := checkArgoAppSets(sets, rules, names, setPolicy)
+	setProblems, setWarnings, err := checkArgoAppSets(sets, rules, names, setPolicy)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -519,6 +519,7 @@ func (s *argoAppsSource) References(ctx context.Context) ([]Reference, []string,
 	if err != nil {
 		msgs = append(msgs, err.Error())
 	}
+	warnings = append(warnings, setWarnings...)
 	if len(msgs) > 0 {
 		return nil, warnings, errors.New(joinSentences(msgs))
 	}

@@ -13,6 +13,7 @@ func appSet(t *testing.T, change func(spec map[string]any)) json.RawMessage {
 	var obj map[string]any
 	if err := json.Unmarshal([]byte(`{"metadata": {"name": "team", "namespace": "argocd"}, "spec": {
 		"goTemplate": true,
+		"syncPolicy": {"applicationsSync": "create-only", "preserveResourcesOnDeletion": true},
 		"generators": [{"list": {"elements": [{"env": "dev"}, {"env": "prod", "template": "x"}]}}],
 		"template": {
 			"metadata": {"name": "team-{{.env}}", "labels": {"team": "a"}},
@@ -27,8 +28,11 @@ func appSet(t *testing.T, change func(spec map[string]any)) json.RawMessage {
 	return projectJSON(t, obj)
 }
 
+// squaredNames are the applications of Squared in the tests.
+var squaredNames = map[string]bool{"squared-platform": true, "acme-dev-shop": true}
+
 func TestCheckArgoAppSets(t *testing.T) {
-	if p, err := checkArgoAppSets([]json.RawMessage{appSet(t, nil)}, devAppRules); err != nil || len(p) != 0 {
+	if p, err := checkArgoAppSets([]json.RawMessage{appSet(t, nil)}, devAppRules, squaredNames); err != nil || len(p) != 0 {
 		t.Fatalf("problems = %q, err %v", p, err)
 	}
 
@@ -54,6 +58,17 @@ func TestCheckArgoAppSets(t *testing.T) {
 		{"label of Squared", func(s map[string]any) {
 			template(s)["metadata"].(map[string]any)["labels"] = map[string]any{"squared.dev/managed": "true"}
 		}, "its applications get the label squared.dev/managed"},
+		{"no preserveResourcesOnDeletion", func(s map[string]any) { delete(s, "syncPolicy") }, "preserveResourcesOnDeletion is not true"},
+		{"preserveResourcesOnDeletion off", func(s map[string]any) {
+			s["syncPolicy"] = map[string]any{"applicationsSync": "create-only", "preserveResourcesOnDeletion": false}
+		}, "preserveResourcesOnDeletion is not true"},
+		{"name of an application of Squared", func(s map[string]any) {
+			template(s)["metadata"].(map[string]any)["name"] = "acme-dev-shop"
+		}, "it makes the application acme-dev-shop, thus it takes over the application of Squared"},
+		{"name of the root application in a generator template", func(s map[string]any) {
+			s["generators"] = []any{map[string]any{"list": map[string]any{"elements": []any{},
+				"template": map[string]any{"metadata": map[string]any{"name": "squared-platform"}, "spec": map[string]any{}}}}}
+		}, "in the template of a generator, it makes the application squared-platform"},
 		{"template patch", func(s map[string]any) { s["templatePatch"] = "spec:\n  project: tenant-acme\n" }, "it has a templatePatch"},
 		{"Git generator", func(s map[string]any) {
 			s["generators"] = []any{map[string]any{"git": map[string]any{"repoURL": devAppRules.Root.RepoURL, "revision": "main",
@@ -84,7 +99,7 @@ func TestCheckArgoAppSets(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			p, err := checkArgoAppSets([]json.RawMessage{appSet(t, tt.change)}, devAppRules)
+			p, err := checkArgoAppSets([]json.RawMessage{appSet(t, tt.change)}, devAppRules, squaredNames)
 			if err != nil || !strings.Contains(strings.Join(p, " | "), "the ApplicationSet team: "+tt.want) {
 				t.Fatalf("problems = %q, err %v, want %q", p, err, tt.want)
 			}
@@ -101,7 +116,23 @@ func TestCheckArgoAppSets(t *testing.T) {
 		s["generators"] = []any{map[string]any{"scmProvider": map[string]any{"gitea": map[string]any{
 			"api": "http://forgejo.localhost:30300", "owner": "team"}}}}
 	})
-	if p, err := checkArgoAppSets([]json.RawMessage{other}, devAppRules); err != nil || len(p) != 0 {
+	if p, err := checkArgoAppSets([]json.RawMessage{other}, devAppRules, squaredNames); err != nil || len(p) != 0 {
+		t.Fatalf("problems = %q, err %v", p, err)
+	}
+}
+
+// TestCheckArgoAppSetsOtherNamespace checks that an ApplicationSet in
+// another namespace does not take over the applications of Squared: it
+// makes applications in its own namespace.
+func TestCheckArgoAppSetsOtherNamespace(t *testing.T) {
+	var obj map[string]any
+	if err := json.Unmarshal(appSet(t, func(s map[string]any) {
+		s["template"].(map[string]any)["metadata"].(map[string]any)["name"] = "acme-dev-shop"
+	}), &obj); err != nil {
+		t.Fatal(err)
+	}
+	obj["metadata"].(map[string]any)["namespace"] = "team-a"
+	if p, err := checkArgoAppSets([]json.RawMessage{projectJSON(t, obj)}, devAppRules, squaredNames); err != nil || len(p) != 0 {
 		t.Fatalf("problems = %q, err %v", p, err)
 	}
 }

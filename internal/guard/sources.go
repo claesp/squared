@@ -488,7 +488,11 @@ func (s *argoAppsSource) References(ctx context.Context) ([]Reference, []string,
 	if err != nil {
 		return nil, nil, err
 	}
-	setProblems, err := checkArgoAppSets(sets, rules)
+	names, err := squaredAppNames(apps, rules)
+	if err != nil {
+		return nil, nil, err
+	}
+	setProblems, err := checkArgoAppSets(sets, rules, names)
 	if err != nil {
 		return nil, nil, err
 	}

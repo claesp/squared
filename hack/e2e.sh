@@ -629,13 +629,62 @@ YAML
   guard_reports_appset() {
     guard_status | jq -e '[.errors[]? | select(test("the ApplicationSet e2e-guard-set: a generator reads the GitOps repository"))] | length > 0' >/dev/null &&
       guard_status | jq -e '[.errors[]? | select(test("e2e-guard-set: the project .* of its applications comes from the generators"))] | length > 0' >/dev/null &&
-      guard_status | jq -e '[.errors[]? | select(test("e2e-guard-set: a generator sends credentials to https://git.example.invalid without the check"))] | length > 0' >/dev/null
+      guard_status | jq -e '[.errors[]? | select(test("e2e-guard-set: a generator sends credentials to https://git.example.invalid without the check"))] | length > 0' >/dev/null &&
+      guard_status | jq -e '[.errors[]? | select(test("e2e-guard-set: preserveResourcesOnDeletion is not true"))] | length > 0' >/dev/null
   }
   wait_for "the guard reports the ApplicationSet with the platform repository and a project from the parameters" 60 guard_reports_appset
   [[ "$(worker_may_add_dev squared-admins)" == 403 ]] || die "the protection of /squared-admins is gone after the ApplicationSet"
   k -n argocd delete applicationset e2e-guard-set >/dev/null
   wait_for "the guard has no errors after the ApplicationSet is removed" 60 guard_clean
   log "the guard checks the ApplicationSets of Argo CD"
+
+  # An ApplicationSet that makes an application with the name of an
+  # application of Squared takes it over, also with the policy create-only.
+  # The root application then puts the labels of Squared back, as here.
+  # With preserveResourcesOnDeletion, the removal of the ApplicationSet
+  # removes only the application.
+  local taken=e2etakeover-dev-web
+  k apply -f - >/dev/null <<YAML
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: $taken
+  namespace: argocd
+  labels: { app.kubernetes.io/managed-by: squared, squared.dev/managed: "true", squared.dev/tenant: e2etakeover }
+spec:
+  project: tenant-e2etakeover
+  source: { repoURL: "http://forgejo.localhost:30300/squared/tenant-e2etakeover.git", targetRevision: main, path: dev/web }
+  destination: { server: "https://kubernetes.default.svc", namespace: e2etakeover-dev }
+YAML
+  k apply -f - >/dev/null <<YAML
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: e2e-guard-taker
+  namespace: argocd
+spec:
+  syncPolicy: { applicationsSync: create-only, preserveResourcesOnDeletion: true }
+  generators: [{ list: { elements: [{ id: "1" }] } }]
+  template:
+    metadata: { name: $taken }
+    spec:
+      project: default
+      source: { repoURL: "https://git.example.invalid/e2e.git", targetRevision: main, path: e2e }
+      destination: { server: "https://kubernetes.default.svc", namespace: e2e-guard }
+YAML
+  app_taken() { [[ "$(k -n argocd get application "$taken" -o jsonpath='{.metadata.ownerReferences[0].name}')" == e2e-guard-taker ]]; }
+  wait_for "the ApplicationSet takes over the application" 60 app_taken
+  k -n argocd label application "$taken" app.kubernetes.io/managed-by=squared squared.dev/managed=true squared.dev/tenant=e2etakeover >/dev/null
+  guard_reports_takeover() {
+    guard_status | jq -e --arg a "$taken" '[.errors[]? | select(test("the application \($a) of tenant e2etakeover: the ApplicationSet e2e-guard-taker owns it"))] | length > 0' >/dev/null &&
+      guard_status | jq -e --arg a "$taken" '[.errors[]? | select(test("e2e-guard-taker: it makes the application \($a), thus it takes over"))] | length > 0' >/dev/null
+  }
+  wait_for "the guard reports the application that the ApplicationSet took over" 60 guard_reports_takeover
+  k -n argocd delete applicationset e2e-guard-taker >/dev/null
+  app_gone() { ! k -n argocd get application "$taken" >/dev/null 2>&1; }
+  wait_for "Kubernetes removes the application with the ApplicationSet" 60 app_gone
+  wait_for "the guard has no errors after the ApplicationSet is removed" 60 guard_clean
+  log "the guard reports applications of Squared that an ApplicationSet takes over"
 
   # The SCM generators on, without a list of servers and without the strict
   # mode for the token Secrets.

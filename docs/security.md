@@ -301,6 +301,7 @@ controls that it uses. Read [architecture.md](architecture.md) first.
   | An application of Squared with a destination that is not in `clusterServers` or not the namespace of its environment, or with labels for the environment and the deployment that do not agree with its name | Error |
   | An application of Squared with other sync options than `CreateNamespace=false` and `PruneLast=true`, or with `ignoreDifferences` | Error |
   | An application of Squared in another namespace than the namespace of Argo CD | Error |
+  | An application of Squared, or the root application, with an owner (`ownerReferences`), for example an ApplicationSet that took it over | Error |
   | An application that Squared did not make in a tenant project | Error |
   | An application that Squared did not make with a source in the GitOps repositories (`repoPrefixes`), also as one of more sources or for the source hydrator: it applies the manifests of a tenant without the limits of the tenant project, or the platform objects | Error |
   | The root application (`name`) without automatic sync, `prune` or `selfHeal`: a change by hand of a tenant project stays | Error |
@@ -353,11 +354,28 @@ controls that it uses. Read [architecture.md](architecture.md) first.
   | The template, or the template of a generator, has a tenant project, a GitOps repository (`repoPrefixes`), or a label of Squared (`app.kubernetes.io/managed-by`, `squared.dev/managed`, `squared.dev/tenant`) | Error |
   | The project or a repository of the template comes from the parameters (`{{ ... }}`): the guard cannot know the value | Error |
   | A `templatePatch`, which can change all fields of the applications | Error |
+  | `syncPolicy.preserveResourcesOnDeletion` is not `true` | Error |
+  | The template, or the template of a generator, has the name of an application of Squared or of the root application, as text | Error |
   | A generator reads a GitOps repository: a Git generator with such a `repoURL` (also from parameters), or an SCM provider or pull request generator for the organization of Squared on Forgejo | Error |
   | An SCM provider or pull request generator with credentials (`tokenRef`, `passwordRef`, `basicAuth`, `bearerToken`, `appSecretName`, `accessTokenRef`) and `insecure: true` or an `http://` API address: the credentials go without TLS checks or as plain text | Error |
 
   An ApplicationSet of another team writes the project and the
   repositories as text.
+
+  An ApplicationSet that makes an application with the name of an
+  existing application takes it over: it writes its template into the
+  application and becomes its owner. Argo CD 3.5 does this with each
+  `applicationsSync` policy, also `create-only`. Kubernetes then removes
+  the application with the ApplicationSet. Without
+  `preserveResourcesOnDeletion`, the application keeps the finalizer of
+  Argo CD, and the removal also removes the objects of the tenant. With
+  it, the ApplicationSet controller removes the finalizer: only the
+  application goes, and the root application makes it again. Thus the
+  policy does not protect the applications of Squared, but
+  `preserveResourcesOnDeletion` protects the workloads of the tenants.
+  The guard does not know the names that come from the parameters. After
+  a takeover, the root application puts the labels of Squared back, and
+  the guard sees the owner.
 
   The SCM provider and pull request generators send a token from a
   Secret in the namespace of the ApplicationSet to the API of a Git
@@ -384,7 +402,10 @@ controls that it uses. Read [architecture.md](architecture.md) first.
   adds an ApplicationSet with a Git generator for the platform repository,
   a project from the parameters and a pull request generator with a token
   and `insecure: true`, and checks the errors. It turns on the SCM
-  generators without limits and checks the errors.
+  generators without limits and checks the errors. It lets an
+  ApplicationSet take over a test application with the labels of Squared,
+  checks the errors, and checks that Kubernetes removes the application
+  with the ApplicationSet.
 - **Harbor configuration.** Only the Harbor system administrator can read
   the configuration through the API, and a robot account cannot get that
   right. The table `properties` of the Harbor database has all settings,

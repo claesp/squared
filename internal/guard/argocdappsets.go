@@ -23,6 +23,10 @@ type argoAppSet struct {
 		Generators    []json.RawMessage `json:"generators"`
 		Template      json.RawMessage   `json:"template"`
 		TemplatePatch string            `json:"templatePatch"`
+		SyncPolicy    *struct {
+			ApplicationsSync            string `json:"applicationsSync"`
+			PreserveResourcesOnDeletion bool   `json:"preserveResourcesOnDeletion"`
+		} `json:"syncPolicy"`
 	} `json:"spec"`
 }
 
@@ -36,12 +40,18 @@ func templated(s string) bool { return strings.Contains(s, "{{") }
 // The guard cannot know the value of a field that comes from the
 // parameters of the generators, thus such a project or repository is a
 // problem too.
-func checkAppTemplate(raw json.RawMessage, prefixes []string) ([]string, error) {
+//
+// An application with the name of an application of Squared (names) takes
+// that application over (see argoApp.ownerProblems).
+func checkAppTemplate(raw json.RawMessage, prefixes []string, names map[string]bool) ([]string, error) {
 	var a argoApp
 	if err := json.Unmarshal(raw, &a); err != nil {
 		return nil, err
 	}
 	var p []string
+	if n := a.Metadata.Name; names[n] {
+		p = append(p, fmt.Sprintf("it makes the application %s, thus it takes over the application of Squared with that name", n))
+	}
 	for _, k := range []string{render.LabelManagedBy, gitops.LabelManaged, render.LabelTenant} {
 		if _, ok := a.Metadata.Labels[k]; ok {
 			p = append(p, fmt.Sprintf("its applications get the label %s, which only Squared sets", k))
@@ -77,12 +87,12 @@ var scmCredentialFields = []string{"tokenRef", "passwordRef", "basicAuth", "bear
 // repository, through Git or through the API of Forgejo, gives
 // parameters from it to the applications. A generator can also have its
 // own template.
-func checkGenerator(v any, prefixes []string) ([]string, error) {
+func checkGenerator(v any, prefixes []string, names map[string]bool) ([]string, error) {
 	var p []string
 	switch v := v.(type) {
 	case []any:
 		for _, e := range v {
-			ep, err := checkGenerator(e, prefixes)
+			ep, err := checkGenerator(e, prefixes, names)
 			if err != nil {
 				return nil, err
 			}
@@ -123,7 +133,7 @@ func checkGenerator(v any, prefixes []string) ([]string, error) {
 				if err != nil {
 					return nil, err
 				}
-				tp, err := checkAppTemplate(raw, prefixes)
+				tp, err := checkAppTemplate(raw, prefixes, names)
 				if err != nil {
 					// For example a parameter with the name "template" of a
 					// list generator.
@@ -134,7 +144,7 @@ func checkGenerator(v any, prefixes []string) ([]string, error) {
 				}
 				continue
 			}
-			kp, err := checkGenerator(v[k], prefixes)
+			kp, err := checkGenerator(v[k], prefixes, names)
 			if err != nil {
 				return nil, err
 			}
@@ -147,7 +157,15 @@ func checkGenerator(v any, prefixes []string) ([]string, error) {
 // checkArgoAppSets checks the ApplicationSets of Argo CD in all
 // namespaces. Squared makes none. The guard also checks the applications
 // that they make, but an ApplicationSet makes them again after a removal.
-func checkArgoAppSets(raws []json.RawMessage, r argoAppRules) ([]string, error) {
+// names are the applications of Squared in the namespace of Argo CD.
+//
+// An ApplicationSet must have preserveResourcesOnDeletion: it can take
+// over an application of Squared with the same name, also with the policy
+// create-only. Without the setting, the application keeps the finalizer
+// of Argo CD, and the removal of the ApplicationSet, or of the
+// application by the policy, removes the objects of the tenant too. With
+// it, only the application goes, and the root application makes it again.
+func checkArgoAppSets(raws []json.RawMessage, r argoAppRules, names map[string]bool) ([]string, error) {
 	var problems []string
 	for _, raw := range raws {
 		var s argoAppSet
@@ -158,9 +176,17 @@ func checkArgoAppSets(raws []json.RawMessage, r argoAppRules) ([]string, error) 
 		if s.Metadata.Namespace != r.Namespace {
 			name = s.Metadata.Namespace + "/" + name
 		}
+		// It makes applications in its own namespace.
+		own := names
+		if s.Metadata.Namespace != r.Namespace {
+			own = nil
+		}
 		var p []string
+		if s.Spec.SyncPolicy == nil || !s.Spec.SyncPolicy.PreserveResourcesOnDeletion {
+			p = append(p, "preserveResourcesOnDeletion is not true: when it takes over an application of Squared with the same name, also with the policy create-only, its removal removes the objects of the tenant")
+		}
 		if len(s.Spec.Template) > 0 {
-			tp, err := checkAppTemplate(s.Spec.Template, r.RepoPrefixes)
+			tp, err := checkAppTemplate(s.Spec.Template, r.RepoPrefixes, own)
 			if err != nil {
 				return nil, fmt.Errorf("ApplicationSet %s: %w", name, err)
 			}
@@ -174,7 +200,7 @@ func checkArgoAppSets(raws []json.RawMessage, r argoAppRules) ([]string, error) 
 			if err := json.Unmarshal(g, &v); err != nil {
 				return nil, fmt.Errorf("ApplicationSet %s: %w", name, err)
 			}
-			gp, err := checkGenerator(v, r.RepoPrefixes)
+			gp, err := checkGenerator(v, r.RepoPrefixes, own)
 			if err != nil {
 				return nil, fmt.Errorf("ApplicationSet %s: %w", name, err)
 			}

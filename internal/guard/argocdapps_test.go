@@ -126,6 +126,12 @@ func TestCheckArgoApplicationsChanges(t *testing.T) {
 		{"ignored differences", func(app, _ map[string]any) {
 			spec(app)["ignoreDifferences"] = []any{map[string]any{"kind": "Deployment", "jsonPointers": []any{"/spec"}}}
 		}, "it ignores differences"},
+		{"owner", func(app, _ map[string]any) {
+			app["metadata"].(map[string]any)["ownerReferences"] = []any{map[string]any{"kind": "ApplicationSet", "name": "team", "controller": true}}
+		}, "the application acme-dev-shop of tenant acme: the ApplicationSet team owns it"},
+		{"owner of the root", func(_, root map[string]any) {
+			root["metadata"].(map[string]any)["ownerReferences"] = []any{map[string]any{"kind": "ApplicationSet", "name": "team"}}
+		}, "the root application squared-platform: the ApplicationSet team owns it"},
 		{"root without self-heal", func(_, root map[string]any) {
 			sync(root)["automated"] = map[string]any{"prune": true}
 		}, "the root application squared-platform: selfHeal is off"},
@@ -219,5 +225,16 @@ func TestCheckArgoApplicationsOtherNamespaces(t *testing.T) {
 	o := inNamespace(otherApp("monitoring", "team", map[string]any{"repoURL": "https://git.example/team.git"}), "team-a")
 	if _, err := checkArgoApplications(raws(t, rootApp(), o), devAppRules); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestSquaredAppNames(t *testing.T) {
+	other := otherApp("monitoring", "default", map[string]any{"repoURL": "https://git.example/m.git"})
+	names, err := squaredAppNames(raws(t, rootApp(), renderedApp(t), other), devAppRules)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !names["squared-platform"] || !names["acme-dev-shop"] || names["monitoring"] || len(names) != 2 {
+		t.Fatalf("names = %v", names)
 	}
 }

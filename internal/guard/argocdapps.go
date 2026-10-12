@@ -20,9 +20,13 @@ import (
 // deploys, from where, and how Argo CD keeps it in sync.
 type argoApp struct {
 	Metadata struct {
-		Name      string            `json:"name"`
-		Namespace string            `json:"namespace"`
-		Labels    map[string]string `json:"labels"`
+		Name            string            `json:"name"`
+		Namespace       string            `json:"namespace"`
+		Labels          map[string]string `json:"labels"`
+		OwnerReferences []struct {
+			Kind string `json:"kind"`
+			Name string `json:"name"`
+		} `json:"ownerReferences"`
 	} `json:"metadata"`
 	Spec struct {
 		Project string `json:"project"`
@@ -157,6 +161,19 @@ var squaredSyncOptions = []string{"CreateNamespace=false", "PruneLast=true"}
 
 var commitSHA = regexp.MustCompile(`^[0-9a-f]{40}$`)
 
+// ownerProblems returns the problems for the owners of an application of
+// Squared. Squared sets no owner. An ApplicationSet that makes an
+// application with the same name takes it over: it writes its template
+// into it and becomes its owner, also with the policy create-only, and
+// Kubernetes removes the application with the ApplicationSet.
+func (a argoApp) ownerProblems() []string {
+	var p []string
+	for _, o := range a.Metadata.OwnerReferences {
+		p = append(p, fmt.Sprintf("the %s %s owns it: it can change it, and Kubernetes removes it with its owner", o.Kind, o.Name))
+	}
+	return p
+}
+
 // healProblems returns the problems of a sync policy: Argo CD must sync
 // automatically, remove objects that are not in Git, and change back
 // changes by hand in the cluster (decision D1).
@@ -276,6 +293,23 @@ type argoAppRules struct {
 	Root      RootSource // The source of the root application.
 }
 
+// squaredAppNames returns the names of the applications of Squared and of
+// the root application in the namespace of Argo CD.
+func squaredAppNames(raws []json.RawMessage, r argoAppRules) (map[string]bool, error) {
+	names := map[string]bool{r.RootApp: true}
+	for _, raw := range raws {
+		var a argoApp
+		if err := json.Unmarshal(raw, &a); err != nil {
+			return nil, err
+		}
+		l := a.Metadata.Labels
+		if a.Metadata.Namespace == r.Namespace && l[render.LabelManagedBy] == render.ManagedBy && l[gitops.LabelManaged] == "true" {
+			names[a.Metadata.Name] = true
+		}
+	}
+	return names, nil
+}
+
 // checkArgoApplications checks the applications of Argo CD in all
 // namespaces:
 //   - each application that Squared made for a deployment, as
@@ -310,6 +344,7 @@ func checkArgoApplications(raws []json.RawMessage, r argoAppRules) ([]string, er
 		case name == r.RootApp:
 			rootSeen = true
 			p, err = checkRootApplication(a, r.Root)
+			p = append(a.ownerProblems(), p...)
 			for i := range p {
 				p[i] = fmt.Sprintf("the root application %s: %s", name, p[i])
 			}
@@ -319,6 +354,7 @@ func checkArgoApplications(raws []json.RawMessage, r argoAppRules) ([]string, er
 			p = []string{fmt.Sprintf("the application %s of Squared has no label %s", name, render.LabelTenant)}
 		case squared:
 			p, err = checkTenantApplication(slug, a, r.tenantProjectRules)
+			p = append(a.ownerProblems(), p...)
 			for i := range p {
 				p[i] = fmt.Sprintf("the application %s of tenant %s: %s", name, slug, p[i])
 			}

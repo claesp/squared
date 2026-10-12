@@ -222,8 +222,9 @@ all `*.localhost` names.
    all namespaces, an application without automatic sync, an application
    of the project `default` with the platform repository, a root
    application without `selfHeal`, and `application.namespaces` with an
-   application in the namespace `default`, and an ApplicationSet that
-   reads the platform repository give errors, and that Keycloak
+   application in the namespace `default`, an ApplicationSet that reads
+   the platform repository, and SCM generators without limits give
+   errors, and that Keycloak
    mappers that write `groups` on the client `argocd` and `email` from
    another attribute on the client `forgejo` give errors. It also turns on
    duplicate email addresses and lets users edit their address in the

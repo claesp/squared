@@ -604,8 +604,9 @@ YAML
   log "the guard checks the namespaces in which Argo CD reads applications"
 
   # An ApplicationSet that reads the platform repository, with a project
-  # from the parameters. No directory matches the path, thus it makes no
-  # applications.
+  # from the parameters, and a pull request generator that sends a token
+  # without the check of the TLS certificate. No directory matches the
+  # path, and the SCM generators are off, thus it makes no applications.
   k apply -f - >/dev/null <<YAML
 apiVersion: argoproj.io/v1alpha1
 kind: ApplicationSet
@@ -616,6 +617,8 @@ spec:
   goTemplate: true
   generators:
     - git: { repoURL: "http://forgejo.localhost:30300/squared/platform.git", revision: main, directories: [{ path: e2e-none/* }] }
+    - pullRequest:
+        gitea: { api: "https://git.example.invalid", owner: e2e, repo: e2e, insecure: true, tokenRef: { secretName: e2e-guard, key: token } }
   template:
     metadata: { name: "e2e-guard-{{.path.basename}}" }
     spec:
@@ -625,13 +628,26 @@ spec:
 YAML
   guard_reports_appset() {
     guard_status | jq -e '[.errors[]? | select(test("the ApplicationSet e2e-guard-set: a generator reads the GitOps repository"))] | length > 0' >/dev/null &&
-      guard_status | jq -e '[.errors[]? | select(test("e2e-guard-set: the project .* of its applications comes from the generators"))] | length > 0' >/dev/null
+      guard_status | jq -e '[.errors[]? | select(test("e2e-guard-set: the project .* of its applications comes from the generators"))] | length > 0' >/dev/null &&
+      guard_status | jq -e '[.errors[]? | select(test("e2e-guard-set: a generator sends credentials to https://git.example.invalid without the check"))] | length > 0' >/dev/null
   }
   wait_for "the guard reports the ApplicationSet with the platform repository and a project from the parameters" 60 guard_reports_appset
   [[ "$(worker_may_add_dev squared-admins)" == 403 ]] || die "the protection of /squared-admins is gone after the ApplicationSet"
   k -n argocd delete applicationset e2e-guard-set >/dev/null
   wait_for "the guard has no errors after the ApplicationSet is removed" 60 guard_clean
   log "the guard checks the ApplicationSets of Argo CD"
+
+  # The SCM generators on, without a list of servers and without the strict
+  # mode for the token Secrets.
+  k -n argocd patch configmap argocd-cmd-params-cm --type merge -p '{"data":{"applicationsetcontroller.enable.scm.providers":"true"}}' >/dev/null
+  guard_reports_scm() {
+    guard_status | jq -e '[.errors[]? | select(test("allowed.scm.providers is empty"))] | length > 0' >/dev/null &&
+      guard_status | jq -e '[.errors[]? | select(test("enable.tokenref.strict.mode is not true"))] | length > 0' >/dev/null
+  }
+  wait_for "the guard reports the SCM generators without limits" 60 guard_reports_scm
+  k -n argocd patch configmap argocd-cmd-params-cm --type merge -p '{"data":{"applicationsetcontroller.enable.scm.providers":"false"}}' >/dev/null
+  wait_for "the guard has no errors after the SCM generators are off" 60 guard_clean
+  log "the guard checks the SCM settings of the ApplicationSet controller"
 
   # Keycloak mappers that write the groups claim or the email claim. These
   # are in no token, thus they are harmless, but the guard must report

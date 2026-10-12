@@ -3,6 +3,10 @@
 configs:
   params:
     server.insecure: true
+    # Squared needs no SCM provider and pull request generators. With them,
+    # an ApplicationSet can send the token of a Secret in its namespace to
+    # a server (see docs/security.md).
+    applicationsetcontroller.enable.scm.providers: false
   cm:
     url: http://localhost:30081
     # Forgejo sends a webhook after each push. The poll interval is only a

@@ -472,6 +472,7 @@ func (s *argoAppsSource) References(ctx context.Context) ([]Reference, []string,
 	}
 	values, problems := argoNamespaceValues(params, containers)
 	problems = append(problems, checkArgoNamespaces(values, s.sc.Namespace, s.sc.AppNamespaces)...)
+	scmProblems := checkArgoSCM(params, containers[argoAppSetController])
 
 	apps, err := s.kube.ListApplicationObjects(ctx)
 	if err != nil {
@@ -496,6 +497,10 @@ func (s *argoAppsSource) References(ctx context.Context) ([]Reference, []string,
 	if len(problems) > 0 {
 		msgs = append(msgs, fmt.Sprintf("Argo CD reads applications in other namespaces: %s. The guard keeps the current protection",
 			strings.Join(problems, "; ")))
+	}
+	if len(scmProblems) > 0 {
+		msgs = append(msgs, fmt.Sprintf("the SCM settings of the ApplicationSet controller of Argo CD are not safe: %s. The guard keeps the current protection",
+			strings.Join(scmProblems, "; ")))
 	}
 	if len(setProblems) > 0 {
 		msgs = append(msgs, fmt.Sprintf("the ApplicationSets of Argo CD can make applications that Squared does not permit: %s. The guard keeps the current protection",

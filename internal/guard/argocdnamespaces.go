@@ -9,17 +9,18 @@ import (
 	"squared/internal/kube"
 )
 
-// argoNamespaceSetting is a setting of Argo CD with the namespaces, other
-// than its own, in which it reads applications or ApplicationSets. Each
-// value is a list of names, glob patterns such as "team-*", or regular
-// expressions between "/".
-type argoNamespaceSetting struct {
+// argoParam is a parameter of an Argo CD component.
+type argoParam struct {
 	Key  string // The key in argocd-cmd-params-cm.
 	Env  string // The environment variable that the key goes into.
 	Flag string // The command line flag, which is stronger than the variable.
 }
 
-var argoNamespaceSettings = []argoNamespaceSetting{
+// argoNamespaceSettings are the parameters with the namespaces, other than
+// its own, in which Argo CD reads applications or ApplicationSets. Each
+// value is a list of names, glob patterns such as "team-*", or regular
+// expressions between "/".
+var argoNamespaceSettings = []argoParam{
 	{"application.namespaces", "ARGOCD_APPLICATION_NAMESPACES", "--application-namespaces"},
 	{"applicationsetcontroller.namespaces", "ARGOCD_APPLICATIONSET_CONTROLLER_NAMESPACES", "--applicationset-namespaces"},
 }
@@ -38,7 +39,7 @@ type argoWorkload struct {
 var argoNamespaceWorkloads = []argoWorkload{
 	{"statefulsets", "argocd-application-controller"},
 	{"deployments", "argocd-server"},
-	{"deployments", "argocd-applicationset-controller"},
+	{"deployments", argoAppSetController},
 }
 
 // namespaceValue is one value of a setting and where the guard found it.

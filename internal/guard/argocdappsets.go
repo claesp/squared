@@ -68,6 +68,10 @@ func checkAppTemplate(raw json.RawMessage, prefixes []string) ([]string, error) 
 	return p, nil
 }
 
+// scmCredentialFields are the fields of the SCM provider and pull request
+// generators that name credentials.
+var scmCredentialFields = []string{"tokenRef", "passwordRef", "basicAuth", "bearerToken", "appSecretName", "accessTokenRef"}
+
 // checkGenerator returns the problems of a generator and of the
 // generators in it (matrix, merge). A generator that reads a GitOps
 // repository, through Git or through the API of Forgejo, gives
@@ -102,6 +106,15 @@ func checkGenerator(v any, prefixes []string) ([]string, error) {
 			addr := strings.TrimSuffix(api, "/") + "/" + owner + "/" + cmp.Or(repo, "any")
 			if isGitOpsRepo(addr, prefixes) {
 				p = append(p, fmt.Sprintf("a generator reads the GitOps repositories of %s at %s", owner, api))
+			}
+		}
+		// A provider with credentials sends them to its API.
+		if slices.ContainsFunc(scmCredentialFields, func(f string) bool { _, ok := v[f]; return ok }) {
+			if insecure, _ := v["insecure"].(bool); insecure {
+				p = append(p, fmt.Sprintf("a generator sends credentials to %s without the check of the TLS certificate (insecure)", cmp.Or(api, "its server")))
+			}
+			if strings.HasPrefix(strings.ToLower(api), "http://") {
+				p = append(p, fmt.Sprintf("a generator sends credentials to %s without TLS", api))
 			}
 		}
 		for _, k := range slices.Sorted(maps.Keys(v)) {

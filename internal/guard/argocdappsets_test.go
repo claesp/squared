@@ -68,6 +68,15 @@ func TestCheckArgoAppSets(t *testing.T) {
 			s["generators"] = []any{map[string]any{"scmProvider": map[string]any{"gitea": map[string]any{
 				"api": "http://forgejo.localhost:30300/", "owner": "squared", "allBranches": true}}}}
 		}, "a generator reads the GitOps repositories of squared at http://forgejo.localhost:30300/"},
+		{"credentials without TLS checks", func(s map[string]any) {
+			s["generators"] = []any{map[string]any{"pullRequest": map[string]any{"gitea": map[string]any{
+				"api": "https://git.example", "owner": "team", "repo": "app", "insecure": true,
+				"tokenRef": map[string]any{"secretName": "team-token", "key": "token"}}}}}
+		}, "a generator sends credentials to https://git.example without the check of the TLS certificate"},
+		{"credentials without TLS", func(s map[string]any) {
+			s["generators"] = []any{map[string]any{"scmProvider": map[string]any{"gitlab": map[string]any{
+				"api": "http://gitlab.example", "group": "team", "tokenRef": map[string]any{"secretName": "t", "key": "k"}}}}}
+		}, "a generator sends credentials to http://gitlab.example without TLS"},
 		{"template of a generator", func(s map[string]any) {
 			s["generators"] = []any{map[string]any{"list": map[string]any{"elements": []any{},
 				"template": map[string]any{"metadata": map[string]any{}, "spec": map[string]any{"project": "tenant-acme"}}}}}

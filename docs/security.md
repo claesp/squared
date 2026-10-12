@@ -354,12 +354,37 @@ controls that it uses. Read [architecture.md](architecture.md) first.
   | The project or a repository of the template comes from the parameters (`{{ ... }}`): the guard cannot know the value | Error |
   | A `templatePatch`, which can change all fields of the applications | Error |
   | A generator reads a GitOps repository: a Git generator with such a `repoURL` (also from parameters), or an SCM provider or pull request generator for the organization of Squared on Forgejo | Error |
+  | An SCM provider or pull request generator with credentials (`tokenRef`, `passwordRef`, `basicAuth`, `bearerToken`, `appSecretName`, `accessTokenRef`) and `insecure: true` or an `http://` API address: the credentials go without TLS checks or as plain text | Error |
 
   An ApplicationSet of another team writes the project and the
-  repositories as text. Limit: the guard does not know what a plugin
+  repositories as text.
+
+  The SCM provider and pull request generators send a token from a
+  Secret in the namespace of the ApplicationSet to the API of a Git
+  server. Without limits, a person who can make an ApplicationSet sends
+  each Secret there, for example the Forgejo credentials of Argo CD, to
+  each server. Squared needs no SCM generators, thus the development
+  environment turns them off. The guard reads the parameters of the
+  ApplicationSet controller as for the application namespaces: the keys
+  in `argocd-cmd-params-cm`, and the flags and the environment variables
+  of the container, which are stronger.
+
+  | Parameter of the ApplicationSet controller | Result |
+  |---|---|
+  | `applicationsetcontroller.enable.scm.providers` is `false` | No more checks |
+  | The SCM generators are on (the default), and `applicationsetcontroller.allowed.scm.providers` is empty (the default): all API addresses are permitted | Error |
+  | The SCM generators are on, and an address in `applicationsetcontroller.allowed.scm.providers` does not start with `https://` | Error |
+  | The SCM generators are on, and `applicationsetcontroller.enable.tokenref.strict.mode` is not `true` (the default): each Secret of the namespace can be a token, not only Secrets with the label `argocd.argoproj.io/secret-type: scm-creds` | Error |
+  | The container reads a parameter from another ConfigMap or a Secret, or has `envFrom` | Error |
+
+  Limit: the list of addresses does not apply to the generators without
+  an API address, for example GitHub without `api`. The strict mode
+  protects their tokens. Limit: the guard does not know what a plugin
   generator or a cluster decision resource gives. The end-to-end test
-  adds an ApplicationSet with a Git generator for the platform repository
-  and a project from the parameters, and checks the errors.
+  adds an ApplicationSet with a Git generator for the platform repository,
+  a project from the parameters and a pull request generator with a token
+  and `insecure: true`, and checks the errors. It turns on the SCM
+  generators without limits and checks the errors.
 - **Harbor configuration.** Only the Harbor system administrator can read
   the configuration through the API, and a robot account cannot get that
   right. The table `properties` of the Harbor database has all settings,

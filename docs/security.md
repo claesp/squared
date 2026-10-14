@@ -443,15 +443,40 @@ controls that it uses. Read [architecture.md](architecture.md) first.
   | An unknown policy, or a value of the override that is not `true` or `false` | Error |
   | The override is on, and an ApplicationSet chooses `sync` or `create-update` | Error |
 
-  Limit: the guard does not know what a plugin generator or a cluster
-  decision resource gives. The end-to-end test
+  A plugin generator sends a request to a web service and gets the
+  parameters from it. The address (`baseUrl`) and the token are in a
+  ConfigMap in the namespace of Argo CD (`configMapRef`). The token is a
+  reference to a key: `$<key>` in `argocd-secret`, or `$<secret>:<key>`
+  in another Secret of the namespace. Argo CD reads each Secret of its
+  namespace in this way, also without a label, and sends the value as a
+  bearer token. Thus a person who can make a ConfigMap and an
+  ApplicationSet can send the client secret of Keycloak or the
+  repository credentials of Argo CD to a server. The guard reads the
+  ConfigMaps of the plugin generators of all ApplicationSets (right `get`
+  on the ConfigMaps of the namespace of Argo CD, which has no secrets in
+  ConfigMaps).
+
+  | Plugin generator | Result |
+  |---|---|
+  | The key of the token does not start with `plugin.` | Error |
+  | The token is text, not a reference: each person who can read the ConfigMaps of the namespace sees it | Error |
+  | A token, and a `baseUrl` with `http://` to a host outside the cluster (not a Service name, `.svc` or `.svc.cluster.local`) | Error |
+  | No `baseUrl`, or not an `http` or `https` address | Error |
+  | The name of the ConfigMap comes from other generators | Error |
+  | The ConfigMap does not exist | Warning |
+
+  Limit: the guard does not know the parameters that a plugin generator
+  or a cluster decision resource gives. The checks of the templates find
+  a project or a repository from the parameters. The end-to-end test
   adds an ApplicationSet with a Git generator for the platform repository,
   a project from the parameters and a pull request generator with a token
   and `insecure: true`, and checks the errors. It turns on the SCM
   generators without limits and checks the errors. The ApplicationSet
   also has a template patch with the finalizer of Argo CD and a tenant
   project in a branch, and a Git generator with a template with a tenant
-  project. It lets an
+  project. It adds a plugin generator with a token from a key that is
+  not a plugin token and a `baseUrl` without TLS, and one without a
+  ConfigMap, and checks the errors and the warning. It lets an
   ApplicationSet take over a test application with the labels of Squared,
   checks the errors, and checks that Kubernetes removes the application
   with the ApplicationSet. It sets the policy `sync`, then turns on the

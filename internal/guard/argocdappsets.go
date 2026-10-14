@@ -98,11 +98,12 @@ var scmCredentialFields = []string{"tokenRef", "passwordRef", "basicAuth", "bear
 var generatorKinds = []string{"clusterDecisionResource", "clusters", "git", "list", "matrix", "merge", "plugin", "pullRequest", "scmProvider"}
 
 // checkGenerators returns the problems and the warnings of a list of
-// generators: of an ApplicationSet, or in a matrix or merge generator.
+// generators: of an ApplicationSet, or in a matrix or merge generator, and
+// the ConfigMaps of the plugin generators.
 // Each generator has one kind, an optional selector, and in the kind an
 // optional template, which changes fields of the template of the
 // ApplicationSet for the applications of this generator.
-func checkGenerators(gens []any, prefixes []string, names map[string]bool) (problems, warnings []string) {
+func checkGenerators(gens []any, prefixes []string, names map[string]bool) (problems, warnings, plugins []string) {
 	for _, g := range gens {
 		m, ok := g.(map[string]any)
 		if !ok {
@@ -133,10 +134,21 @@ func checkGenerators(gens []any, prefixes []string, names map[string]bool) (prob
 						problems = append(problems, fmt.Sprintf("the guard cannot read the generators of a %s generator", kind))
 						continue
 					}
-					cp, cw := checkGenerators(children, prefixes, names)
+					cp, cw, cpl := checkGenerators(children, prefixes, names)
 					problems = append(problems, cp...)
 					warnings = append(warnings, cw...)
-				case k == "values" || kind == "list" && (k == "elements" || k == "elementsYaml"):
+					plugins = append(plugins, cpl...)
+				case k == "configMapRef" && kind == "plugin":
+					ref, _ := v.(map[string]any)
+					switch name, _ := ref["name"].(string); {
+					case name == "":
+						problems = append(problems, "the guard cannot read the ConfigMap of a plugin generator")
+					case templated(name):
+						problems = append(problems, fmt.Sprintf("the ConfigMap %q of a plugin generator comes from other generators", name))
+					default:
+						plugins = append(plugins, name)
+					}
+				case k == "values" || kind == "list" && (k == "elements" || k == "elementsYaml") || kind == "plugin" && k == "input":
 					// Parameters, not addresses that the generator reads.
 					// The checks of the templates find a project or a
 					// repository from the parameters.
@@ -147,7 +159,7 @@ func checkGenerators(gens []any, prefixes []string, names map[string]bool) (prob
 			problems = append(problems, checkGeneratorReads(reads, prefixes)...)
 		}
 	}
-	return problems, warnings
+	return problems, warnings, plugins
 }
 
 // checkGeneratorTemplate returns the problems of the template of a
@@ -231,11 +243,15 @@ func checkGeneratorReads(v any, prefixes []string) []string {
 // of Argo CD, and the removal of the ApplicationSet, or of the
 // application by the policy, removes the objects of the tenant too. With
 // it, only the application goes, and the root application makes it again.
-func checkArgoAppSets(raws []json.RawMessage, r argoAppRules, names map[string]bool, policy argoSetPolicy) (problems, warnings []string, err error) {
+//
+// It also returns the ConfigMaps of the plugin generators, with the
+// ApplicationSets that use them.
+func checkArgoAppSets(raws []json.RawMessage, r argoAppRules, names map[string]bool, policy argoSetPolicy) (problems, warnings []string, plugins map[string][]string, err error) {
+	plugins = map[string][]string{}
 	for _, raw := range raws {
 		var s argoAppSet
 		if err := json.Unmarshal(raw, &s); err != nil {
-			return nil, nil, err
+			return nil, nil, nil, err
 		}
 		name := s.Metadata.Name
 		if s.Metadata.Namespace != r.Namespace {
@@ -258,7 +274,7 @@ func checkArgoAppSets(raws []json.RawMessage, r argoAppRules, names map[string]b
 		if len(s.Spec.Template) > 0 {
 			tp, err := checkAppTemplate(s.Spec.Template, r.RepoPrefixes, own)
 			if err != nil {
-				return nil, nil, fmt.Errorf("ApplicationSet %s: %w", name, err)
+				return nil, nil, nil, fmt.Errorf("ApplicationSet %s: %w", name, err)
 			}
 			p = append(p, tp...)
 		}
@@ -273,12 +289,17 @@ func checkArgoAppSets(raws []json.RawMessage, r argoAppRules, names map[string]b
 		for _, g := range s.Spec.Generators {
 			var v any
 			if err := json.Unmarshal(g, &v); err != nil {
-				return nil, nil, fmt.Errorf("ApplicationSet %s: %w", name, err)
+				return nil, nil, nil, fmt.Errorf("ApplicationSet %s: %w", name, err)
 			}
 			gens = append(gens, v)
 		}
-		gp, gw := checkGenerators(gens, r.RepoPrefixes, own)
+		gp, gw, gpl := checkGenerators(gens, r.RepoPrefixes, own)
 		p = append(p, gp...)
+		for _, cm := range gpl {
+			if !slices.Contains(plugins[cm], name) {
+				plugins[cm] = append(plugins[cm], name)
+			}
+		}
 		for _, m := range p {
 			problems = append(problems, fmt.Sprintf("the ApplicationSet %s: %s", name, m))
 		}
@@ -286,5 +307,5 @@ func checkArgoAppSets(raws []json.RawMessage, r argoAppRules, names map[string]b
 			warnings = append(warnings, fmt.Sprintf("the ApplicationSet %s: %s", name, m))
 		}
 	}
-	return problems, warnings, nil
+	return problems, warnings, plugins, nil
 }

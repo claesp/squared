@@ -76,7 +76,7 @@ func TestCheckTemplatePatchUnreadable(t *testing.T) {
 	}
 	// In checkArgoAppSets, the guard reports it.
 	set := appSet(t, func(s map[string]any) { s["templatePatch"] = "spec:\n{{ toYaml .spec | nindent 2 }}\n" })
-	p, _, err := checkArgoAppSets([]json.RawMessage{set}, devAppRules, squaredNames, argoSetPolicy{})
+	p, _, _, err := checkArgoAppSets([]json.RawMessage{set}, devAppRules, squaredNames, argoSetPolicy{})
 	if err != nil || !strings.Contains(strings.Join(p, " | "), "the guard cannot read its templatePatch (a line writes text from the parameters") {
 		t.Fatalf("problems = %q, err %v", p, err)
 	}

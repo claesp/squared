@@ -32,7 +32,7 @@ func appSet(t *testing.T, change func(spec map[string]any)) json.RawMessage {
 var squaredNames = map[string]bool{"squared-platform": true, "acme-dev-shop": true}
 
 func TestCheckArgoAppSets(t *testing.T) {
-	if p, _, err := checkArgoAppSets([]json.RawMessage{appSet(t, nil)}, devAppRules, squaredNames, argoSetPolicy{}); err != nil || len(p) != 0 {
+	if p, _, _, err := checkArgoAppSets([]json.RawMessage{appSet(t, nil)}, devAppRules, squaredNames, argoSetPolicy{}); err != nil || len(p) != 0 {
 		t.Fatalf("problems = %q, err %v", p, err)
 	}
 
@@ -123,7 +123,7 @@ func TestCheckArgoAppSets(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			p, _, err := checkArgoAppSets([]json.RawMessage{appSet(t, tt.change)}, devAppRules, squaredNames, argoSetPolicy{})
+			p, _, _, err := checkArgoAppSets([]json.RawMessage{appSet(t, tt.change)}, devAppRules, squaredNames, argoSetPolicy{})
 			if err != nil || !strings.Contains(strings.Join(p, " | "), "the ApplicationSet team: "+tt.want) {
 				t.Fatalf("problems = %q, err %v, want %q", p, err, tt.want)
 			}
@@ -140,7 +140,7 @@ func TestCheckArgoAppSets(t *testing.T) {
 		s["generators"] = []any{map[string]any{"scmProvider": map[string]any{"gitea": map[string]any{
 			"api": "http://forgejo.localhost:30300", "owner": "team"}}}}
 	})
-	if p, _, err := checkArgoAppSets([]json.RawMessage{other}, devAppRules, squaredNames, argoSetPolicy{}); err != nil || len(p) != 0 {
+	if p, _, _, err := checkArgoAppSets([]json.RawMessage{other}, devAppRules, squaredNames, argoSetPolicy{}); err != nil || len(p) != 0 {
 		t.Fatalf("problems = %q, err %v", p, err)
 	}
 }
@@ -156,7 +156,7 @@ func TestCheckArgoAppSetsOtherNamespace(t *testing.T) {
 		t.Fatal(err)
 	}
 	obj["metadata"].(map[string]any)["namespace"] = "team-a"
-	if p, _, err := checkArgoAppSets([]json.RawMessage{projectJSON(t, obj)}, devAppRules, squaredNames, argoSetPolicy{}); err != nil || len(p) != 0 {
+	if p, _, _, err := checkArgoAppSets([]json.RawMessage{projectJSON(t, obj)}, devAppRules, squaredNames, argoSetPolicy{}); err != nil || len(p) != 0 {
 		t.Fatalf("problems = %q, err %v", p, err)
 	}
 }
@@ -170,7 +170,7 @@ func TestCheckArgoAppSetsParameters(t *testing.T) {
 				"repoURL": "http://forgejo.localhost:30300/squared/platform.git"}},
 			"elementsYaml": "- repoURL: http://forgejo.localhost:30300/squared/platform.git"}}}
 	})
-	if p, w, err := checkArgoAppSets([]json.RawMessage{set}, devAppRules, squaredNames, argoSetPolicy{}); err != nil || len(p) != 0 || len(w) != 0 {
+	if p, w, _, err := checkArgoAppSets([]json.RawMessage{set}, devAppRules, squaredNames, argoSetPolicy{}); err != nil || len(p) != 0 || len(w) != 0 {
 		t.Fatalf("problems = %q, warnings = %q, err %v", p, w, err)
 	}
 }
@@ -181,7 +181,7 @@ func TestCheckArgoAppSetsUnknownGenerator(t *testing.T) {
 	set := appSet(t, func(s map[string]any) {
 		s["generators"] = []any{map[string]any{"oci": map[string]any{"repoURL": "oci://registry.example/x"}, "selector": map[string]any{}}}
 	})
-	p, w, err := checkArgoAppSets([]json.RawMessage{set}, devAppRules, squaredNames, argoSetPolicy{})
+	p, w, _, err := checkArgoAppSets([]json.RawMessage{set}, devAppRules, squaredNames, argoSetPolicy{})
 	if err != nil || len(p) != 0 || len(w) != 1 || !strings.Contains(w[0], "the ApplicationSet team: a generator has the kind oci, which the guard does not know") {
 		t.Fatalf("problems = %q, warnings = %q, err %v", p, w, err)
 	}

@@ -6,9 +6,11 @@ metadata:
   name: squared-guard
   namespace: argocd
 rules:
+  # argocd-rbac-cm, argocd-cmd-params-cm, and the ConfigMaps of the plugin
+  # generators of ApplicationSets, which can have each name. Argo CD keeps
+  # no secrets in ConfigMaps, only references to Secrets.
   - apiGroups: [""]
     resources: ["configmaps"]
-    resourceNames: ["argocd-rbac-cm", "argocd-cmd-params-cm"]
     verbs: ["get"]
   - apiGroups: ["argoproj.io"]
     resources: ["appprojects"]

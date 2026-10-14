@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"net/http"
 	"os"
 	"slices"
@@ -493,9 +494,25 @@ func (s *argoAppsSource) References(ctx context.Context) ([]Reference, []string,
 	if err != nil {
 		return nil, nil, err
 	}
-	setProblems, setWarnings, err := checkArgoAppSets(sets, rules, names, setPolicy)
+	setProblems, setWarnings, plugins, err := checkArgoAppSets(sets, rules, names, setPolicy)
 	if err != nil {
 		return nil, nil, err
+	}
+	// The ApplicationSet controller reads the ConfigMaps of the plugin
+	// generators in its own namespace.
+	for _, name := range slices.Sorted(maps.Keys(plugins)) {
+		users := strings.Join(plugins[name], ", ")
+		cm, err := s.kube.GetConfigMap(ctx, s.sc.Namespace, name)
+		switch {
+		case rest.HasStatus(err, http.StatusNotFound):
+			setWarnings = append(setWarnings, fmt.Sprintf("the ApplicationSets %s use the plugin ConfigMap %s, which does not exist", users, name))
+		case err != nil:
+			return nil, nil, err
+		default:
+			for _, m := range checkArgoPlugin(cm.Data) {
+				setProblems = append(setProblems, fmt.Sprintf("the plugin ConfigMap %s of the ApplicationSets %s: %s", name, users, m))
+			}
+		}
 	}
 
 	var msgs []string

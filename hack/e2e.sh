@@ -658,6 +658,52 @@ YAML
   wait_for "the guard has no errors after the ApplicationSet is removed" 60 guard_clean
   log "the guard checks the ApplicationSets of Argo CD"
 
+  # A plugin generator with a ConfigMap that takes its token from another
+  # key than a plugin token and sends it without TLS, and one with a
+  # ConfigMap that does not exist. The Secret does not exist and the host
+  # is not real, thus the controller sends nothing.
+  k apply -f - >/dev/null <<YAML
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: e2e-guard-plugin
+  namespace: argocd
+data:
+  token: "\$e2e-guard-missing:token"
+  baseUrl: "http://plugin.example.invalid"
+---
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: e2e-guard-plugins
+  namespace: argocd
+spec:
+  goTemplate: true
+  syncPolicy: { applicationsSync: create-only, preserveResourcesOnDeletion: true }
+  generators:
+    - plugin: { configMapRef: { name: e2e-guard-plugin }, input: { parameters: { id: "1" } } }
+    - plugin: { configMapRef: { name: e2e-guard-none } }
+  template:
+    metadata: { name: "e2e-guard-plugin-{{.id}}" }
+    spec:
+      project: default
+      source: { repoURL: "https://git.example.invalid/e2e.git", targetRevision: main, path: e2e }
+      destination: { server: "https://kubernetes.default.svc", namespace: e2e-guard }
+YAML
+  guard_reports_plugin() {
+    local st
+    st="$(guard_status)"
+    jq -e '[.errors[]? | select(test("the plugin ConfigMap e2e-guard-plugin of the ApplicationSets e2e-guard-plugins: its token is the key token of the Secret e2e-guard-missing"))] | length > 0' <<<"$st" >/dev/null &&
+      jq -e '[.errors[]? | select(test("e2e-guard-plugin of the ApplicationSets e2e-guard-plugins: it sends its token to http://plugin.example.invalid without TLS"))] | length > 0' <<<"$st" >/dev/null &&
+      jq -e '[.warnings[]? | select(test("the ApplicationSets e2e-guard-plugins use the plugin ConfigMap e2e-guard-none, which does not exist"))] | length > 0' <<<"$st" >/dev/null
+  }
+  wait_for "the guard reports the ConfigMaps of the plugin generators" 60 guard_reports_plugin
+  [[ "$(worker_may_add_dev squared-admins)" == 403 ]] || die "the protection of /squared-admins is gone after the plugin generator"
+  k -n argocd delete applicationset e2e-guard-plugins >/dev/null
+  k -n argocd delete configmap e2e-guard-plugin >/dev/null
+  wait_for "the guard has no errors after the plugin generator is removed" 60 guard_clean
+  log "the guard checks the plugin generators of the ApplicationSets"
+
   # An ApplicationSet that makes an application with the name of an
   # application of Squared takes it over, also with the policy create-only.
   # The root application then puts the labels of Squared back, as here.

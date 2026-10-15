@@ -661,7 +661,10 @@ YAML
   # A plugin generator with a ConfigMap that takes its token from another
   # key than a plugin token and sends it without TLS, and one with a
   # ConfigMap that does not exist. The Secret does not exist and the host
-  # is not real, thus the controller sends nothing.
+  # is not real, thus the controller sends nothing. Also a cluster decision
+  # resource generator with the status of Argo CD applications, and one with
+  # a ConfigMap name from a list. The application does not exist, thus the
+  # generators make no applications.
   k apply -f - >/dev/null <<YAML
 apiVersion: v1
 kind: ConfigMap
@@ -671,6 +674,13 @@ metadata:
 data:
   token: "\$e2e-guard-missing:token"
   baseUrl: "http://plugin.example.invalid"
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: e2e-guard-decision
+  namespace: argocd
+data: { apiVersion: argoproj.io/v1alpha1, kind: applications, statusListKey: resources, matchKey: name }
 ---
 apiVersion: argoproj.io/v1alpha1
 kind: ApplicationSet
@@ -683,6 +693,11 @@ spec:
   generators:
     - plugin: { configMapRef: { name: e2e-guard-plugin }, input: { parameters: { id: "1" } } }
     - plugin: { configMapRef: { name: e2e-guard-none } }
+    - clusterDecisionResource: { configMapRef: e2e-guard-decision, name: e2e-none }
+    - matrix:
+        generators:
+          - list: { elements: [{ cm: e2e-guard-decision }] }
+          - clusterDecisionResource: { configMapRef: "{{.cm}}", name: e2e-none }
   template:
     metadata: { name: "e2e-guard-plugin-{{.id}}" }
     spec:
@@ -695,14 +710,16 @@ YAML
     st="$(guard_status)"
     jq -e '[.errors[]? | select(test("the plugin ConfigMap e2e-guard-plugin of the ApplicationSets e2e-guard-plugins: its token is the key token of the Secret e2e-guard-missing"))] | length > 0' <<<"$st" >/dev/null &&
       jq -e '[.errors[]? | select(test("e2e-guard-plugin of the ApplicationSets e2e-guard-plugins: it sends its token to http://plugin.example.invalid without TLS"))] | length > 0' <<<"$st" >/dev/null &&
-      jq -e '[.warnings[]? | select(test("the ApplicationSets e2e-guard-plugins use the plugin ConfigMap e2e-guard-none, which does not exist"))] | length > 0' <<<"$st" >/dev/null
+      jq -e '[.warnings[]? | select(test("the ApplicationSets e2e-guard-plugins use the plugin ConfigMap e2e-guard-none, which does not exist"))] | length > 0' <<<"$st" >/dev/null &&
+      jq -e '[.errors[]? | select(test("the cluster decision resource ConfigMap e2e-guard-decision of the ApplicationSets e2e-guard-plugins: it takes the decisions from the status of the Argo CD applications"))] | length > 0' <<<"$st" >/dev/null &&
+      jq -e '[.errors[]? | select(test("e2e-guard-plugins: the ConfigMap .* of a clusterDecisionResource generator comes from other generators"))] | length > 0' <<<"$st" >/dev/null
   }
-  wait_for "the guard reports the ConfigMaps of the plugin generators" 60 guard_reports_plugin
+  wait_for "the guard reports the ConfigMaps of the plugin and cluster decision resource generators" 60 guard_reports_plugin
   [[ "$(worker_may_add_dev squared-admins)" == 403 ]] || die "the protection of /squared-admins is gone after the plugin generator"
   k -n argocd delete applicationset e2e-guard-plugins >/dev/null
-  k -n argocd delete configmap e2e-guard-plugin >/dev/null
-  wait_for "the guard has no errors after the plugin generator is removed" 60 guard_clean
-  log "the guard checks the plugin generators of the ApplicationSets"
+  k -n argocd delete configmap e2e-guard-plugin e2e-guard-decision >/dev/null
+  wait_for "the guard has no errors after the generators are removed" 60 guard_clean
+  log "the guard checks the plugin and cluster decision resource generators of the ApplicationSets"
 
   # An ApplicationSet that makes an application with the name of an
   # application of Squared takes it over, also with the policy create-only.

@@ -70,7 +70,8 @@ func TestCheckArgoAppSetsPlugins(t *testing.T) {
 	if err != nil || len(p) != 0 {
 		t.Fatalf("problems = %q, err %v", p, err)
 	}
-	if !slices.Equal(plugins["one"], []string{"team", "other"}) || !slices.Equal(plugins["two"], []string{"other"}) || len(plugins) != 2 {
+	if !slices.Equal(plugins[configMapUse{"plugin", "one"}], []string{"team", "other"}) ||
+		!slices.Equal(plugins[configMapUse{"plugin", "two"}], []string{"other"}) || len(plugins) != 2 {
 		t.Fatalf("plugins = %v", plugins)
 	}
 
@@ -78,5 +79,48 @@ func TestCheckArgoAppSetsPlugins(t *testing.T) {
 	p, _, _, err = checkArgoAppSets([]json.RawMessage{templatedName}, devAppRules, squaredNames, argoSetPolicy{})
 	if err != nil || !strings.Contains(strings.Join(p, " | "), `the ConfigMap "{{.plugin}}" of a plugin generator comes from other generators`) {
 		t.Fatalf("problems = %q, err %v", p, err)
+	}
+}
+
+func TestCheckArgoDecision(t *testing.T) {
+	// The example of the documentation of Argo CD (Open Cluster Management).
+	ocm := map[string]string{"apiVersion": "cluster.open-cluster-management.io/v1beta1", "kind": "placementdecisions",
+		"statusListKey": "decisions", "matchKey": "clusterName"}
+	if p, w := checkArgoDecision(ocm); len(p) != 0 || len(w) != 0 {
+		t.Fatalf("problems = %q, warnings = %q", p, w)
+	}
+	core := map[string]string{"apiVersion": "apps/v1", "kind": "deployments", "statusListKey": "conditions", "matchKey": "type"}
+	if p, w := checkArgoDecision(core); len(p) != 0 || len(w) != 0 {
+		t.Fatalf("problems = %q, warnings = %q", p, w)
+	}
+
+	apps := map[string]string{"apiVersion": "argoproj.io/v1alpha1", "kind": "applications", "statusListKey": "resources", "matchKey": "name"}
+	if p, _ := checkArgoDecision(apps); len(p) != 1 || !strings.Contains(p[0], "it takes the decisions from the status of the Argo CD applications, which has data from the manifests of the tenants") {
+		t.Fatalf("problems = %q", p)
+	}
+	if p, w := checkArgoDecision(map[string]string{"apiVersion": "apps/v1", "kind": "deployments"}); len(p) != 0 || len(w) != 1 ||
+		!strings.Contains(w[0], "it has no statusListKey, matchKey, thus the generator makes no applications") {
+		t.Fatalf("problems = %q, warnings = %q", p, w)
+	}
+}
+
+// TestCheckArgoAppSetsDecisions checks that the guard finds the ConfigMaps
+// of the cluster decision resource generators, which are a name, not an
+// object.
+func TestCheckArgoAppSetsDecisions(t *testing.T) {
+	set := appSet(t, func(s map[string]any) {
+		s["generators"] = []any{
+			map[string]any{"clusterDecisionResource": map[string]any{"configMapRef": "ocm", "labelSelector": map[string]any{}}},
+			map[string]any{"matrix": map[string]any{"generators": []any{
+				map[string]any{"list": map[string]any{"elements": []any{map[string]any{"cm": "x"}}}},
+				map[string]any{"clusterDecisionResource": map[string]any{"configMapRef": "{{.cm}}", "name": "x"}}}}},
+		}
+	})
+	p, _, refs, err := checkArgoAppSets([]json.RawMessage{set}, devAppRules, squaredNames, argoSetPolicy{})
+	if err != nil || !strings.Contains(strings.Join(p, " | "), `the ConfigMap "{{.cm}}" of a clusterDecisionResource generator comes from other generators`) {
+		t.Fatalf("problems = %q, err %v", p, err)
+	}
+	if !slices.Equal(refs[configMapUse{"clusterDecisionResource", "ocm"}], []string{"team"}) || len(refs) != 1 {
+		t.Fatalf("refs = %v", refs)
 	}
 }

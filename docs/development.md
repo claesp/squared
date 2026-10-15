@@ -226,7 +226,8 @@ all `*.localhost` names.
    the platform repository, SCM generators without limits, and an
    ApplicationSet that takes over an application of Squared, a template
    patch with the finalizer of Argo CD, a generator template with a tenant
-   project, a plugin generator with an unsafe token, and the
+   project, a plugin generator with an unsafe token, a cluster decision
+   resource generator for Argo CD applications, and the
    ApplicationSet policy `sync` give errors,
    and that Keycloak
    mappers that write `groups` on the client `argocd` and `email` from

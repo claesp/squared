@@ -97,13 +97,21 @@ var scmCredentialFields = []string{"tokenRef", "passwordRef", "basicAuth", "bear
 // generatorKinds are the generators of Argo CD 3.5.
 var generatorKinds = []string{"clusterDecisionResource", "clusters", "git", "list", "matrix", "merge", "plugin", "pullRequest", "scmProvider"}
 
+// configMapUse is a ConfigMap that a generator reads: of a plugin or of a
+// cluster decision resource. The ApplicationSet controller reads it in its
+// own namespace.
+type configMapUse struct {
+	Kind string // The kind of the generator.
+	Name string
+}
+
 // checkGenerators returns the problems and the warnings of a list of
 // generators: of an ApplicationSet, or in a matrix or merge generator, and
-// the ConfigMaps of the plugin generators.
+// the ConfigMaps that the generators read.
 // Each generator has one kind, an optional selector, and in the kind an
 // optional template, which changes fields of the template of the
 // ApplicationSet for the applications of this generator.
-func checkGenerators(gens []any, prefixes []string, names map[string]bool) (problems, warnings, plugins []string) {
+func checkGenerators(gens []any, prefixes []string, names map[string]bool) (problems, warnings []string, refs []configMapUse) {
 	for _, g := range gens {
 		m, ok := g.(map[string]any)
 		if !ok {
@@ -134,19 +142,24 @@ func checkGenerators(gens []any, prefixes []string, names map[string]bool) (prob
 						problems = append(problems, fmt.Sprintf("the guard cannot read the generators of a %s generator", kind))
 						continue
 					}
-					cp, cw, cpl := checkGenerators(children, prefixes, names)
+					cp, cw, cr := checkGenerators(children, prefixes, names)
 					problems = append(problems, cp...)
 					warnings = append(warnings, cw...)
-					plugins = append(plugins, cpl...)
-				case k == "configMapRef" && kind == "plugin":
-					ref, _ := v.(map[string]any)
-					switch name, _ := ref["name"].(string); {
+					refs = append(refs, cr...)
+				case k == "configMapRef" && (kind == "plugin" || kind == "clusterDecisionResource"):
+					// An object with a name for a plugin, a name for a
+					// cluster decision resource.
+					name, _ := v.(string)
+					if ref, ok := v.(map[string]any); ok {
+						name, _ = ref["name"].(string)
+					}
+					switch {
 					case name == "":
-						problems = append(problems, "the guard cannot read the ConfigMap of a plugin generator")
+						problems = append(problems, fmt.Sprintf("the guard cannot read the ConfigMap of a %s generator", kind))
 					case templated(name):
-						problems = append(problems, fmt.Sprintf("the ConfigMap %q of a plugin generator comes from other generators", name))
+						problems = append(problems, fmt.Sprintf("the ConfigMap %q of a %s generator comes from other generators", name, kind))
 					default:
-						plugins = append(plugins, name)
+						refs = append(refs, configMapUse{kind, name})
 					}
 				case k == "values" || kind == "list" && (k == "elements" || k == "elementsYaml") || kind == "plugin" && k == "input":
 					// Parameters, not addresses that the generator reads.
@@ -159,7 +172,7 @@ func checkGenerators(gens []any, prefixes []string, names map[string]bool) (prob
 			problems = append(problems, checkGeneratorReads(reads, prefixes)...)
 		}
 	}
-	return problems, warnings, plugins
+	return problems, warnings, refs
 }
 
 // checkGeneratorTemplate returns the problems of the template of a
@@ -244,10 +257,10 @@ func checkGeneratorReads(v any, prefixes []string) []string {
 // application by the policy, removes the objects of the tenant too. With
 // it, only the application goes, and the root application makes it again.
 //
-// It also returns the ConfigMaps of the plugin generators, with the
+// It also returns the ConfigMaps that the generators read, with the
 // ApplicationSets that use them.
-func checkArgoAppSets(raws []json.RawMessage, r argoAppRules, names map[string]bool, policy argoSetPolicy) (problems, warnings []string, plugins map[string][]string, err error) {
-	plugins = map[string][]string{}
+func checkArgoAppSets(raws []json.RawMessage, r argoAppRules, names map[string]bool, policy argoSetPolicy) (problems, warnings []string, refs map[configMapUse][]string, err error) {
+	refs = map[configMapUse][]string{}
 	for _, raw := range raws {
 		var s argoAppSet
 		if err := json.Unmarshal(raw, &s); err != nil {
@@ -293,11 +306,11 @@ func checkArgoAppSets(raws []json.RawMessage, r argoAppRules, names map[string]b
 			}
 			gens = append(gens, v)
 		}
-		gp, gw, gpl := checkGenerators(gens, r.RepoPrefixes, own)
+		gp, gw, gr := checkGenerators(gens, r.RepoPrefixes, own)
 		p = append(p, gp...)
-		for _, cm := range gpl {
-			if !slices.Contains(plugins[cm], name) {
-				plugins[cm] = append(plugins[cm], name)
+		for _, cm := range gr {
+			if !slices.Contains(refs[cm], name) {
+				refs[cm] = append(refs[cm], name)
 			}
 		}
 		for _, m := range p {
@@ -307,5 +320,5 @@ func checkArgoAppSets(raws []json.RawMessage, r argoAppRules, names map[string]b
 			warnings = append(warnings, fmt.Sprintf("the ApplicationSet %s: %s", name, m))
 		}
 	}
-	return problems, warnings, plugins, nil
+	return problems, warnings, refs, nil
 }

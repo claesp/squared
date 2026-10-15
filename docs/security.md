@@ -454,7 +454,8 @@ controls that it uses. Read [architecture.md](architecture.md) first.
   repository credentials of Argo CD to a server. The guard reads the
   ConfigMaps of the plugin generators of all ApplicationSets (right `get`
   on the ConfigMaps of the namespace of Argo CD, which has no secrets in
-  ConfigMaps).
+  ConfigMaps). It reads the ConfigMaps of the cluster decision resource
+  generators in the same way.
 
   | Plugin generator | Result |
   |---|---|
@@ -464,6 +465,25 @@ controls that it uses. Read [architecture.md](architecture.md) first.
   | No `baseUrl`, or not an `http` or `https` address | Error |
   | The name of the ConfigMap comes from other generators | Error |
   | The ConfigMap does not exist | Warning |
+
+  A cluster decision resource generator reads the objects of a kind in
+  the namespace of Argo CD. Its ConfigMap (`configMapRef`, also in that
+  namespace) names the kind (`apiVersion`, `kind`), a list in their
+  status (`statusListKey`) and a field of the entries (`matchKey`). Each
+  entry whose field has the name of a cluster of Argo CD gives
+  parameters: all fields of the entry, and the name and the address of
+  the cluster. The controller can read only the kinds that its Role
+  permits. The Secrets among them have no status, thus this generator
+  cannot send credentials. But the status of an object of Argo CD has
+  data from the manifests of the tenants: the status of an application
+  lists the objects in its manifests. A tenant could give parameters to
+  the ApplicationSet with an object with the name of a cluster.
+
+  | Cluster decision resource generator | Result |
+  |---|---|
+  | The ConfigMap names a kind of Argo CD (`argoproj.io`) | Error |
+  | The name of the ConfigMap comes from other generators | Error |
+  | The ConfigMap does not exist, or has no `apiVersion`, `kind`, `statusListKey` or `matchKey`: the generator makes no applications | Warning |
 
   Limit: the guard does not know the parameters that a plugin generator
   or a cluster decision resource gives. The checks of the templates find
@@ -476,7 +496,9 @@ controls that it uses. Read [architecture.md](architecture.md) first.
   project in a branch, and a Git generator with a template with a tenant
   project. It adds a plugin generator with a token from a key that is
   not a plugin token and a `baseUrl` without TLS, and one without a
-  ConfigMap, and checks the errors and the warning. It lets an
+  ConfigMap, and a cluster decision resource generator with the status
+  of Argo CD applications, and one with a ConfigMap name from a list, and
+  checks the errors and the warning. It lets an
   ApplicationSet take over a test application with the labels of Squared,
   checks the errors, and checks that Kubernetes removes the application
   with the ApplicationSet. It sets the policy `sync`, then turns on the

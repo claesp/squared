@@ -1,6 +1,7 @@
 package guard
 
 import (
+	"cmp"
 	"fmt"
 	"net/url"
 	"strings"
@@ -53,4 +54,32 @@ func checkArgoPlugin(data map[string]string) []string {
 		p = append(p, fmt.Sprintf("it sends its token to %s without TLS", base))
 	}
 	return p
+}
+
+// checkArgoDecision returns the problems and the warnings of the ConfigMap
+// of a cluster decision resource generator. The generator reads the
+// objects of the kind in the ConfigMap in the namespace of Argo CD. Each
+// entry of the list statusListKey in their status whose matchKey is the
+// name of a cluster of Argo CD gives parameters: all fields of the entry,
+// and the name and the address of the cluster.
+//
+// The status of an object of Argo CD has data from the manifests of the
+// tenants: the status of an application lists the objects in its
+// manifests. Thus a tenant could give parameters to the ApplicationSet,
+// with an object with the name of a cluster.
+func checkArgoDecision(data map[string]string) (problems, warnings []string) {
+	var missing []string
+	for _, k := range []string{"apiVersion", "kind", "statusListKey", "matchKey"} {
+		if strings.TrimSpace(data[k]) == "" {
+			missing = append(missing, k)
+		}
+	}
+	if len(missing) > 0 {
+		warnings = append(warnings, fmt.Sprintf("it has no %s, thus the generator makes no applications", strings.Join(missing, ", ")))
+	}
+	group, _, _ := strings.Cut(strings.TrimSpace(data["apiVersion"]), "/")
+	if group == "argoproj.io" {
+		problems = append(problems, fmt.Sprintf("it takes the decisions from the status of the Argo CD %s, which has data from the manifests of the tenants", cmp.Or(data["kind"], "objects")))
+	}
+	return problems, warnings
 }

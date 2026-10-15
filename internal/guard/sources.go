@@ -1,6 +1,7 @@
 package guard
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -494,24 +495,37 @@ func (s *argoAppsSource) References(ctx context.Context) ([]Reference, []string,
 	if err != nil {
 		return nil, nil, err
 	}
-	setProblems, setWarnings, plugins, err := checkArgoAppSets(sets, rules, names, setPolicy)
+	setProblems, setWarnings, refs, err := checkArgoAppSets(sets, rules, names, setPolicy)
 	if err != nil {
 		return nil, nil, err
 	}
-	// The ApplicationSet controller reads the ConfigMaps of the plugin
-	// generators in its own namespace.
-	for _, name := range slices.Sorted(maps.Keys(plugins)) {
-		users := strings.Join(plugins[name], ", ")
-		cm, err := s.kube.GetConfigMap(ctx, s.sc.Namespace, name)
+	// The ApplicationSet controller reads the ConfigMaps of the plugin and
+	// cluster decision resource generators in its own namespace.
+	uses := slices.SortedFunc(maps.Keys(refs), func(a, b configMapUse) int {
+		return cmp.Or(strings.Compare(a.Kind, b.Kind), strings.Compare(a.Name, b.Name))
+	})
+	for _, use := range uses {
+		what := map[string]string{"plugin": "plugin", "clusterDecisionResource": "cluster decision resource"}[use.Kind]
+		users := strings.Join(refs[use], ", ")
+		cm, err := s.kube.GetConfigMap(ctx, s.sc.Namespace, use.Name)
 		switch {
 		case rest.HasStatus(err, http.StatusNotFound):
-			setWarnings = append(setWarnings, fmt.Sprintf("the ApplicationSets %s use the plugin ConfigMap %s, which does not exist", users, name))
+			setWarnings = append(setWarnings, fmt.Sprintf("the ApplicationSets %s use the %s ConfigMap %s, which does not exist", users, what, use.Name))
+			continue
 		case err != nil:
 			return nil, nil, err
-		default:
-			for _, m := range checkArgoPlugin(cm.Data) {
-				setProblems = append(setProblems, fmt.Sprintf("the plugin ConfigMap %s of the ApplicationSets %s: %s", name, users, m))
-			}
+		}
+		var p, w []string
+		if use.Kind == "plugin" {
+			p = checkArgoPlugin(cm.Data)
+		} else {
+			p, w = checkArgoDecision(cm.Data)
+		}
+		for _, m := range p {
+			setProblems = append(setProblems, fmt.Sprintf("the %s ConfigMap %s of the ApplicationSets %s: %s", what, use.Name, users, m))
+		}
+		for _, m := range w {
+			setWarnings = append(setWarnings, fmt.Sprintf("the %s ConfigMap %s of the ApplicationSets %s: %s", what, use.Name, users, m))
 		}
 	}
 

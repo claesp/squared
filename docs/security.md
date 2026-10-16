@@ -487,7 +487,26 @@ controls that it uses. Read [architecture.md](architecture.md) first.
 
   Limit: the guard does not know the parameters that a plugin generator
   or a cluster decision resource gives. The checks of the templates find
-  a project or a repository from the parameters. The end-to-end test
+  a project or a repository from the parameters.
+
+  The ApplicationSet controller reads all Secrets of the namespace of
+  Argo CD and writes applications, and each ApplicationSet drives it.
+  Operators often give it more rights, for example to read the kind of a
+  cluster decision resource. More rights give each person who can make an
+  ApplicationSet more power. The guard reads all Roles, ClusterRoles and
+  their bindings (right `list` in the cluster, no secrets), and finds the
+  bindings for the service account of the controller (from its
+  Deployment): by name, as the user
+  `system:serviceaccount:<namespace>:<name>`, and through the groups
+  `system:authenticated`, `system:serviceaccounts` and
+  `system:serviceaccounts:<namespace>`.
+
+  | Rights of the ApplicationSet controller | Result |
+  |---|---|
+  | In the namespace of Argo CD: the rights of the Role of the Helm chart, and `get`, `list` and `watch` on each other kind | No problem |
+  | In the cluster: the rights that Kubernetes gives each user (`system:basic-user`, `system:cluster-trust-bundle-discovery`), and `get` on URLs that are not resources | No problem |
+  | In the namespaces of `applicationNamespaces`, and in the cluster when that list is not empty: the rights of the Role for applications, ApplicationSets, projects and events | No problem |
+  | Each other right, for example a write right in the namespace of Argo CD, or a read right in another namespace or in the cluster | Error | The end-to-end test
   adds an ApplicationSet with a Git generator for the platform repository,
   a project from the parameters and a pull request generator with a token
   and `insecure: true`, and checks the errors. It turns on the SCM
@@ -498,7 +517,9 @@ controls that it uses. Read [architecture.md](architecture.md) first.
   not a plugin token and a `baseUrl` without TLS, and one without a
   ConfigMap, and a cluster decision resource generator with the status
   of Argo CD applications, and one with a ConfigMap name from a list, and
-  checks the errors and the warning. It lets an
+  checks the errors and the warning. It gives read rights in the
+  namespace `default` to the group of the service accounts of the
+  namespace of Argo CD, and checks the error. It lets an
   ApplicationSet take over a test application with the labels of Squared,
   checks the errors, and checks that Kubernetes removes the application
   with the ApplicationSet. It sets the policy `sync`, then turns on the

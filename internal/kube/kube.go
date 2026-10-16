@@ -5,6 +5,7 @@
 package kube
 
 import (
+	"cmp"
 	"context"
 	"crypto/tls"
 	"crypto/x509"
@@ -258,6 +259,100 @@ func (c *Client) GetContainers(ctx context.Context, namespace, resource, name st
 	}
 	s := w.Spec.Template.Spec
 	return append(s.InitContainers, s.Containers...), nil
+}
+
+// GetServiceAccountName returns the service account of the pod template
+// of a workload, for example resource "deployments" of the group apps. It
+// returns "" and no error when the workload does not exist.
+func (c *Client) GetServiceAccountName(ctx context.Context, namespace, resource, name string) (string, error) {
+	var w struct {
+		Spec struct {
+			Template struct {
+				Spec struct {
+					ServiceAccountName string `json:"serviceAccountName"`
+				} `json:"spec"`
+			} `json:"template"`
+		} `json:"spec"`
+	}
+	path := "/apis/apps/v1/namespaces/" + url.PathEscape(namespace) + "/" + url.PathEscape(resource) + "/" + url.PathEscape(name)
+	err := c.rest.Do(ctx, http.MethodGet, path, nil, &w)
+	if rest.HasStatus(err, http.StatusNotFound) {
+		return "", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	// Kubernetes uses the service account "default" without a name.
+	return cmp.Or(w.Spec.Template.Spec.ServiceAccountName, "default"), nil
+}
+
+// PolicyRule is a rule of a Role or a ClusterRole.
+type PolicyRule struct {
+	APIGroups       []string `json:"apiGroups"`
+	Resources       []string `json:"resources"`
+	Verbs           []string `json:"verbs"`
+	ResourceNames   []string `json:"resourceNames"`
+	NonResourceURLs []string `json:"nonResourceURLs"`
+}
+
+// Role is a Role or a ClusterRole.
+type Role struct {
+	Metadata struct {
+		Name      string `json:"name"`
+		Namespace string `json:"namespace"`
+	} `json:"metadata"`
+	Rules []PolicyRule `json:"rules"`
+}
+
+// Subject is a subject of a RoleBinding or a ClusterRoleBinding.
+type Subject struct {
+	Kind      string `json:"kind"`
+	Name      string `json:"name"`
+	Namespace string `json:"namespace"`
+}
+
+// RoleBinding is a RoleBinding or a ClusterRoleBinding.
+type RoleBinding struct {
+	Metadata struct {
+		Name      string `json:"name"`
+		Namespace string `json:"namespace"`
+	} `json:"metadata"`
+	Subjects []Subject `json:"subjects"`
+	RoleRef  struct {
+		Kind string `json:"kind"`
+		Name string `json:"name"`
+	} `json:"roleRef"`
+}
+
+// RBAC is the RBAC configuration of the cluster.
+type RBAC struct {
+	Roles, ClusterRoles               []Role
+	RoleBindings, ClusterRoleBindings []RoleBinding
+}
+
+// ListRBAC returns all Roles, ClusterRoles and their bindings.
+func (c *Client) ListRBAC(ctx context.Context) (*RBAC, error) {
+	var out RBAC
+	for _, l := range []struct {
+		resource string
+		into     any
+	}{
+		{"roles", &out.Roles},
+		{"clusterroles", &out.ClusterRoles},
+		{"rolebindings", &out.RoleBindings},
+		{"clusterrolebindings", &out.ClusterRoleBindings},
+	} {
+		var list struct {
+			Items json.RawMessage `json:"items"`
+		}
+		if err := c.rest.Do(ctx, http.MethodGet, "/apis/rbac.authorization.k8s.io/v1/"+l.resource, nil, &list); err != nil {
+			return nil, err
+		}
+		if err := json.Unmarshal(list.Items, l.into); err != nil {
+			return nil, fmt.Errorf("decode %s: %w", l.resource, err)
+		}
+	}
+	return &out, nil
 }
 
 // ApplicationExists tells if an Argo CD application exists.

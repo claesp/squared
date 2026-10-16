@@ -814,6 +814,27 @@ YAML
   wait_for "the guard has no errors after the policy is back" 60 guard_clean
   log "the guard checks the policy of the ApplicationSet controller"
 
+  # Read rights in another namespace for the group of the service accounts
+  # of the namespace argocd, which has the ApplicationSet controller.
+  k apply -f - >/dev/null <<YAML
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: e2e-guard-appset
+  namespace: default
+roleRef: { apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: view }
+subjects:
+  - { apiGroup: rbac.authorization.k8s.io, kind: Group, name: "system:serviceaccounts:argocd" }
+YAML
+  guard_reports_appset_rbac() {
+    guard_status | jq -e '[.errors[]? | select(test("the RoleBinding default/e2e-guard-appset [(]ClusterRole view[)] gives the ApplicationSet controller .* in the namespace default, more than Argo CD needs"))] | length > 0' >/dev/null
+  }
+  wait_for "the guard reports the rights of the ApplicationSet controller in another namespace" 60 guard_reports_appset_rbac
+  [[ "$(worker_may_add_dev squared-admins)" == 403 ]] || die "the protection of /squared-admins is gone after the RoleBinding"
+  k -n default delete rolebinding e2e-guard-appset >/dev/null
+  wait_for "the guard has no errors after the RoleBinding is removed" 60 guard_clean
+  log "the guard checks the rights of the ApplicationSet controller"
+
   # Keycloak mappers that write the groups claim or the email claim. These
   # are in no token, thus they are harmless, but the guard must report
   # each mapper that does not come from the group membership or the email

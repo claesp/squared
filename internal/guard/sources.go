@@ -529,7 +529,26 @@ func (s *argoAppsSource) References(ctx context.Context) ([]Reference, []string,
 		}
 	}
 
+	// The rights of the service account of the ApplicationSet controller,
+	// when it runs.
+	var rbacProblems []string
+	sa, err := s.kube.GetServiceAccountName(ctx, s.sc.Namespace, "deployments", argoAppSetController)
+	if err != nil {
+		return nil, nil, err
+	}
+	if sa != "" {
+		rbac, err := s.kube.ListRBAC(ctx)
+		if err != nil {
+			return nil, nil, err
+		}
+		rbacProblems = checkAppSetControllerRBAC(rbacSubject{s.sc.Namespace, sa}, s.sc.AppNamespaces, rbac)
+	}
+
 	var msgs []string
+	if len(rbacProblems) > 0 {
+		msgs = append(msgs, fmt.Sprintf("the ApplicationSet controller of Argo CD has more rights than it needs: %s. The guard keeps the current protection",
+			strings.Join(rbacProblems, "; ")))
+	}
 	if len(problems) > 0 {
 		msgs = append(msgs, fmt.Sprintf("Argo CD reads applications in other namespaces: %s. The guard keeps the current protection",
 			strings.Join(problems, "; ")))

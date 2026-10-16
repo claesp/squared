@@ -11,7 +11,7 @@ import (
 var cfg = Config{
 	Org: "squared", PlatformRepo: "platform", Branch: "main",
 	RepoURLBase: "http://forgejo:3000", ArgoNamespace: "argocd",
-	ClusterServer: "https://kubernetes.default.svc", WorkerServiceAccount: "squared-worker",
+	ClusterServer: "https://kubernetes.default.svc", WorkerServiceAccount: "squared-worker", WorkerClusterRole: "squared-worker-pull-secrets",
 	WorkerNamespace: "squared", IngressNamespace: "ingress",
 }
 
@@ -22,8 +22,17 @@ func TestTenantFiles(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(files) != 1+2*6 {
+	if len(files) != 1+2*5 {
 		t.Fatalf("got %d files", len(files))
+	}
+	// The worker gets the ClusterRole for the pull secret in each tenant
+	// namespace, not a Role: Argo CD can make the binding with the verb
+	// bind, without the rights of the role.
+	binding := string(files["tenants/acme/dev/rolebinding.json"])
+	for _, want := range []string{`"kind": "ClusterRole"`, `"name": "squared-worker-pull-secrets"`, `"namespace": "acme-dev"`} {
+		if !strings.Contains(binding, want) {
+			t.Errorf("the RoleBinding does not contain %s: %s", want, binding)
+		}
 	}
 	scope := TenantScope("acme")
 	for path := range files {

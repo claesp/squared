@@ -835,6 +835,39 @@ YAML
   wait_for "the guard has no errors after the RoleBinding is removed" 60 guard_clean
   log "the guard checks the rights of the ApplicationSet controller"
 
+  # The application controller has only the rights that the projects
+  # need: it cannot make ClusterRoleBindings or read Secrets outside its
+  # namespace. Then it gets read rights on Secrets in the cluster, and the
+  # guard must report them.
+  local ctl=system:serviceaccount:argocd:argocd-application-controller
+  [[ "$(k auth can-i create clusterrolebindings -A --as "$ctl")" == no ]] || die "the application controller can make ClusterRoleBindings"
+  [[ "$(k auth can-i list secrets -n kube-system --as "$ctl")" == no ]] || die "the application controller can read the Secrets of kube-system"
+  [[ "$(k auth can-i create deployments -n default --as "$ctl")" == yes ]] || die "the application controller cannot make Deployments"
+  k apply -f - >/dev/null <<YAML
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: e2e-guard-secrets
+rules:
+  - { apiGroups: [""], resources: [secrets], verbs: [get, list] }
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: e2e-guard-secrets
+roleRef: { apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: e2e-guard-secrets }
+subjects:
+  - { kind: ServiceAccount, name: argocd-application-controller, namespace: argocd }
+YAML
+  guard_reports_app_rbac() {
+    guard_status | jq -e '[.errors[]? | select(test("the ClusterRoleBinding e2e-guard-secrets [(]ClusterRole e2e-guard-secrets[)] gives the application controller get list on secrets [(]core[)] in the cluster, more than the projects permit"))] | length > 0' >/dev/null
+  }
+  wait_for "the guard reports the read rights of the application controller on Secrets" 60 guard_reports_app_rbac
+  k delete clusterrolebinding e2e-guard-secrets >/dev/null
+  k delete clusterrole e2e-guard-secrets >/dev/null
+  wait_for "the guard has no errors after the ClusterRoleBinding is removed" 60 guard_clean
+  log "the guard checks the rights of the application controller"
+
   # Keycloak mappers that write the groups claim or the email claim. These
   # are in no token, thus they are harmless, but the guard must report
   # each mapper that does not come from the group membership or the email
@@ -1087,6 +1120,16 @@ wait_for "the webhook to Argo CD delivers" 60 hook_ok
 fj_admin "/repos/squared/tenant-$TENANT/branch_protections/main" \
   | jq -e '.push_whitelist_usernames == ["squared-bot"] and .merge_whitelist_usernames == ["squared-bot"] and .apply_to_admins' >/dev/null \
   || die "the tenant repository has no branch protection for Squared only"
+
+# The root application repairs a change by hand of the tenant project. The
+# application controller must be able to list the AppProjects in the
+# cluster for this (resource.respectRBAC).
+k -n argocd patch appproject "tenant-$TENANT" --type json \
+  -p '[{"op":"add","path":"/spec/sourceRepos/-","value":"https://git.example.invalid/e2e.git"}]' >/dev/null
+project_repaired() {
+  [[ "$(k -n argocd get appproject "tenant-$TENANT" -o json | jq '.spec.sourceRepos | length')" == 1 ]]
+}
+wait_for "Argo CD repairs the changed tenant project" 120 project_repaired
 
 step "map tenant members to Harbor, Forgejo and Argo CD"
 # dev has no rights in the tenant yet.

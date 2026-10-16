@@ -32,7 +32,10 @@ type Config struct {
 	ClusterServer        string // Destination cluster of the applications.
 	WorkerServiceAccount string // Service account of the worker.
 	WorkerNamespace      string // Namespace of the worker.
-	IngressNamespace     string // Namespace of the ingress controller. Its pods can connect to tenant pods.
+	// WorkerClusterRole is the ClusterRole that lets the worker write the
+	// image pull secret. Each tenant namespace binds it to the worker.
+	WorkerClusterRole string
+	IngressNamespace  string // Namespace of the ingress controller. Its pods can connect to tenant pods.
 	// GroupPrefix is the start of the identity provider groups of tenants.
 	// The groups are "<prefix><tenant>-<role>". Default "tenant-".
 	GroupPrefix string
@@ -127,7 +130,6 @@ func (c Config) TenantFiles(t *domain.Tenant, envs []domain.Environment) (map[st
 		objs[dir+"/resourcequota.json"] = c.quota(t, e)
 		objs[dir+"/limitrange.json"] = c.limitRange(t, e)
 		objs[dir+"/networkpolicy.json"] = c.networkPolicy(t, e)
-		objs[dir+"/role.json"] = c.workerRole(t, e)
 		objs[dir+"/rolebinding.json"] = c.workerRoleBinding(t, e)
 	}
 	return marshalAll(objs)
@@ -303,28 +305,17 @@ func (c Config) networkPolicy(t *domain.Tenant, e domain.Environment) object {
 	}
 }
 
-// workerRole lets the worker write the image pull secret. Kubernetes RBAC
-// cannot limit "create" to one name, thus the role allows secrets in this
-// namespace only.
-func (c Config) workerRole(t *domain.Tenant, e domain.Environment) object {
-	return object{
-		APIVersion: "rbac.authorization.k8s.io/v1",
-		Kind:       "Role",
-		Metadata:   meta{Name: "squared-worker", Namespace: e.Namespace, Labels: labels(t.Slug)},
-		Rules: []map[string]any{{
-			"apiGroups": []string{""},
-			"resources": []string{"secrets"},
-			"verbs":     []string{"get", "create", "patch"},
-		}},
-	}
-}
-
+// workerRoleBinding lets the worker write the image pull secret in this
+// namespace only: Kubernetes RBAC cannot limit "create" to one name. The
+// binding refers to a ClusterRole, not to a Role in the namespace:
+// Kubernetes lets Argo CD make a Role only with rights that Argo CD has
+// itself, but a binding to one ClusterRole only with the verb bind on it.
 func (c Config) workerRoleBinding(t *domain.Tenant, e domain.Environment) object {
 	return object{
 		APIVersion: "rbac.authorization.k8s.io/v1",
 		Kind:       "RoleBinding",
 		Metadata:   meta{Name: "squared-worker", Namespace: e.Namespace, Labels: labels(t.Slug)},
-		RoleRef:    map[string]string{"apiGroup": "rbac.authorization.k8s.io", "kind": "Role", "name": "squared-worker"},
+		RoleRef:    map[string]string{"apiGroup": "rbac.authorization.k8s.io", "kind": "ClusterRole", "name": c.WorkerClusterRole},
 		Subjects: []map[string]string{{
 			"kind": "ServiceAccount", "name": c.WorkerServiceAccount, "namespace": c.WorkerNamespace,
 		}},

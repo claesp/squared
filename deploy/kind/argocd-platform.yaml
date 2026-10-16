@@ -1,3 +1,18 @@
+# The project default of Argo CD permits all repositories, clusters and
+# kinds. Squared does not use it, thus it permits nothing: an application
+# in it cannot deploy. The rights of the application controller follow the
+# other projects.
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: default
+  namespace: argocd
+spec:
+  sourceRepos: []
+  destinations: []
+  clusterResourceWhitelist: []
+  namespaceResourceWhitelist: []
+---
 # The root application of Squared. It applies the platform repository,
 # which only the Squared worker writes. The project limits the kinds of
 # objects to the kinds that the platform repository contains.
@@ -25,8 +40,6 @@ spec:
       kind: LimitRange
     - group: networking.k8s.io
       kind: NetworkPolicy
-    - group: rbac.authorization.k8s.io
-      kind: Role
     - group: rbac.authorization.k8s.io
       kind: RoleBinding
     - group: argoproj.io

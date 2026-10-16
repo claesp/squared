@@ -50,6 +50,7 @@ func runWorker(ctx context.Context, log *slog.Logger) error {
 			ClusterServer:        env.String("SQUARED_CLUSTER_SERVER", "https://kubernetes.default.svc"),
 			WorkerServiceAccount: env.String("SQUARED_WORKER_SERVICE_ACCOUNT", "squared-worker"),
 			WorkerNamespace:      env.String("SQUARED_WORKER_NAMESPACE", env.String("POD_NAMESPACE", "squared")),
+			WorkerClusterRole:    env.String("SQUARED_WORKER_CLUSTER_ROLE", "squared-worker-pull-secrets"),
 			IngressNamespace:     env.String("SQUARED_INGRESS_NAMESPACE", ""),
 			GroupPrefix:          env.String("SQUARED_TENANT_GROUP_PREFIX", "tenant-"),
 		},

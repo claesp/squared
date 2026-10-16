@@ -14,6 +14,9 @@ configs:
     applicationsetcontroller.enable.policy.override: false
   cm:
     url: http://localhost:30081
+    # The application controller reads only the kinds that its RBAC
+    # permits, and skips the others.
+    resource.respectRBAC: normal
     # Forgejo sends a webhook after each push. The poll interval is only a
     # fallback.
     timeout.reconciliation: 60s
@@ -74,3 +77,57 @@ repoServer:
           drop: ["ALL"]
         seccompProfile:
           type: RuntimeDefault
+
+# The application controller can write only the kinds that the projects of
+# Squared permit (deploy/kind/argocd-platform.yaml and the tenant
+# projects), not the cluster-admin rights of the chart. It reads the
+# objects that these kinds make. It cannot read Secrets outside its
+# namespace. It can bind only the ClusterRole of the worker (see
+# docs/security.md).
+controller:
+  clusterRoleRules:
+    enabled: true
+    rules:
+      - apiGroups: [""]
+        resources: [namespaces, resourcequotas, limitranges, configmaps, serviceaccounts, services]
+        verbs: [get, list, watch, create, update, patch, delete]
+      - apiGroups: [networking.k8s.io]
+        resources: [networkpolicies, ingresses]
+        verbs: [get, list, watch, create, update, patch, delete]
+      - apiGroups: [rbac.authorization.k8s.io]
+        resources: [rolebindings]
+        verbs: [get, list, watch, create, update, patch, delete]
+      - apiGroups: [apps]
+        resources: [deployments]
+        verbs: [get, list, watch, create, update, patch, delete]
+      - apiGroups: [batch]
+        resources: [cronjobs]
+        verbs: [get, list, watch, create, update, patch, delete]
+      - apiGroups: [policy]
+        resources: [poddisruptionbudgets]
+        verbs: [get, list, watch, create, update, patch, delete]
+      - apiGroups: [rbac.authorization.k8s.io]
+        resources: [clusterroles]
+        resourceNames: [squared-worker-pull-secrets]
+        verbs: [bind]
+      # The objects that the Deployments and CronJobs make, for the health
+      # and the resource tree.
+      - apiGroups: [""]
+        resources: [pods, endpoints, events]
+        verbs: [get, list, watch]
+      - apiGroups: [apps]
+        resources: [replicasets]
+        verbs: [get, list, watch]
+      - apiGroups: [batch]
+        resources: [jobs]
+        verbs: [get, list, watch]
+      - apiGroups: [discovery.k8s.io]
+        resources: [endpointslices]
+        verbs: [get, list, watch]
+      # With resource.respectRBAC, Argo CD caches only the kinds that it can
+      # list in the cluster. The Role of the chart has the Argo CD kinds only
+      # in its namespace, thus without this rule the root application cannot
+      # remove applications or repair the tenant projects.
+      - apiGroups: [argoproj.io]
+        resources: [applications, appprojects]
+        verbs: [get, list, watch]

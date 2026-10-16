@@ -67,20 +67,20 @@ func (s rbacSubject) matches(kind, name, namespace string) bool {
 	return false
 }
 
-// checkAppSetControllerRBAC returns the problems of the rights of the
-// service account (sa) of the ApplicationSet controller. Argo CD runs it
-// in its namespace (own). The controller reads all Secrets there, and
-// each ApplicationSet drives it: more rights give each person who can
-// make an ApplicationSet more power, for example through the kind of a
-// cluster decision resource. The controller may have:
-//   - in the namespace of Argo CD: the Role of the Helm chart, and read
-//     rights for other kinds, for example of cluster decision resources;
-//   - in the application namespaces (appNamespaces), and in the cluster
-//     when there are application namespaces: the rights for the
-//     applications and the ApplicationSets;
-//   - in the cluster: the rights that Kubernetes gives to each user, and
-//     get on URLs that are not resources.
-func checkAppSetControllerRBAC(sa rbacSubject, appNamespaces []string, rbac *kube.RBAC) []string {
+// rbacPermit tells if a component may have a right: the verb on the
+// resource of the API group, in a namespace ("" for the cluster), for the
+// names of the rule (none for all names).
+type rbacPermit func(namespace, group, resource, verb string, names []string) bool
+
+// rulesAllow tells if one of the rules has the right.
+func rulesAllow(rules []rbacRule, group, resource, verb string) bool {
+	return slices.ContainsFunc(rules, func(a rbacRule) bool { return a.allows(group, resource, verb) })
+}
+
+// checkRBAC returns the problems of the rights of the service account (sa)
+// of a component (who): each right of a binding for it that permit does
+// not permit. need tells what the component needs, for the messages.
+func checkRBAC(who string, sa rbacSubject, rbac *kube.RBAC, permit rbacPermit, need string) []string {
 	role := func(kind, namespace, name string) *kube.Role {
 		list := rbac.ClusterRoles
 		if kind == "Role" {
@@ -93,22 +93,6 @@ func checkAppSetControllerRBAC(sa rbacSubject, appNamespaces []string, rbac *kub
 		}
 		return nil
 	}
-	// allowed returns the rules for a namespace ("" for the cluster), and
-	// if the controller may read each kind there.
-	allowed := func(namespace string) ([]rbacRule, bool) {
-		switch {
-		case namespace == sa.Namespace:
-			return appSetControllerRules, true
-		case namespace == "" && len(appNamespaces) > 0:
-			return append(slices.Clone(defaultClusterRules), appSetNamespaceRules...), false
-		case namespace == "":
-			return defaultClusterRules, false
-		case slices.Contains(appNamespaces, namespace):
-			return appSetNamespaceRules, false
-		}
-		return nil, false
-	}
-
 	var p []string
 	check := func(bindingKind string, b kube.RoleBinding, namespace string) {
 		if !slices.ContainsFunc(b.Subjects, func(s kube.Subject) bool { return sa.matches(s.Kind, s.Name, s.Namespace) }) {
@@ -118,21 +102,18 @@ func checkAppSetControllerRBAC(sa rbacSubject, appNamespaces []string, rbac *kub
 		if r == nil {
 			return
 		}
-		rules, readAll := allowed(namespace)
 		scope := "the cluster"
-		if namespace != "" {
-			scope = "the namespace " + namespace
-		}
 		where := fmt.Sprintf("the %s %s (%s %s)", bindingKind, b.Metadata.Name, b.RoleRef.Kind, b.RoleRef.Name)
 		if namespace != "" {
+			scope = "the namespace " + namespace
 			where = fmt.Sprintf("the %s %s/%s (%s %s)", bindingKind, namespace, b.Metadata.Name, b.RoleRef.Kind, b.RoleRef.Name)
 		}
 		for _, rule := range r.Rules {
 			if len(rule.NonResourceURLs) > 0 {
 				// Only a ClusterRoleBinding gives them, for the cluster.
 				if slices.ContainsFunc(rule.Verbs, func(v string) bool { return v != "get" }) {
-					p = append(p, fmt.Sprintf("%s gives the ApplicationSet controller %s on the URLs %s, more than Argo CD needs",
-						where, strings.Join(rule.Verbs, ", "), strings.Join(rule.NonResourceURLs, ", ")))
+					p = append(p, fmt.Sprintf("%s gives %s %s on the URLs %s, more than %s",
+						where, who, strings.Join(rule.Verbs, ", "), strings.Join(rule.NonResourceURLs, ", "), need))
 				}
 				continue
 			}
@@ -141,9 +122,7 @@ func checkAppSetControllerRBAC(sa rbacSubject, appNamespaces []string, rbac *kub
 				for _, res := range rule.Resources {
 					var verbs []string
 					for _, v := range rule.Verbs {
-						ok := slices.ContainsFunc(rules, func(a rbacRule) bool { return a.allows(g, res, v) }) ||
-							readAll && slices.Contains(readVerbs, v)
-						if !ok {
+						if !permit(namespace, g, res, v, rule.ResourceNames) {
 							verbs = append(verbs, v)
 						}
 					}
@@ -153,8 +132,7 @@ func checkAppSetControllerRBAC(sa rbacSubject, appNamespaces []string, rbac *kub
 				}
 			}
 			if len(extra) > 0 {
-				p = append(p, fmt.Sprintf("%s gives the ApplicationSet controller %s in %s, more than Argo CD needs",
-					where, strings.Join(extra, ", "), scope))
+				p = append(p, fmt.Sprintf("%s gives %s %s in %s, more than %s", where, who, strings.Join(extra, ", "), scope, need))
 			}
 		}
 	}
@@ -165,6 +143,35 @@ func checkAppSetControllerRBAC(sa rbacSubject, appNamespaces []string, rbac *kub
 		check("RoleBinding", b, b.Metadata.Namespace)
 	}
 	return p
+}
+
+// checkAppSetControllerRBAC returns the problems of the rights of the
+// service account (sa) of the ApplicationSet controller. Argo CD runs it
+// in its namespace. The controller reads all Secrets there, and each
+// ApplicationSet drives it: more rights give each person who can make an
+// ApplicationSet more power, for example through the kind of a cluster
+// decision resource. The controller may have:
+//   - in the namespace of Argo CD: the Role of the Helm chart, and read
+//     rights for other kinds, for example of cluster decision resources;
+//   - in the application namespaces (appNamespaces), and in the cluster
+//     when there are application namespaces: the rights for the
+//     applications and the ApplicationSets;
+//   - in the cluster: the rights that Kubernetes gives to each user, and
+//     get on URLs that are not resources.
+func checkAppSetControllerRBAC(sa rbacSubject, appNamespaces []string, rbac *kube.RBAC) []string {
+	permit := func(namespace, group, resource, verb string, _ []string) bool {
+		switch {
+		case namespace == sa.Namespace:
+			return rulesAllow(appSetControllerRules, group, resource, verb) || slices.Contains(readVerbs, verb)
+		case namespace == "":
+			return rulesAllow(defaultClusterRules, group, resource, verb) ||
+				len(appNamespaces) > 0 && rulesAllow(appSetNamespaceRules, group, resource, verb)
+		case slices.Contains(appNamespaces, namespace):
+			return rulesAllow(appSetNamespaceRules, group, resource, verb)
+		}
+		return false
+	}
+	return checkRBAC("the ApplicationSet controller", sa, rbac, permit, "Argo CD needs")
 }
 
 // cmpOrCore returns the name of an API group for a message.

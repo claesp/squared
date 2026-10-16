@@ -30,11 +30,18 @@ in a production cluster.
    organization, with the Argo CD account.
 4. Apply the root application. Use
    [`deploy/kind/argocd-platform.yaml`](../deploy/kind/argocd-platform.yaml)
-   as the template and change the repository address.
-5. Configure Keycloak. See the next section.
-6. Make the secrets `squared-server` and `squared-worker` in the namespace
+   as the template and change the repository address. It also locks the
+   project `default` of Argo CD.
+5. Limit the application controller of Argo CD to the kinds that the
+   projects permit: `controller.clusterRoleRules` of the Helm chart, and
+   `resource.respectRBAC: normal` in `argocd-cm`. Use
+   [`deploy/kind/argocd-values.yaml`](../deploy/kind/argocd-values.yaml)
+   as the template. The chart default gives it all rights in the cluster,
+   and the guard reports this.
+6. Configure Keycloak. See the next section.
+7. Make the secrets `squared-server` and `squared-worker` in the namespace
    `squared`. See [`hack/kind-up.sh`](../hack/kind-up.sh) for the keys.
-7. Make an overlay of [`deploy/kubernetes/base`](../deploy/kubernetes/base)
+8. Make an overlay of [`deploy/kubernetes/base`](../deploy/kubernetes/base)
    with your configuration and image, and apply it. The Kind overlay is an
    example. In production, Argo CD can apply Squared itself.
 
@@ -238,6 +245,13 @@ to the configuration of the guard, and add its Keycloak client to
      to groups, you can also add it to `ignoreFields` of the source.
    - A warning about a new project field: check the release notes. If the
      field gives no rights, add it to `ignoreFields`.
+   - An error about rights of the application controller or of the
+     ApplicationSet controller: a new chart version can have new rules.
+     Compare them with the rules in
+     [`deploy/kind/argocd-values.yaml`](../deploy/kind/argocd-values.yaml)
+     and with the Roles in
+     [`internal/guard/argocdrbac.go`](../internal/guard/argocdrbac.go)
+     and [`internal/guard/argocdappcontroller.go`](../internal/guard/argocdappcontroller.go).
 2. Run the end-to-end test against a test environment with the new
    version.
 
@@ -368,7 +382,13 @@ This makes Git agree with the database again.
 
 ## Upgrade
 
-1. Read the release notes.
+1. Read the release notes. From this version, the tenant namespaces have
+   no Role `squared-worker`: the RoleBinding refers to the ClusterRole
+   `squared-worker-pull-secrets` in
+   [`deploy/kubernetes/base`](../deploy/kubernetes/base). The platform
+   project does not permit Roles, thus Argo CD does not remove the old
+   Roles. Remove them after the upgrade:
+   `kubectl delete role squared-worker -A -l app.kubernetes.io/managed-by=squared`.
 2. Apply the new image. The init container of the server applies new
    database migrations. Migrations only add to the schema, thus the old
    version continues to work during the rollout.

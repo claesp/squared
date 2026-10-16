@@ -506,7 +506,57 @@ controls that it uses. Read [architecture.md](architecture.md) first.
   | In the namespace of Argo CD: the rights of the Role of the Helm chart, and `get`, `list` and `watch` on each other kind | No problem |
   | In the cluster: the rights that Kubernetes gives each user (`system:basic-user`, `system:cluster-trust-bundle-discovery`), and `get` on URLs that are not resources | No problem |
   | In the namespaces of `applicationNamespaces`, and in the cluster when that list is not empty: the rights of the Role for applications, ApplicationSets, projects and events | No problem |
-  | Each other right, for example a write right in the namespace of Argo CD, or a read right in another namespace or in the cluster | Error | The end-to-end test
+  | Each other right, for example a write right in the namespace of Argo CD, or a read right in another namespace or in the cluster | Error |
+
+- **Rights of the application controller of Argo CD.** The Helm chart
+  gives the application controller all rights in the cluster (`*` on
+  `*`), because Argo CD can deploy each kind. But the projects tell which
+  kinds Argo CD deploys for Squared. With all rights, an error in Argo CD
+  or a change by hand of a project lets the controller make, for example,
+  a ClusterRoleBinding. The development environment thus gives the
+  controller a ClusterRole with only the kinds of the platform project and
+  of the tenant projects, read rights on the objects that they make (pods,
+  ReplicaSets, Jobs, endpoints), and the verb `bind` only on the
+  ClusterRole of the worker. `resource.respectRBAC: normal` makes Argo CD
+  skip the kinds that it cannot list in the cluster. Thus the controller
+  also has read rights on applications and AppProjects in the cluster:
+  without them, the root application cannot remove applications or
+  repair the tenant projects. It locks the project `default`,
+  which permits all kinds and which Squared does not use: no source
+  repositories, no destinations, no kinds.
+
+  The worker writes the image pull secret in each tenant namespace with a
+  RoleBinding from the platform repository. Kubernetes lets Argo CD make a
+  Role only with rights that Argo CD has itself, or with the verb
+  `escalate`, which can give each right in each namespace. Thus the
+  RoleBinding refers to the ClusterRole `squared-worker-pull-secrets`, and
+  the controller needs only `bind` on that name. Limit: with `bind`, the
+  controller can give these rights on Secrets to each subject in each
+  namespace.
+
+  The guard reads the service account of the controller from its
+  StatefulSet, and the kinds that the projects permit: the cluster kinds
+  and the namespaced kinds of each project with a source repository and a
+  destination. A project without a list of namespaced kinds permits all of
+  them. The kinds of the tenant projects are always permitted: Squared
+  makes a tenant project for each new tenant, also before the first
+  tenant.
+
+  | Rights of the application controller | Result |
+  |---|---|
+  | In the namespace of Argo CD: the rights of the Role of the Helm chart | No problem |
+  | In the cluster: the rights that Kubernetes gives each user, and `get` on URLs that are not resources | No problem |
+  | Write rights on the kinds that the projects permit, and read rights on all kinds but Secrets | No problem |
+  | `bind` on the ClusterRoles in `controllerBindRoles`, by name | No problem |
+  | Each other right, for example read rights on Secrets outside the namespace of Argo CD, `*`, `escalate`, `impersonate`, or `bind` on all roles | Error |
+
+  Limit: the projects permit kinds only in the namespaces of their
+  destinations, but a ClusterRole gives the rights in all namespaces. The
+  platform project has all namespaces. The guard finds the resource of a
+  kind by its name, for example `networkpolicies` for `NetworkPolicy`. The
+  end-to-end test checks that the controller cannot make
+  ClusterRoleBindings or read the Secrets of `kube-system`, then gives it
+  read rights on Secrets in the cluster, and checks the error. The end-to-end test
   adds an ApplicationSet with a Git generator for the platform repository,
   a project from the parameters and a pull request generator with a token
   and `insecure: true`, and checks the errors. It turns on the SCM

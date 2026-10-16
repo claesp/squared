@@ -7,8 +7,9 @@ metadata:
 automountServiceAccountToken: false
 ---
 # The worker reads Argo CD applications. Each tenant namespace has a
-# RoleBinding (from the platform repository) that lets the worker write
-# the image pull secret there. The worker has no other rights.
+# RoleBinding (from the platform repository) to the ClusterRole
+# squared-worker-pull-secrets, which lets the worker write the image pull
+# secret there. The worker has no other rights.
 apiVersion: v1
 kind: ServiceAccount
 metadata:
@@ -38,3 +39,15 @@ subjects:
   - kind: ServiceAccount
     name: squared-worker
     namespace: squared
+---
+# The rights of the worker in each tenant namespace. No binding here: the
+# platform repository has one RoleBinding in each tenant namespace, and the
+# Argo CD application controller can bind only this ClusterRole.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: squared-worker-pull-secrets
+rules:
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get", "create", "patch"]

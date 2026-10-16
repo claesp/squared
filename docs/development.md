@@ -228,7 +228,8 @@ all `*.localhost` names.
    patch with the finalizer of Argo CD, a generator template with a tenant
    project, a plugin generator with an unsafe token, a cluster decision
    resource generator for Argo CD applications, read rights of the
-   ApplicationSet controller in another namespace, and the
+   ApplicationSet controller in another namespace, read rights of the
+   application controller on Secrets, and the
    ApplicationSet policy `sync` give errors,
    and that Keycloak
    mappers that write `groups` on the client `argocd` and `email` from
@@ -266,7 +267,8 @@ all `*.localhost` names.
    for `dev`, disables `dev` in Keycloak, then makes `dev` a Forgejo
    administrator, and checks that the guard reports both. It does the
    same with an SSH key of `dev` and a disabled `dev`.
-6. Makes a tenant, adds `dev` as developer, and waits until `dev` has the
+6. Makes a tenant, and checks that Argo CD repairs a change by hand of
+   its project. Adds `dev` as developer, and waits until `dev` has the
    Harbor project and can read the Forgejo repository.
 7. Pushes the example image as `dev` with the Harbor CLI secret.
 8. Deploys the image and checks the answer of the service. Checks that

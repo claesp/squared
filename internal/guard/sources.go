@@ -134,6 +134,10 @@ type SourceConfig struct {
 	// application.namespaces and applicationsetcontroller.namespaces of
 	// Argo CD that an operator checked. Squared needs none.
 	AppNamespaces []string `json:"applicationNamespaces,omitempty"`
+	// ControllerBindRoles is for argocd-applications: the ClusterRoles that
+	// the application controller may bind, for example the ClusterRole of
+	// the worker (SQUARED_WORKER_CLUSTER_ROLE).
+	ControllerBindRoles []string `json:"controllerBindRoles,omitempty"`
 	// WebhookHosts is for forgejo-config: the hosts that ALLOWED_HOST_LIST
 	// may have besides "external", for example the host of Argo CD.
 	WebhookHosts []string `json:"webhookHosts,omitempty"`
@@ -529,25 +533,46 @@ func (s *argoAppsSource) References(ctx context.Context) ([]Reference, []string,
 		}
 	}
 
-	// The rights of the service account of the ApplicationSet controller,
-	// when it runs.
-	var rbacProblems []string
-	sa, err := s.kube.GetServiceAccountName(ctx, s.sc.Namespace, "deployments", argoAppSetController)
+	// The rights of the service accounts of the ApplicationSet controller
+	// and of the application controller, when they run.
+	var setRBAC, appRBAC []string
+	setSA, err := s.kube.GetServiceAccountName(ctx, s.sc.Namespace, "deployments", argoAppSetController)
 	if err != nil {
 		return nil, nil, err
 	}
-	if sa != "" {
+	appSA, err := s.kube.GetServiceAccountName(ctx, s.sc.Namespace, "statefulsets", argoAppController)
+	if err != nil {
+		return nil, nil, err
+	}
+	if setSA != "" || appSA != "" {
 		rbac, err := s.kube.ListRBAC(ctx)
 		if err != nil {
 			return nil, nil, err
 		}
-		rbacProblems = checkAppSetControllerRBAC(rbacSubject{s.sc.Namespace, sa}, s.sc.AppNamespaces, rbac)
+		if setSA != "" {
+			setRBAC = checkAppSetControllerRBAC(rbacSubject{s.sc.Namespace, setSA}, s.sc.AppNamespaces, rbac)
+		}
+		if appSA != "" {
+			projects, err := s.kube.ListAppProjects(ctx, s.sc.Namespace)
+			if err != nil {
+				return nil, nil, err
+			}
+			kinds, err := projectKinds(projects)
+			if err != nil {
+				return nil, nil, err
+			}
+			appRBAC = checkAppControllerRBAC(rbacSubject{s.sc.Namespace, appSA}, kinds, s.sc.ControllerBindRoles, rbac)
+		}
 	}
 
 	var msgs []string
-	if len(rbacProblems) > 0 {
+	if len(appRBAC) > 0 {
+		msgs = append(msgs, fmt.Sprintf("the application controller of Argo CD has more rights than the projects permit: %s. The guard keeps the current protection",
+			strings.Join(appRBAC, "; ")))
+	}
+	if len(setRBAC) > 0 {
 		msgs = append(msgs, fmt.Sprintf("the ApplicationSet controller of Argo CD has more rights than it needs: %s. The guard keeps the current protection",
-			strings.Join(rbacProblems, "; ")))
+			strings.Join(setRBAC, "; ")))
 	}
 	if len(problems) > 0 {
 		msgs = append(msgs, fmt.Sprintf("Argo CD reads applications in other namespaces: %s. The guard keeps the current protection",

@@ -59,7 +59,7 @@ func setup(t *testing.T) *env {
 		GitOps: gitops.Config{
 			Org: "squared", PlatformRepo: "platform", Branch: "main", RepoURLBase: "http://git",
 			ArgoNamespace: "argocd", ClusterServer: "https://kubernetes.default.svc",
-			WorkerServiceAccount: "squared-worker", WorkerNamespace: "squared",
+			WorkerServiceAccount: "squared-worker", WorkerNamespace: "squared", WorkerClusterRole: "squared-worker-pull-secrets",
 		},
 		RegistryHost: "registry.test",
 	}

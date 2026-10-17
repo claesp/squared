@@ -282,7 +282,7 @@ controls that it uses. Read [architecture.md](architecture.md) first.
   | A destination with a cluster that is not in `clusterServers`, or a cluster by its name instead of its address | Error |
   | A destination with a namespace that is not `<tenant>-<environment>`, for example `*` or `kube-system` | Error |
   | A source repository that is not the repository of the tenant | Error |
-  | Cluster kinds, no list of namespaced kinds (Argo CD then permits all of them), or namespaced kinds that the renderer does not make | Error |
+  | Cluster kinds, no list of namespaced kinds (Argo CD then permits all of them), or namespaced kinds other than the kinds of the renderer and the kinds that Kubernetes makes for them (ReplicaSet, Pod, Job) | Error |
   | `sourceNamespaces` or `destinationServiceAccounts` | Error |
   | A role other than `member`, tokens of a role, or a policy other than the read access of `member` | Error |
   | A project with the name `tenant-<slug>` that Squared did not make (no label `app.kubernetes.io/managed-by: squared`) | Error |
@@ -556,7 +556,37 @@ controls that it uses. Read [architecture.md](architecture.md) first.
   kind by its name, for example `networkpolicies` for `NetworkPolicy`. The
   end-to-end test checks that the controller cannot make
   ClusterRoleBindings or read the Secrets of `kube-system`, then gives it
-  read rights on Secrets in the cluster, and checks the error. The end-to-end test
+  read rights on Secrets in the cluster, and checks the error.
+
+- **Rights of the API server of Argo CD.** The API server makes the
+  changes that users ask for in the web interface and the CLI: it shows
+  the live objects, the events and the logs of the applications, runs
+  resource actions such as a restart (`patch`), and removes objects
+  (`delete`). The RBAC of Argo CD permits each action for each user, but
+  an error in the server or a stolen session gets its Kubernetes rights.
+  The Helm chart gives it `get`, `patch` and `delete` on all kinds in the
+  cluster, also on Secrets and ClusterRoleBindings, and `create` on Jobs
+  and Argo Workflows. The development environment gives it only `get`,
+  `patch` and `delete` on the kinds of the projects of Squared, and read
+  rights on the pods, their logs, the events and the other objects of the
+  resource tree. Without `create` on Jobs, the action "create job" of a
+  CronJob does not work.
+
+  The guard checks the server as the application controller, with its
+  service account from its Deployment:
+
+  | Rights of the API server | Result |
+  |---|---|
+  | In the namespace of Argo CD: the rights of the Role of the Helm chart | No problem |
+  | In the cluster: the rights that Kubernetes gives each user, and `get` on URLs that are not resources | No problem |
+  | `patch` and `delete` on the kinds that the projects permit, and read rights on all kinds but Secrets | No problem |
+  | Each other right, for example read rights on Secrets outside the namespace of Argo CD, `create` or `update` on the objects of the applications, `create` on `pods/exec`, `*`, `escalate` or `bind` | Error |
+
+  The end-to-end test uses the web interface as administrator: it shows a
+  Deployment, its events and the logs of its pod, and runs the action
+  `restart`. It checks that the server cannot read the Secrets of
+  `kube-system`, then gives it `create` on `pods/exec`, and checks the
+  error. The end-to-end test
   adds an ApplicationSet with a Git generator for the platform repository,
   a project from the parameters and a pull request generator with a token
   and `insecure: true`, and checks the errors. It turns on the SCM
@@ -914,7 +944,7 @@ Each tenant environment gets these objects from the platform repository:
 | ResourceQuota | Limits CPU, memory and pods. Blocks LoadBalancer and NodePort services and persistent volume claims. |
 | LimitRange | Gives default resources to containers without resources. |
 | NetworkPolicy | Accepts connections only from the same namespace and from the ingress controller. |
-| Argo CD AppProject | Accepts manifests only from the tenant repository, only for the tenant namespaces, and only these kinds: ServiceAccount, Service, ConfigMap, Deployment, CronJob, Ingress, PodDisruptionBudget. No cluster objects. |
+| Argo CD AppProject | Accepts manifests only from the tenant repository, only for the tenant namespaces, and only these kinds: ServiceAccount, Service, ConfigMap, Deployment, CronJob, Ingress, PodDisruptionBudget, and ReplicaSet, Pod and Job, which Kubernetes makes for them. Argo CD shows only the permitted kinds in the resource tree, and gives the logs only of a pod in the tree. A Deployment or a CronJob can run the same pods, thus these three kinds give no more power. No cluster objects. |
 
 The renderer also gives each workload secure settings that tenants cannot
 change: no service account token, read-only root file system, no privilege

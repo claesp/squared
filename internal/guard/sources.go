@@ -544,7 +544,12 @@ func (s *argoAppsSource) References(ctx context.Context) ([]Reference, []string,
 	if err != nil {
 		return nil, nil, err
 	}
-	if setSA != "" || appSA != "" {
+	serverSA, err := s.kube.GetServiceAccountName(ctx, s.sc.Namespace, "deployments", argoServer)
+	if err != nil {
+		return nil, nil, err
+	}
+	var serverRBAC []string
+	if setSA != "" || appSA != "" || serverSA != "" {
 		rbac, err := s.kube.ListRBAC(ctx)
 		if err != nil {
 			return nil, nil, err
@@ -552,7 +557,7 @@ func (s *argoAppsSource) References(ctx context.Context) ([]Reference, []string,
 		if setSA != "" {
 			setRBAC = checkAppSetControllerRBAC(rbacSubject{s.sc.Namespace, setSA}, s.sc.AppNamespaces, rbac)
 		}
-		if appSA != "" {
+		if appSA != "" || serverSA != "" {
 			projects, err := s.kube.ListAppProjects(ctx, s.sc.Namespace)
 			if err != nil {
 				return nil, nil, err
@@ -561,7 +566,12 @@ func (s *argoAppsSource) References(ctx context.Context) ([]Reference, []string,
 			if err != nil {
 				return nil, nil, err
 			}
-			appRBAC = checkAppControllerRBAC(rbacSubject{s.sc.Namespace, appSA}, kinds, s.sc.ControllerBindRoles, rbac)
+			if appSA != "" {
+				appRBAC = checkAppControllerRBAC(rbacSubject{s.sc.Namespace, appSA}, kinds, s.sc.ControllerBindRoles, rbac)
+			}
+			if serverSA != "" {
+				serverRBAC = checkServerRBAC(rbacSubject{s.sc.Namespace, serverSA}, kinds, rbac)
+			}
 		}
 	}
 
@@ -569,6 +579,10 @@ func (s *argoAppsSource) References(ctx context.Context) ([]Reference, []string,
 	if len(appRBAC) > 0 {
 		msgs = append(msgs, fmt.Sprintf("the application controller of Argo CD has more rights than the projects permit: %s. The guard keeps the current protection",
 			strings.Join(appRBAC, "; ")))
+	}
+	if len(serverRBAC) > 0 {
+		msgs = append(msgs, fmt.Sprintf("the API server of Argo CD has more rights than the projects permit: %s. The guard keeps the current protection",
+			strings.Join(serverRBAC, "; ")))
 	}
 	if len(setRBAC) > 0 {
 		msgs = append(msgs, fmt.Sprintf("the ApplicationSet controller of Argo CD has more rights than it needs: %s. The guard keeps the current protection",

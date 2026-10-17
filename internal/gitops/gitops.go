@@ -14,6 +14,7 @@ package gitops
 import (
 	"fmt"
 	"path"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -162,9 +163,10 @@ type GroupKind struct {
 	Kind  string `json:"kind"`
 }
 
-// TenantKinds are the only kinds that a tenant project permits: the kinds
-// that the renderer makes. Tenants cannot make cluster objects. This also
-// protects against bad commits to the tenant repository.
+// TenantKinds are the kinds that the renderer makes. With TenantChildKinds,
+// they are the only kinds that a tenant project permits. Tenants cannot
+// make cluster objects. This also protects against bad commits to the
+// tenant repository.
 var TenantKinds = []GroupKind{
 	{"", "ServiceAccount"},
 	{"", "Service"},
@@ -173,6 +175,24 @@ var TenantKinds = []GroupKind{
 	{"batch", "CronJob"},
 	{"networking.k8s.io", "Ingress"},
 	{"policy", "PodDisruptionBudget"},
+}
+
+// TenantChildKinds are the kinds of the objects that Kubernetes makes for
+// the TenantKinds: ReplicaSets and Pods for a Deployment, Jobs and Pods for
+// a CronJob. Argo CD shows only the objects of the kinds that the project
+// permits in the resource tree, and it gives the logs only of a pod in the
+// tree. The project then also permits these kinds in manifests, but they
+// give no more power: a Deployment or a CronJob can run the same pods.
+var TenantChildKinds = []GroupKind{
+	{"apps", "ReplicaSet"},
+	{"", "Pod"},
+	{"batch", "Job"},
+}
+
+// TenantProjectKinds returns the namespaced kinds that a tenant project
+// permits.
+func TenantProjectKinds() []GroupKind {
+	return append(slices.Clone(TenantKinds), TenantChildKinds...)
 }
 
 // MemberRole is the name of the role of the tenant members in a tenant
@@ -223,7 +243,7 @@ func (c Config) appProject(t *domain.Tenant, envs []domain.Environment) object {
 				},
 			}},
 			"clusterResourceWhitelist":   []GroupKind{},
-			"namespaceResourceWhitelist": TenantKinds,
+			"namespaceResourceWhitelist": TenantProjectKinds(),
 		},
 	}
 }

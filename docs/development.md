@@ -229,7 +229,8 @@ all `*.localhost` names.
    project, a plugin generator with an unsafe token, a cluster decision
    resource generator for Argo CD applications, read rights of the
    ApplicationSet controller in another namespace, read rights of the
-   application controller on Secrets, and the
+   application controller on Secrets, the right of the API server to run
+   commands in pods, and the
    ApplicationSet policy `sync` give errors,
    and that Keycloak
    mappers that write `groups` on the client `argocd` and `email` from
@@ -274,7 +275,11 @@ all `*.localhost` names.
 8. Deploys the image and checks the answer of the service. Checks that
    the guard has no errors with the application and the project of the
    tenant.
-9. Checks that `dev` can read, but not sync, the application in Argo CD.
+9. Checks that `dev` can read, but not sync, the application in Argo CD,
+   and sees its pods.
+   As administrator, it uses the web interface of Argo CD: it shows the
+   Deployment, its events and the logs of its pod, and runs the action
+   `restart`.
 10. Checks that a pod in another namespace cannot connect to the service.
 11. Changes a value (revision 2) and checks the new answer.
 12. Rolls back to revision 1 (revision 3) and checks the old answer.

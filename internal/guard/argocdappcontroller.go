@@ -34,7 +34,7 @@ var writeVerbs = []string{"get", "list", "watch", "create", "update", "patch", "
 // are always in the list: Squared makes a tenant project for each new
 // tenant, also when there is no tenant yet.
 func projectKinds(projects []kube.AppProject) ([]gitops.GroupKind, error) {
-	kinds := slices.Clone(gitops.TenantKinds)
+	kinds := gitops.TenantProjectKinds()
 	for _, p := range projects {
 		var obj struct {
 			Spec struct {
@@ -88,39 +88,83 @@ func kindPermitted(kinds []gitops.GroupKind, group, resource string) bool {
 	})
 }
 
-// checkAppControllerRBAC returns the problems of the rights of the service
-// account (sa) of the application controller. The Helm chart gives it all
-// rights in the cluster, because Argo CD can deploy each kind. But the
-// projects tell which kinds Argo CD deploys. The controller may have:
+// projectRBAC are the rights of a component of Argo CD that changes the
+// objects of the applications.
+type projectRBAC struct {
+	who        string     // For the messages.
+	ownRules   []rbacRule // The Role of the Helm chart in the namespace of Argo CD.
+	writeVerbs []string   // The verbs on the kinds that the projects permit.
+	bindRoles  []string   // The ClusterRoles that it may bind, by name.
+}
+
+// check returns the problems of the rights of the service account (sa) of
+// the component. It may have:
 //   - in the namespace of Argo CD: the Role of the Helm chart;
 //   - in the cluster: the rights that Kubernetes gives to each user, and
 //     get on URLs that are not resources;
-//   - in each namespace and in the cluster: the write rights on the kinds
-//     that the projects permit (kinds), and read rights on all kinds but
+//   - in each namespace and in the cluster: writeVerbs on the kinds that
+//     the projects permit (kinds), and read rights on all kinds but
 //     Secrets, for the health and the resource tree;
-//   - the verb bind on the ClusterRoles in bindRoles, by name: the
-//     platform repository binds the ClusterRole of the worker in each
-//     tenant namespace.
+//   - the verb bind on the ClusterRoles in bindRoles, by name.
 //
 // Read rights on Secrets everywhere, the verbs escalate and impersonate,
-// and bind on other roles are more: with them, the controller, and each
-// person who can change what it deploys, can get more rights.
-func checkAppControllerRBAC(sa rbacSubject, kinds []gitops.GroupKind, bindRoles []string, rbac *kube.RBAC) []string {
+// and bind on other roles are more: with them, the component, and each
+// person who can drive it, can get more rights.
+func (c projectRBAC) check(sa rbacSubject, kinds []gitops.GroupKind, rbac *kube.RBAC) []string {
 	permit := func(namespace, group, resource, verb string, names []string) bool {
 		secrets := (group == "" || group == "*") && (resource == "secrets" || resource == "*")
 		switch {
-		case namespace == sa.Namespace && rulesAllow(appControllerRules, group, resource, verb):
+		case namespace == sa.Namespace && rulesAllow(c.ownRules, group, resource, verb):
 			return true
 		case namespace == "" && rulesAllow(defaultClusterRules, group, resource, verb):
 			return true
 		case slices.Contains(readVerbs, verb) && !secrets:
 			return true
-		case slices.Contains(writeVerbs, verb) && kindPermitted(kinds, group, resource):
+		case slices.Contains(c.writeVerbs, verb) && kindPermitted(kinds, group, resource):
 			return true
 		case verb == "bind" && group == "rbac.authorization.k8s.io" && resource == "clusterroles":
-			return len(names) > 0 && !slices.ContainsFunc(names, func(n string) bool { return !slices.Contains(bindRoles, n) })
+			return len(names) > 0 && !slices.ContainsFunc(names, func(n string) bool { return !slices.Contains(c.bindRoles, n) })
 		}
 		return false
 	}
-	return checkRBAC("the application controller", sa, rbac, permit, "the projects permit")
+	return checkRBAC(c.who, sa, rbac, permit, "the projects permit")
+}
+
+// checkAppControllerRBAC returns the problems of the rights of the service
+// account (sa) of the application controller. The Helm chart gives it all
+// rights in the cluster, because Argo CD can deploy each kind. But the
+// projects tell which kinds Argo CD deploys. It may bind the ClusterRoles
+// in bindRoles: the platform repository binds the ClusterRole of the
+// worker in each tenant namespace.
+func checkAppControllerRBAC(sa rbacSubject, kinds []gitops.GroupKind, bindRoles []string, rbac *kube.RBAC) []string {
+	return projectRBAC{"the application controller", appControllerRules, writeVerbs, bindRoles}.check(sa, kinds, rbac)
+}
+
+// argoServer is the workload of the API server of Argo CD.
+const argoServer = "argocd-server"
+
+// serverRules are the rights of the API server in the namespace of Argo
+// CD: the Role of the Argo CD Helm chart 10.
+var serverRules = []rbacRule{
+	{[]string{""}, []string{"secrets", "configmaps"}, []string{"create", "get", "list", "watch", "update", "patch", "delete"}},
+	{[]string{"argoproj.io"}, []string{"applications", "applicationsets", "appprojects"},
+		[]string{"create", "get", "list", "watch", "update", "delete", "patch"}},
+	{[]string{""}, []string{"events"}, []string{"create", "list"}},
+}
+
+// serverWriteVerbs are the verbs that the API server needs for the objects
+// of the applications: patch for the resource actions, for example a
+// restart, and delete for the removal of an object in the web interface.
+var serverWriteVerbs = []string{"patch", "delete"}
+
+// checkServerRBAC returns the problems of the rights of the service
+// account (sa) of the API server. The Helm chart gives it get, patch and
+// delete on all kinds in the cluster, also on Secrets and on
+// ClusterRoleBindings, and create on Jobs and Workflows. The server needs
+// read rights to show the objects and the logs of the applications, and
+// patch and delete only on the kinds that the projects permit. Its own
+// RBAC permits each action for each user, but an error in the server or a
+// stolen session gets its Kubernetes rights.
+func checkServerRBAC(sa rbacSubject, kinds []gitops.GroupKind, rbac *kube.RBAC) []string {
+	return projectRBAC{"the API server", serverRules, serverWriteVerbs, nil}.check(sa, kinds, rbac)
 }

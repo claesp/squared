@@ -868,6 +868,32 @@ YAML
   wait_for "the guard has no errors after the ClusterRoleBinding is removed" 60 guard_clean
   log "the guard checks the rights of the application controller"
 
+  # The API server gets the right to run commands in pods.
+  k apply -f - >/dev/null <<YAML
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: e2e-guard-exec
+rules:
+  - { apiGroups: [""], resources: [pods/exec], verbs: [create] }
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: e2e-guard-exec
+roleRef: { apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: e2e-guard-exec }
+subjects:
+  - { kind: ServiceAccount, name: argocd-server, namespace: argocd }
+YAML
+  guard_reports_server_rbac() {
+    guard_status | jq -e '[.errors[]? | select(test("the ClusterRoleBinding e2e-guard-exec [(]ClusterRole e2e-guard-exec[)] gives the API server create on pods/exec [(]core[)] in the cluster, more than the projects permit"))] | length > 0' >/dev/null
+  }
+  wait_for "the guard reports the right of the API server to run commands in pods" 60 guard_reports_server_rbac
+  k delete clusterrolebinding e2e-guard-exec >/dev/null
+  k delete clusterrole e2e-guard-exec >/dev/null
+  wait_for "the guard has no errors after the ClusterRoleBinding is removed" 60 guard_clean
+  log "the guard checks the rights of the API server"
+
   # Keycloak mappers that write the groups claim or the email claim. These
   # are in no token, thus they are harmless, but the guard must report
   # each mapper that does not come from the group membership or the email
@@ -1165,12 +1191,47 @@ out="$("$SSO" -user dev -password-file "$DEV/keycloak-dev-user-password" \
   "login=http://localhost:30081/auth/login?return_url=http%3A%2F%2Flocalhost%3A30081%2Fapplications" \
   "get=http://localhost:30081/api/v1/applications?projects=tenant-$TENANT" \
   "get=http://localhost:30081/api/v1/account/can-i/applications/get/tenant-$TENANT/*" \
-  "get=http://localhost:30081/api/v1/account/can-i/applications/sync/tenant-$TENANT/*")"
+  "get=http://localhost:30081/api/v1/account/can-i/applications/sync/tenant-$TENANT/*" \
+  "get=http://localhost:30081/api/v1/applications/$TENANT-dev-hello/resource-tree?appNamespace=argocd")"
 jq -s -e --arg app "$TENANT-dev-hello" '[.[1].body.items[]?.metadata.name] | index($app) != null' <<<"$out" >/dev/null \
   || die "dev does not see the application in Argo CD"
 [[ "$(jq -s -r '"\(.[2].body.value) \(.[3].body.value)"' <<<"$out")" == "yes no" ]] \
   || die "dev has the wrong rights in Argo CD: $(jq -s -c '[.[2].body.value, .[3].body.value]' <<<"$out")"
+# Argo CD shows only the kinds that the project permits in the tree, and
+# gives the logs only of a pod in the tree.
+jq -s -e '[.[4].body.nodes[]? | select(.kind == "Pod")] | length > 0' <<<"$out" >/dev/null \
+  || die "dev does not see the pods of the application in Argo CD"
 log "dev can read the applications of the tenant in Argo CD, but not sync them"
+
+step "use the Argo CD web interface as administrator"
+# The API server shows the live objects, the events and the logs, and runs
+# resource actions, with the limited rights of deploy/kind/argocd-values.yaml.
+argo_api="http://localhost:30081/api/v1"
+argo_token="$(curl -fsS "$argo_api/session" -H 'Content-Type: application/json' -d "$(jq -n \
+  --arg p "$(k -n argocd get secret argocd-initial-admin-secret -o jsonpath='{.data.password}' | base64 -d)" \
+  '{username: "admin", password: $p}')" | jq -er .token)" || die "cannot sign in to Argo CD as admin"
+argo_call() { curl -fsS -H "Authorization: Bearer $argo_token" "$@"; }
+app="$TENANT-dev-hello"
+res="namespace=$NS&resourceName=hello-web&version=v1&kind=Deployment&group=apps&appNamespace=argocd"
+argo_call "$argo_api/applications/$app/resource?$res" | jq -e '.manifest | fromjson | .metadata.name == "hello-web"' >/dev/null \
+  || die "Argo CD does not show the Deployment"
+argo_call "$argo_api/applications/$app/resource-tree?appNamespace=argocd" | jq -e '[.nodes[] | select(.kind == "Pod")] | length > 0' >/dev/null \
+  || die "Argo CD does not show the pods of the application"
+uid="$(k -n "$NS" get deployment hello-web -o jsonpath='{.metadata.uid}')"
+argo_call "$argo_api/applications/$app/events?resourceNamespace=$NS&resourceName=hello-web&resourceUID=$uid&appNamespace=argocd" \
+  | jq -e 'has("items")' >/dev/null || die "Argo CD does not show the events of the Deployment"
+pod="$(k -n "$NS" get pods -o jsonpath='{.items[0].metadata.name}')"
+ctr="$(k -n "$NS" get pod "$pod" -o jsonpath='{.spec.containers[0].name}')"
+argo_call "$argo_api/applications/$app/logs?namespace=$NS&podName=$pod&container=$ctr&tailLines=5&follow=false&appNamespace=argocd" \
+  | grep -q '"result"' || die "Argo CD does not show the logs of the pod"
+argo_call -X POST -H 'Content-Type: application/json' "$argo_api/applications/$app/resource/actions?$res" -d '"restart"' >/dev/null \
+  || die "Argo CD cannot run the action restart"
+restarted() { [[ -n "$(k -n "$NS" get deployment hello-web -o jsonpath='{.spec.template.metadata.annotations.kubectl\.kubernetes\.io/restartedAt}')" ]]; }
+wait_for "the action restart changes the Deployment" 60 restarted
+[[ "$(k auth can-i get secrets -n kube-system --as system:serviceaccount:argocd:argocd-server)" == no ]] \
+  || die "the API server of Argo CD can read the Secrets of kube-system"
+wait_for "revision 1 is deployed after the restart" 300 deployment_is deployed 1
+log "the administrator sees the objects, the events and the logs in Argo CD, and runs actions"
 
 step "check tenant isolation"
 # A pod in another namespace tries to connect. The network policy of the

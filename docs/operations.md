@@ -32,12 +32,13 @@ in a production cluster.
    [`deploy/kind/argocd-platform.yaml`](../deploy/kind/argocd-platform.yaml)
    as the template and change the repository address. It also locks the
    project `default` of Argo CD.
-5. Limit the application controller of Argo CD to the kinds that the
-   projects permit: `controller.clusterRoleRules` of the Helm chart, and
+5. Limit the application controller and the API server of Argo CD to the
+   kinds that the projects permit: `controller.clusterRoleRules` and
+   `server.clusterRoleRules` of the Helm chart, and
    `resource.respectRBAC: normal` in `argocd-cm`. Use
    [`deploy/kind/argocd-values.yaml`](../deploy/kind/argocd-values.yaml)
-   as the template. The chart default gives it all rights in the cluster,
-   and the guard reports this.
+   as the template. The chart defaults give them rights on all kinds in
+   the cluster, and the guard reports this.
 6. Configure Keycloak. See the next section.
 7. Make the secrets `squared-server` and `squared-worker` in the namespace
    `squared`. See [`hack/kind-up.sh`](../hack/kind-up.sh) for the keys.

@@ -55,6 +55,48 @@ server:
   service:
     type: NodePort
     nodePortHttp: 30081
+  # The API server shows the objects, the events and the logs of the
+  # applications, runs resource actions (patch) and removes objects
+  # (delete), only on the kinds of the projects of Squared. The chart
+  # gives it get, patch and delete on all kinds in the cluster, also on
+  # Secrets (see docs/security.md). Without create on Jobs, the action
+  # "create job" of a CronJob does not work.
+  clusterRoleRules:
+    enabled: true
+    rules:
+      - apiGroups: [""]
+        resources: [namespaces, resourcequotas, limitranges, configmaps, serviceaccounts, services]
+        verbs: [get, patch, delete]
+      - apiGroups: [networking.k8s.io]
+        resources: [networkpolicies, ingresses]
+        verbs: [get, patch, delete]
+      - apiGroups: [rbac.authorization.k8s.io]
+        resources: [rolebindings]
+        verbs: [get, patch, delete]
+      - apiGroups: [apps]
+        resources: [deployments]
+        verbs: [get, patch, delete]
+      - apiGroups: [batch]
+        resources: [cronjobs]
+        verbs: [get, patch, delete]
+      - apiGroups: [policy]
+        resources: [poddisruptionbudgets]
+        verbs: [get, patch, delete]
+      - apiGroups: [""]
+        resources: [pods, pods/log, endpoints]
+        verbs: [get]
+      - apiGroups: [""]
+        resources: [events]
+        verbs: [list]
+      - apiGroups: [apps]
+        resources: [replicasets]
+        verbs: [get]
+      - apiGroups: [batch]
+        resources: [jobs]
+        verbs: [get]
+      - apiGroups: [discovery.k8s.io]
+        resources: [endpointslices]
+        verbs: [get]
 repoServer:
   # Git uses curl, and curl connects to 127.0.0.1 for all *.localhost
   # names without DNS. This forwarder makes forgejo.localhost:30300 work in

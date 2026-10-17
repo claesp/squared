@@ -88,7 +88,7 @@ func checkTenantProject(slug string, raw json.RawMessage, r tenantProjectRules) 
 	} else {
 		var extra []gitops.GroupKind
 		for _, k := range *s.NamespaceResourceWhitelist {
-			if !slices.Contains(gitops.TenantKinds, k) {
+			if !slices.Contains(gitops.TenantProjectKinds(), k) {
 				extra = append(extra, k)
 			}
 		}

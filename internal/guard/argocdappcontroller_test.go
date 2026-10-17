@@ -142,7 +142,7 @@ func TestCheckAppControllerRBAC(t *testing.T) {
 		{"bind all", `[{"apiGroups": ["rbac.authorization.k8s.io"], "resources": ["clusterroles"], "verbs": ["bind"]}]`, "bind on clusterroles"},
 		{"bind another", `[{"apiGroups": ["rbac.authorization.k8s.io"], "resources": ["clusterroles"], "resourceNames": ["cluster-admin"], "verbs": ["bind"]}]`,
 			"bind on clusterroles"},
-		{"pods", `[{"apiGroups": [""], "resources": ["pods", "pods/exec"], "verbs": ["create"]}]`, "create on pods (core), create on pods/exec (core)"},
+		{"pods/exec", `[{"apiGroups": [""], "resources": ["pods", "pods/exec"], "verbs": ["create"]}]`, "gives the application controller create on pods/exec (core) in the cluster"},
 		{"impersonate", `[{"apiGroups": [""], "resources": ["serviceaccounts"], "verbs": ["impersonate"]}]`, "impersonate on serviceaccounts"},
 	}
 	for _, tt := range tests {
@@ -173,5 +173,86 @@ func TestKindResource(t *testing.T) {
 		kindPermitted([]gitops.GroupKind{{Group: "apps", Kind: "*"}}, "*", "deployments") ||
 		kindPermitted([]gitops.GroupKind{{Group: "", Kind: "Service"}}, "", "*") {
 		t.Error("kindPermitted is not correct for *")
+	}
+}
+
+// serverRBAC returns the RBAC of the cluster with the Role of the API
+// server of the Helm chart and a ClusterRole with these rules.
+func serverRBAC(t *testing.T, rules string) *kube.RBAC {
+	t.Helper()
+	r := chartRBACWith(t, nil, nil)
+	var extra struct {
+		Roles, ClusterRoles []kube.Role
+		Bindings, Cluster   []kube.RoleBinding
+	}
+	if err := json.Unmarshal([]byte(`{
+		"Roles": [{"metadata": {"name": "argocd-server", "namespace": "argocd"}, "rules": [
+			{"apiGroups": [""], "resources": ["secrets", "configmaps"], "verbs": ["create", "get", "list", "watch", "update", "patch", "delete"]},
+			{"apiGroups": ["argoproj.io"], "resources": ["applications", "applicationsets", "appprojects"],
+				"verbs": ["create", "get", "list", "watch", "update", "delete", "patch"]},
+			{"apiGroups": [""], "resources": ["events"], "verbs": ["create", "list"]}]}],
+		"ClusterRoles": [{"metadata": {"name": "argocd-server"}, "rules": `+rules+`}],
+		"Bindings": [{"metadata": {"name": "argocd-server", "namespace": "argocd"}, "roleRef": {"kind": "Role", "name": "argocd-server"},
+			"subjects": [{"kind": "ServiceAccount", "name": "argocd-server", "namespace": "argocd"}]}],
+		"Cluster": [{"metadata": {"name": "argocd-server"}, "roleRef": {"kind": "ClusterRole", "name": "argocd-server"},
+			"subjects": [{"kind": "ServiceAccount", "name": "argocd-server", "namespace": "argocd"}]}]}`), &extra); err != nil {
+		t.Fatal(err)
+	}
+	r.Roles = append(r.Roles, extra.Roles...)
+	r.ClusterRoles = append(r.ClusterRoles, extra.ClusterRoles...)
+	r.RoleBindings = append(r.RoleBindings, extra.Bindings...)
+	r.ClusterRoleBindings = append(r.ClusterRoleBindings, extra.Cluster...)
+	return r
+}
+
+// devServerRules are the rules of deploy/kind/argocd-values.yaml.
+const devServerRules = `[
+	{"apiGroups": [""], "resources": ["namespaces", "resourcequotas", "limitranges", "configmaps", "serviceaccounts", "services"], "verbs": ["get", "patch", "delete"]},
+	{"apiGroups": ["networking.k8s.io"], "resources": ["networkpolicies", "ingresses"], "verbs": ["get", "patch", "delete"]},
+	{"apiGroups": ["rbac.authorization.k8s.io"], "resources": ["rolebindings"], "verbs": ["get", "patch", "delete"]},
+	{"apiGroups": ["apps"], "resources": ["deployments"], "verbs": ["get", "patch", "delete"]},
+	{"apiGroups": ["batch"], "resources": ["cronjobs"], "verbs": ["get", "patch", "delete"]},
+	{"apiGroups": ["policy"], "resources": ["poddisruptionbudgets"], "verbs": ["get", "patch", "delete"]},
+	{"apiGroups": [""], "resources": ["pods", "pods/log", "endpoints"], "verbs": ["get"]},
+	{"apiGroups": [""], "resources": ["events"], "verbs": ["list"]},
+	{"apiGroups": ["apps"], "resources": ["replicasets"], "verbs": ["get"]},
+	{"apiGroups": ["batch"], "resources": ["jobs"], "verbs": ["get"]},
+	{"apiGroups": ["discovery.k8s.io"], "resources": ["endpointslices"], "verbs": ["get"]}]`
+
+var serverSA = rbacSubject{"argocd", "argocd-server"}
+
+func TestCheckServerRBAC(t *testing.T) {
+	kinds, err := projectKinds(devProjects(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p := checkServerRBAC(serverSA, kinds, serverRBAC(t, devServerRules)); len(p) != 0 {
+		t.Fatalf("problems = %q", p)
+	}
+
+	// The ClusterRole of the Helm chart.
+	p := checkServerRBAC(serverSA, kinds, serverRBAC(t, `[
+		{"apiGroups": ["*"], "resources": ["*"], "verbs": ["delete", "get", "patch"]},
+		{"apiGroups": [""], "resources": ["events"], "verbs": ["list", "create"]},
+		{"apiGroups": [""], "resources": ["pods", "pods/log"], "verbs": ["get"]},
+		{"apiGroups": ["argoproj.io"], "resources": ["applications", "applicationsets"], "verbs": ["get", "list", "update", "watch"]},
+		{"apiGroups": ["batch"], "resources": ["jobs"], "verbs": ["create"]},
+		{"apiGroups": ["argoproj.io"], "resources": ["workflows"], "verbs": ["create"]}]`))
+	got := strings.Join(p, " | ")
+	for _, want := range []string{
+		"the ClusterRoleBinding argocd-server (ClusterRole argocd-server) gives the API server delete get patch on * (*) in the cluster, more than the projects permit",
+		"gives the API server create on events (core) in the cluster",
+		"gives the API server update on applications (argoproj.io), update on applicationsets (argoproj.io) in the cluster",
+		"gives the API server create on jobs (batch) in the cluster",
+		"gives the API server create on workflows (argoproj.io) in the cluster",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("problems = %q, want %q", p, want)
+		}
+	}
+	// The server does not create the objects of the applications.
+	p = checkServerRBAC(serverSA, kinds, serverRBAC(t, `[{"apiGroups": ["apps"], "resources": ["deployments"], "verbs": ["create", "update"]}]`))
+	if !strings.Contains(strings.Join(p, " | "), "create update on deployments (apps)") {
+		t.Fatalf("problems = %q", p)
 	}
 }

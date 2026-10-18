@@ -98,6 +98,12 @@ server:
         resources: [endpointslices]
         verbs: [get]
 repoServer:
+  # The repository server runs Git, Helm, Kustomize and plugins with the
+  # content of the repositories, and needs no token of the Kubernetes API
+  # (see docs/security.md).
+  automountServiceAccountToken: false
+  serviceAccount:
+    automountServiceAccountToken: false
   # Git uses curl, and curl connects to 127.0.0.1 for all *.localhost
   # names without DNS. This forwarder makes forgejo.localhost:30300 work in
   # the repository server.

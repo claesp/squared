@@ -168,3 +168,26 @@ var serverWriteVerbs = []string{"patch", "delete"}
 func checkServerRBAC(sa rbacSubject, kinds []gitops.GroupKind, rbac *kube.RBAC) []string {
 	return projectRBAC{"the API server", serverRules, serverWriteVerbs, nil}.check(sa, kinds, rbac)
 }
+
+// argoRepoServer is the workload of the repository server of Argo CD.
+const argoRepoServer = "argocd-repo-server"
+
+// checkRepoServer returns the problems of the rights and of the token of
+// the repository server (sa, token). The repository server runs Git,
+// Helm, Kustomize and plugins with the content of the repositories, thus a
+// bad repository or an error in a tool runs code with its rights. It gets
+// all that it needs from the other components of Argo CD, and needs no
+// rights and no token of the Kubernetes API. It may have only the rights
+// that Kubernetes gives to each user. Its pods must not get a token: else
+// each right that is given later to a group of all service accounts also
+// reaches it.
+func checkRepoServer(sa rbacSubject, token *kube.WorkloadToken, rbac *kube.RBAC) []string {
+	permit := func(namespace, group, resource, verb string, _ []string) bool {
+		return namespace == "" && rulesAllow(defaultClusterRules, group, resource, verb)
+	}
+	p := checkRBAC("the repository server", sa, rbac, permit, "it needs")
+	if token.Mounted != "" {
+		p = append(p, fmt.Sprintf("its pods get a token of the Kubernetes API (%s), which it does not need: a tool or a plugin that runs with the content of a repository can use it", token.Mounted))
+	}
+	return p
+}

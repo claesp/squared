@@ -894,6 +894,20 @@ YAML
   wait_for "the guard has no errors after the ClusterRoleBinding is removed" 60 guard_clean
   log "the guard checks the rights of the API server"
 
+  # The repository server has no token of the Kubernetes API. Then its pods
+  # get one, and the guard must report it.
+  ! k -n argocd exec deploy/argocd-repo-server -c repo-server -- ls /var/run/secrets/kubernetes.io/serviceaccount >/dev/null 2>&1 \
+    || die "the repository server has a token of the Kubernetes API"
+  k -n argocd patch deployment argocd-repo-server --type merge -p '{"spec":{"template":{"spec":{"automountServiceAccountToken":true}}}}' >/dev/null
+  guard_reports_repo_token() {
+    guard_status | jq -e '[.errors[]? | select(test("the repository server of Argo CD has rights that it does not need: its pods get a token of the Kubernetes API"))] | length > 0' >/dev/null
+  }
+  wait_for "the guard reports the token of the repository server" 60 guard_reports_repo_token
+  k -n argocd patch deployment argocd-repo-server --type merge -p '{"spec":{"template":{"spec":{"automountServiceAccountToken":false}}}}' >/dev/null
+  k -n argocd rollout status deployment/argocd-repo-server --timeout 5m >/dev/null
+  wait_for "the guard has no errors after the token is removed" 60 guard_clean
+  log "the guard checks the rights and the token of the repository server"
+
   # Keycloak mappers that write the groups claim or the email claim. These
   # are in no token, thus they are harmless, but the guard must report
   # each mapper that does not come from the group membership or the email

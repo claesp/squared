@@ -586,7 +586,28 @@ controls that it uses. Read [architecture.md](architecture.md) first.
   Deployment, its events and the logs of its pod, and runs the action
   `restart`. It checks that the server cannot read the Secrets of
   `kube-system`, then gives it `create` on `pods/exec`, and checks the
-  error. The end-to-end test
+  error.
+
+- **Rights of the repository server of Argo CD.** The repository server
+  runs Git, Helm, Kustomize and plugins with the content of the
+  repositories. A bad repository or an error in one of these tools thus
+  runs code with its rights. It gets all that it needs from the other
+  components of Argo CD, and needs no rights and no token of the
+  Kubernetes API. The Helm chart gives it a Role without rules, but its
+  pods get a token. With the token, each right that someone gives later
+  to a group of all service accounts also reaches the repository server.
+  The development environment turns the token off
+  (`automountServiceAccountToken: false` for the pods and the service
+  account).
+
+  | Repository server | Result |
+  |---|---|
+  | The rights that Kubernetes gives each user | No problem |
+  | Each other right, also a read right in the namespace of Argo CD | Error |
+  | Its pods get a token: from `automountServiceAccountToken` of the pod template, else of the service account (true by default), or from a projected volume | Error |
+
+  The end-to-end test checks that the repository server has no token,
+  then gives its pods one, and checks the error. The end-to-end test
   adds an ApplicationSet with a Git generator for the platform repository,
   a project from the parameters and a pull request generator with a token
   and `insecure: true`, and checks the errors. It turns on the SCM

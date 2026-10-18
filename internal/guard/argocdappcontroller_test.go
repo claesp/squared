@@ -256,3 +256,35 @@ func TestCheckServerRBAC(t *testing.T) {
 		t.Fatalf("problems = %q", p)
 	}
 }
+
+var repoSA = rbacSubject{"argocd", "argocd-repo-server"}
+
+func TestCheckRepoServer(t *testing.T) {
+	// The Helm chart: a Role without rules, and a token.
+	r := chartRBACWith(t, []kube.RoleBinding{binding(t, `{"metadata": {"name": "argocd-repo-server", "namespace": "argocd"},
+		"roleRef": {"kind": "Role", "name": "argocd-repo-server"},
+		"subjects": [{"kind": "ServiceAccount", "name": "argocd-repo-server", "namespace": "argocd"}]}`)}, nil)
+	r.Roles = append(r.Roles, kube.Role{})
+	r.Roles[len(r.Roles)-1].Metadata.Name, r.Roles[len(r.Roles)-1].Metadata.Namespace = "argocd-repo-server", "argocd"
+	if p := checkRepoServer(repoSA, &kube.WorkloadToken{ServiceAccount: "argocd-repo-server"}, r); len(p) != 0 {
+		t.Fatalf("problems = %q", p)
+	}
+	p := checkRepoServer(repoSA, &kube.WorkloadToken{ServiceAccount: "argocd-repo-server",
+		Mounted: "automountServiceAccountToken of the service account argocd-repo-server"}, r)
+	if len(p) != 1 || !strings.Contains(p[0], "its pods get a token of the Kubernetes API (automountServiceAccountToken of the service account argocd-repo-server), which it does not need") {
+		t.Fatalf("problems = %q", p)
+	}
+
+	// Each right is more than it needs, also a read right in its namespace.
+	reads := binding(t, `{"metadata": {"name": "reads", "namespace": "argocd"}, "roleRef": {"kind": "ClusterRole", "name": "view"},
+		"subjects": [{"kind": "Group", "name": "system:serviceaccounts:argocd"}]}`)
+	p = checkRepoServer(repoSA, &kube.WorkloadToken{ServiceAccount: "argocd-repo-server"}, chartRBACWith(t, []kube.RoleBinding{reads}, nil))
+	if len(p) != 1 || !strings.Contains(p[0], "the RoleBinding argocd/reads (ClusterRole view) gives the repository server get list watch on pods (core), get list watch on configmaps (core) in the namespace argocd, more than it needs") {
+		t.Fatalf("problems = %q", p)
+	}
+	for _, m := range p {
+		if strings.Contains(m, ";") {
+			t.Errorf("the message has a semicolon: %q", m)
+		}
+	}
+}

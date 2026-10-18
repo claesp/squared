@@ -35,7 +35,9 @@ in a production cluster.
 5. Limit the application controller and the API server of Argo CD to the
    kinds that the projects permit: `controller.clusterRoleRules` and
    `server.clusterRoleRules` of the Helm chart, and
-   `resource.respectRBAC: normal` in `argocd-cm`. Use
+   `resource.respectRBAC: normal` in `argocd-cm`. Turn off the token of the
+   API for the repository server (`repoServer.automountServiceAccountToken`
+   and `repoServer.serviceAccount.automountServiceAccountToken`). Use
    [`deploy/kind/argocd-values.yaml`](../deploy/kind/argocd-values.yaml)
    as the template. The chart defaults give them rights on all kinds in
    the cluster, and the guard reports this.

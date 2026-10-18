@@ -286,6 +286,78 @@ func (c *Client) GetServiceAccountName(ctx context.Context, namespace, resource,
 	return cmp.Or(w.Spec.Template.Spec.ServiceAccountName, "default"), nil
 }
 
+// WorkloadToken tells which service account the pods of a workload use,
+// and if they get a token of the Kubernetes API.
+type WorkloadToken struct {
+	ServiceAccount string
+	// Mounted is the place of the token, or "" when the pods get none.
+	Mounted string
+}
+
+// GetWorkloadToken returns the token of the pods of a workload, for example
+// resource "deployments" of the group apps. It returns nil and no error
+// when the workload does not exist. The pods get a token when
+// automountServiceAccountToken of the pod template, else of the service
+// account, is not false, or when a projected volume has a token.
+func (c *Client) GetWorkloadToken(ctx context.Context, namespace, resource, name string) (*WorkloadToken, error) {
+	var w struct {
+		Spec struct {
+			Template struct {
+				Spec struct {
+					ServiceAccountName           string `json:"serviceAccountName"`
+					AutomountServiceAccountToken *bool  `json:"automountServiceAccountToken"`
+					Volumes                      []struct {
+						Name      string `json:"name"`
+						Projected *struct {
+							Sources []struct {
+								ServiceAccountToken json.RawMessage `json:"serviceAccountToken"`
+							} `json:"sources"`
+						} `json:"projected"`
+					} `json:"volumes"`
+				} `json:"spec"`
+			} `json:"template"`
+		} `json:"spec"`
+	}
+	path := "/apis/apps/v1/namespaces/" + url.PathEscape(namespace) + "/" + url.PathEscape(resource) + "/" + url.PathEscape(name)
+	err := c.rest.Do(ctx, http.MethodGet, path, nil, &w)
+	if rest.HasStatus(err, http.StatusNotFound) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	spec := w.Spec.Template.Spec
+	t := &WorkloadToken{ServiceAccount: cmp.Or(spec.ServiceAccountName, "default")}
+	for _, v := range spec.Volumes {
+		if v.Projected == nil {
+			continue
+		}
+		for _, src := range v.Projected.Sources {
+			if len(src.ServiceAccountToken) > 0 && string(src.ServiceAccountToken) != "null" {
+				t.Mounted = "the projected volume " + v.Name
+				return t, nil
+			}
+		}
+	}
+	if spec.AutomountServiceAccountToken != nil {
+		if *spec.AutomountServiceAccountToken {
+			t.Mounted = "automountServiceAccountToken of the pod template"
+		}
+		return t, nil
+	}
+	var sa struct {
+		AutomountServiceAccountToken *bool `json:"automountServiceAccountToken"`
+	}
+	path = "/api/v1/namespaces/" + url.PathEscape(namespace) + "/serviceaccounts/" + url.PathEscape(t.ServiceAccount)
+	if err := c.rest.Do(ctx, http.MethodGet, path, nil, &sa); err != nil {
+		return nil, err
+	}
+	if sa.AutomountServiceAccountToken == nil || *sa.AutomountServiceAccountToken {
+		t.Mounted = "automountServiceAccountToken of the service account " + t.ServiceAccount
+	}
+	return t, nil
+}
+
 // PolicyRule is a rule of a Role or a ClusterRole.
 type PolicyRule struct {
 	APIGroups       []string `json:"apiGroups"`

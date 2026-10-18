@@ -89,6 +89,12 @@ make kind-down    # remove the cluster
 again. At the end it shows the addresses and the passwords. The passwords
 are also in `.dev/` (Git ignores this directory).
 
+`make kind-down` also removes the volume of the Kind node, which has the
+images and the data of the cluster (more than 4 GB). With rootless
+Podman, `kind delete` reports a network error and leaves this volume.
+Older versions of the script left one volume for each cluster: find them
+with `podman volume ls --filter dangling=true`.
+
 The Forgejo pod has a sidecar with the Squared image (`squared
 forgejo-config`, for the guard). `make kind-deploy` does not restart
 Forgejo. After a change of that role, run
@@ -230,7 +236,7 @@ all `*.localhost` names.
    resource generator for Argo CD applications, read rights of the
    ApplicationSet controller in another namespace, read rights of the
    application controller on Secrets, the right of the API server to run
-   commands in pods, and the
+   commands in pods, a token of the API for the repository server, and the
    ApplicationSet policy `sync` give errors,
    and that Keycloak
    mappers that write `groups` on the client `argocd` and `email` from

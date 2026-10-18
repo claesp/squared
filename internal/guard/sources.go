@@ -548,11 +548,18 @@ func (s *argoAppsSource) References(ctx context.Context) ([]Reference, []string,
 	if err != nil {
 		return nil, nil, err
 	}
-	var serverRBAC []string
-	if setSA != "" || appSA != "" || serverSA != "" {
+	repoToken, err := s.kube.GetWorkloadToken(ctx, s.sc.Namespace, "deployments", argoRepoServer)
+	if err != nil {
+		return nil, nil, err
+	}
+	var serverRBAC, repoProblems []string
+	if setSA != "" || appSA != "" || serverSA != "" || repoToken != nil {
 		rbac, err := s.kube.ListRBAC(ctx)
 		if err != nil {
 			return nil, nil, err
+		}
+		if repoToken != nil {
+			repoProblems = checkRepoServer(rbacSubject{s.sc.Namespace, repoToken.ServiceAccount}, repoToken, rbac)
 		}
 		if setSA != "" {
 			setRBAC = checkAppSetControllerRBAC(rbacSubject{s.sc.Namespace, setSA}, s.sc.AppNamespaces, rbac)
@@ -579,6 +586,10 @@ func (s *argoAppsSource) References(ctx context.Context) ([]Reference, []string,
 	if len(appRBAC) > 0 {
 		msgs = append(msgs, fmt.Sprintf("the application controller of Argo CD has more rights than the projects permit: %s. The guard keeps the current protection",
 			strings.Join(appRBAC, "; ")))
+	}
+	if len(repoProblems) > 0 {
+		msgs = append(msgs, fmt.Sprintf("the repository server of Argo CD has rights that it does not need: %s. The guard keeps the current protection",
+			strings.Join(repoProblems, "; ")))
 	}
 	if len(serverRBAC) > 0 {
 		msgs = append(msgs, fmt.Sprintf("the API server of Argo CD has more rights than the projects permit: %s. The guard keeps the current protection",

@@ -22,7 +22,12 @@ rules:
     verbs: ["get"]
   - apiGroups: ["apps"]
     resources: ["deployments"]
-    resourceNames: ["argocd-server", "argocd-applicationset-controller"]
+    resourceNames: ["argocd-server", "argocd-applicationset-controller", "argocd-repo-server"]
+    verbs: ["get"]
+  # If the repository server gets a token of the Kubernetes API.
+  - apiGroups: [""]
+    resources: ["serviceaccounts"]
+    resourceNames: ["argocd-repo-server"]
     verbs: ["get"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1

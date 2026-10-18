@@ -37,7 +37,13 @@ in a production cluster.
    `server.clusterRoleRules` of the Helm chart, and
    `resource.respectRBAC: normal` in `argocd-cm`. Turn off the token of the
    API for the repository server (`repoServer.automountServiceAccountToken`
-   and `repoServer.serviceAccount.automountServiceAccountToken`). Use
+   and `repoServer.serviceAccount.automountServiceAccountToken`) and for
+   Redis, give Redis its own service account, and make the Secret
+   `argocd-redis` with the key `auth` yourself, with
+   `redisSecretInit.enabled: false` and `redis.existingSecret:
+   argocd-redis`. In an existing installation, the job made this Secret
+   already: keep it, else Redis and the other components of Argo CD get
+   different passwords. Use
    [`deploy/kind/argocd-values.yaml`](../deploy/kind/argocd-values.yaml)
    as the template. The chart defaults give them rights on all kinds in
    the cluster, and the guard reports this.

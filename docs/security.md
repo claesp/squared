@@ -607,7 +607,33 @@ controls that it uses. Read [architecture.md](architecture.md) first.
   | Its pods get a token: from `automountServiceAccountToken` of the pod template, else of the service account (true by default), or from a projected volume | Error |
 
   The end-to-end test checks that the repository server has no token,
-  then gives its pods one, and checks the error. The end-to-end test
+  then gives its pods one, and checks the error.
+
+- **Rights of the Redis of Argo CD.** Redis is the cache of Argo CD: the
+  manifests, the resource trees and the state of the applications. It
+  needs no rights and no token of the Kubernetes API. The Helm chart runs
+  it with the service account `default` of the namespace, which other
+  pods can also have, and mounts a token. The chart also makes the
+  password of Redis with a job. The Role of its service account
+  `argocd-redis-secret-init` lets it make Secrets in the namespace of Argo
+  CD, because Kubernetes cannot limit `create` to one name. A pod with
+  that account can thus add a cluster Secret or a repository credential,
+  which Argo CD reads by their labels, and the account stays after the
+  job. The development environment gives Redis its own service account
+  without a token, and turns the job off: `hack/kind-up.sh` makes the
+  Secret `argocd-redis` with the password.
+
+  | Redis | Result |
+  |---|---|
+  | The rights that Kubernetes gives each user | No problem |
+  | Each other right, a token in its pods, or the service account `default` | Error |
+  | The service account `argocd-redis-secret-init` has a binding | Warning |
+  | That account has more rights than the Role of the chart: `create` on Secrets, and `get` on the Secret `argocd-redis` | Error |
+
+  The end-to-end test checks that Redis has no token and that the account
+  `argocd-redis-secret-init` does not exist. It gives the Redis pods a
+  token and checks the error, then adds the Role of the job and checks the
+  warning. The end-to-end test
   adds an ApplicationSet with a Git generator for the platform repository,
   a project from the parameters and a pull request generator with a token
   and `insecure: true`, and checks the errors. It turns on the SCM

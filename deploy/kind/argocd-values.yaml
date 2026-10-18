@@ -179,3 +179,17 @@ controller:
       - apiGroups: [argoproj.io]
         resources: [applications, appprojects]
         verbs: [get, list, watch]
+
+# Redis is the cache of Argo CD and needs no token of the Kubernetes API.
+# It gets its own service account, not the account default of the
+# namespace. hack/kind-up.sh makes its password, thus the chart needs no
+# job with the right to make Secrets in the namespace of Argo CD (see
+# docs/security.md).
+redis:
+  existingSecret: argocd-redis
+  automountServiceAccountToken: false
+  serviceAccount:
+    create: true
+    automountServiceAccountToken: false
+redisSecretInit:
+  enabled: false

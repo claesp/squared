@@ -177,17 +177,76 @@ const argoRepoServer = "argocd-repo-server"
 // Helm, Kustomize and plugins with the content of the repositories, thus a
 // bad repository or an error in a tool runs code with its rights. It gets
 // all that it needs from the other components of Argo CD, and needs no
+// rights and no token of the Kubernetes API.
+func checkRepoServer(sa rbacSubject, token *kube.WorkloadToken, rbac *kube.RBAC) []string {
+	return checkNoAPI("the repository server", "a tool or a plugin that runs with the content of a repository can use it", sa, token, rbac)
+}
+
+// argoRedis is the workload of the Redis of Argo CD.
+const argoRedis = "argocd-redis"
+
+// checkRedis returns the problems of the rights and of the token of the
+// Redis of Argo CD (sa, token). Redis is the cache of Argo CD: the
+// manifests, the resource trees and the state of the applications. It
+// needs no rights and no token of the Kubernetes API.
+func checkRedis(sa rbacSubject, token *kube.WorkloadToken, rbac *kube.RBAC) []string {
+	return checkNoAPI("Redis", "an error in Redis gives it to each client that can connect", sa, token, rbac)
+}
+
+// checkNoAPI returns the problems of a component (who) that needs no
 // rights and no token of the Kubernetes API. It may have only the rights
 // that Kubernetes gives to each user. Its pods must not get a token: else
 // each right that is given later to a group of all service accounts also
-// reaches it.
-func checkRepoServer(sa rbacSubject, token *kube.WorkloadToken, rbac *kube.RBAC) []string {
+// reaches it. risk tells who can use the token.
+func checkNoAPI(who, risk string, sa rbacSubject, token *kube.WorkloadToken, rbac *kube.RBAC) []string {
 	permit := func(namespace, group, resource, verb string, _ []string) bool {
 		return namespace == "" && rulesAllow(defaultClusterRules, group, resource, verb)
 	}
-	p := checkRBAC("the repository server", sa, rbac, permit, "it needs")
+	p := checkRBAC(who, sa, rbac, permit, "it needs")
 	if token.Mounted != "" {
-		p = append(p, fmt.Sprintf("its pods get a token of the Kubernetes API (%s), which it does not need: a tool or a plugin that runs with the content of a repository can use it", token.Mounted))
+		p = append(p, fmt.Sprintf("its pods get a token of the Kubernetes API (%s), which it does not need: %s", token.Mounted, risk))
+	}
+	if sa.Name == "default" {
+		p = append(p, "it has the service account default of the namespace, which other pods can also have, thus each right of that account reaches it")
 	}
 	return p
+}
+
+// redisSecretInit is the service account of the job of the Helm chart that
+// makes the password of Redis.
+const redisSecretInit = "argocd-redis-secret-init"
+
+// checkRedisSecretInit returns the problems and the warnings of the
+// service account of the job that makes the password of Redis (sa). The
+// Role of the Helm chart lets it make Secrets in the namespace of Argo
+// CD: Kubernetes cannot limit create to one name. With this right, a pod
+// with the account can add a cluster Secret or a repository credential,
+// which Argo CD reads by their labels. The service account stays after
+// the job. The installation can make the Secret argocd-redis itself, and
+// turn the job off.
+func checkRedisSecretInit(sa rbacSubject, rbac *kube.RBAC) (problems, warnings []string) {
+	permit := func(namespace, group, resource, verb string, names []string) bool {
+		switch {
+		case namespace == "":
+			return rulesAllow(defaultClusterRules, group, resource, verb)
+		case namespace != sa.Namespace || group != "" || resource != "secrets":
+			return false
+		case verb == "create":
+			return true
+		case verb == "get":
+			return len(names) == 1 && names[0] == argoRedis
+		}
+		return false
+	}
+	problems = checkRBAC("the service account "+sa.Name, sa, rbac, permit, "the job needs")
+	bound := slices.ContainsFunc(rbac.RoleBindings, func(b kube.RoleBinding) bool {
+		return slices.ContainsFunc(b.Subjects, func(s kube.Subject) bool {
+			return s.Kind == "ServiceAccount" && s.Name == sa.Name && s.Namespace == sa.Namespace
+		})
+	})
+	if bound {
+		warnings = append(warnings, fmt.Sprintf("the service account %s of the Helm chart can make Secrets in the namespace %s, also cluster Secrets and repository credentials, which Argo CD reads. Set redisSecretInit.enabled to false, and make the Secret %s with the key auth yourself",
+			sa.Name, sa.Namespace, argoRedis))
+	}
+	return problems, warnings
 }

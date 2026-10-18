@@ -908,6 +908,57 @@ YAML
   wait_for "the guard has no errors after the token is removed" 60 guard_clean
   log "the guard checks the rights and the token of the repository server"
 
+  # Redis has no token of the Kubernetes API, and no job made its password
+  # with a service account that can make Secrets. Then the Redis pods get a
+  # token, and the guard must report it.
+  # Kubernetes mounts the token as the volume kube-api-access-<id>.
+  k -n argocd get pods -l app.kubernetes.io/name=argocd-redis -o json \
+    | jq -e '[.items[].spec.volumes[]?.name | select(startswith("kube-api-access"))] | length == 0' >/dev/null \
+    || die "Redis has a token of the Kubernetes API"
+  ! k -n argocd get serviceaccount argocd-redis-secret-init >/dev/null 2>&1 || die "the service account argocd-redis-secret-init exists"
+  k -n argocd patch deployment argocd-redis --type merge -p '{"spec":{"template":{"spec":{"automountServiceAccountToken":true}}}}' >/dev/null
+  guard_reports_redis_token() {
+    guard_status | jq -e '[.errors[]? | select(test("the Redis of Argo CD has rights that it does not need: its pods get a token of the Kubernetes API"))] | length > 0' >/dev/null
+  }
+  wait_for "the guard reports the token of Redis" 60 guard_reports_redis_token
+  k -n argocd patch deployment argocd-redis --type merge -p '{"spec":{"template":{"spec":{"automountServiceAccountToken":false}}}}' >/dev/null
+  k -n argocd rollout status deployment/argocd-redis --timeout 5m >/dev/null
+  wait_for "the guard has no errors after the token of Redis is removed" 60 guard_clean
+  # The job of the Helm chart that makes the password, with its Role.
+  k apply -f - >/dev/null <<YAML
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: argocd-redis-secret-init
+  namespace: argocd
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: argocd-redis-secret-init
+  namespace: argocd
+rules:
+  - { apiGroups: [""], resources: [secrets], resourceNames: [argocd-redis], verbs: [get] }
+  - { apiGroups: [""], resources: [secrets], verbs: [create] }
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: argocd-redis-secret-init
+  namespace: argocd
+roleRef: { apiGroup: rbac.authorization.k8s.io, kind: Role, name: argocd-redis-secret-init }
+subjects:
+  - { kind: ServiceAccount, name: argocd-redis-secret-init, namespace: argocd }
+YAML
+  guard_warns_redis_init() {
+    guard_status | jq -e '[.warnings[]? | select(test("the service account argocd-redis-secret-init of the Helm chart can make Secrets in the namespace argocd"))] | length > 0' >/dev/null
+  }
+  wait_for "the guard warns about the service account of the job for the password of Redis" 60 guard_warns_redis_init
+  k -n argocd delete rolebinding argocd-redis-secret-init >/dev/null
+  k -n argocd delete role argocd-redis-secret-init >/dev/null
+  k -n argocd delete serviceaccount argocd-redis-secret-init >/dev/null
+  log "the guard checks the rights and the token of Redis, and the job for its password"
+
   # Keycloak mappers that write the groups claim or the email claim. These
   # are in no token, thus they are harmless, but the guard must report
   # each mapper that does not come from the group membership or the email

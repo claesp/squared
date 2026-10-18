@@ -288,3 +288,60 @@ func TestCheckRepoServer(t *testing.T) {
 		}
 	}
 }
+
+func TestCheckRedis(t *testing.T) {
+	r := chartRBACWith(t, nil, nil)
+	if p := checkRedis(rbacSubject{"argocd", "argocd-redis"}, &kube.WorkloadToken{ServiceAccount: "argocd-redis"}, r); len(p) != 0 {
+		t.Fatalf("problems = %q", p)
+	}
+	// The Helm chart: the account default and a token.
+	p := checkRedis(rbacSubject{"argocd", "default"}, &kube.WorkloadToken{ServiceAccount: "default",
+		Mounted: "automountServiceAccountToken of the pod template"}, r)
+	got := strings.Join(p, " | ")
+	for _, want := range []string{
+		"its pods get a token of the Kubernetes API (automountServiceAccountToken of the pod template), which it does not need",
+		"it has the service account default of the namespace",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("problems = %q, want %q", p, want)
+		}
+	}
+	// A right through the group of all service accounts.
+	reads := binding(t, `{"metadata": {"name": "reads"}, "roleRef": {"kind": "ClusterRole", "name": "view"},
+		"subjects": [{"kind": "Group", "name": "system:serviceaccounts"}]}`)
+	p = checkRedis(rbacSubject{"argocd", "argocd-redis"}, &kube.WorkloadToken{ServiceAccount: "argocd-redis"}, chartRBACWith(t, nil, []kube.RoleBinding{reads}))
+	if len(p) != 1 || !strings.Contains(p[0], "the ClusterRoleBinding reads (ClusterRole view) gives Redis get list watch on pods (core)") {
+		t.Fatalf("problems = %q", p)
+	}
+}
+
+func TestCheckRedisSecretInit(t *testing.T) {
+	sa := rbacSubject{"argocd", "argocd-redis-secret-init"}
+	// Without the job.
+	if p, w := checkRedisSecretInit(sa, chartRBACWith(t, nil, nil)); len(p) != 0 || len(w) != 0 {
+		t.Fatalf("problems = %q, warnings = %q", p, w)
+	}
+	// The Role of the Helm chart.
+	withRole := func(rules string) *kube.RBAC {
+		r := chartRBACWith(t, []kube.RoleBinding{binding(t, `{"metadata": {"name": "argocd-redis-secret-init", "namespace": "argocd"},
+			"roleRef": {"kind": "Role", "name": "argocd-redis-secret-init"},
+			"subjects": [{"kind": "ServiceAccount", "name": "argocd-redis-secret-init", "namespace": "argocd"}]}`)}, nil)
+		var role kube.Role
+		if err := json.Unmarshal([]byte(`{"metadata": {"name": "argocd-redis-secret-init", "namespace": "argocd"}, "rules": `+rules+`}`), &role); err != nil {
+			t.Fatal(err)
+		}
+		r.Roles = append(r.Roles, role)
+		return r
+	}
+	chart := `[{"apiGroups": [""], "resourceNames": ["argocd-redis"], "resources": ["secrets"], "verbs": ["get"]},
+		{"apiGroups": [""], "resources": ["secrets"], "verbs": ["create"]}]`
+	p, w := checkRedisSecretInit(sa, withRole(chart))
+	if len(p) != 0 || len(w) != 1 || !strings.Contains(w[0], "the service account argocd-redis-secret-init of the Helm chart can make Secrets in the namespace argocd") {
+		t.Fatalf("problems = %q, warnings = %q", p, w)
+	}
+	// More than the job needs: read all Secrets.
+	p, _ = checkRedisSecretInit(sa, withRole(`[{"apiGroups": [""], "resources": ["secrets"], "verbs": ["get", "list", "create"]}]`))
+	if len(p) != 1 || !strings.Contains(p[0], "gives the service account argocd-redis-secret-init get list on secrets (core) in the namespace argocd, more than the job needs") {
+		t.Fatalf("problems = %q", p)
+	}
+}

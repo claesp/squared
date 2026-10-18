@@ -236,7 +236,8 @@ all `*.localhost` names.
    resource generator for Argo CD applications, read rights of the
    ApplicationSet controller in another namespace, read rights of the
    application controller on Secrets, the right of the API server to run
-   commands in pods, a token of the API for the repository server, and the
+   commands in pods, a token of the API for the repository server and for
+   Redis, the Role of the job for the password of Redis, and the
    ApplicationSet policy `sync` give errors,
    and that Keycloak
    mappers that write `groups` on the client `argocd` and `email` from

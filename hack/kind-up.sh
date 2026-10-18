@@ -45,6 +45,14 @@ configure_dns() {
 }
 
 install_charts() {
+  # The password of the Redis of Argo CD. The chart can make it with a
+  # job, but the service account of that job can make Secrets in the
+  # namespace of Argo CD (see docs/security.md). A running Redis keeps its
+  # password, thus make the Secret only once.
+  k create namespace argocd --dry-run=client -o yaml | k apply -f - >/dev/null
+  if ! k -n argocd get secret argocd-redis >/dev/null 2>&1; then
+    k -n argocd create secret generic argocd-redis --from-literal="auth=$(secret argocd-redis-password)" >/dev/null
+  fi
   log "installing Argo CD $ARGOCD_CHART_VERSION"
   # The end-to-end test changes argocd-rbac-cm for a short time with
   # "kubectl patch". The values here win over such a change.

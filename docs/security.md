@@ -696,7 +696,44 @@ controls that it uses. Read [architecture.md](architecture.md) first.
 
   The end-to-end test checks that the commit server does not run, then
   gives its account read rights in the namespace of Argo CD, and checks
-  the error. The end-to-end test
+  the error.
+
+- **Webhooks of Argo CD.** The ApplicationSet controller (port 7000) and
+  the API server (`/api/webhook`) accept push events of Git servers: the
+  ApplicationSet controller then runs the generators of the matching
+  ApplicationSets again, and the API server reads the matching
+  repositories again. Forgejo sends its pushes to the API server. Each
+  webhook checks an event only with the secret of its provider in
+  `argocd-secret`: `webhook.github.secret`, `webhook.gitlab.secret`,
+  `webhook.gogs.secret` (also Gitea and Forgejo),
+  `webhook.bitbucketserver.secret`, `webhook.bitbucket.uuid`, and
+  `webhook.azuredevops.username` and `webhook.azuredevops.password`.
+  Without the secret, it accepts each event of that provider, also a
+  forged one, from each pod that can connect. Such an event cannot change
+  applications, but it can make Argo CD read the repositories and run the
+  generators again as often as the sender wants. The development
+  environment sets random secrets for all providers, and Forgejo signs its
+  events with the Gogs secret. The ApplicationSet controller reads the
+  secrets only at its start, and it starts its webhook only when it can
+  read the settings of Argo CD, thus `hack/kind-up.sh` restarts it after
+  the installation.
+
+  The guard cannot read `argocd-secret`. Thus it sends a push event
+  without a signature for a repository that does not exist to each
+  webhook (`appSetWebhook`, `serverWebhook`): GitHub, GitLab and Azure
+  DevOps to the ApplicationSet controller, and also Gogs and Bitbucket
+  Server to the API server. Argo CD then reads no repository.
+
+  | Webhook | Result |
+  |---|---|
+  | It refuses all events without a signature | No problem |
+  | It does not listen | No problem |
+  | It accepts the events of a provider without a signature: the secret is empty, or the ApplicationSet controller has not read it again | Warning |
+  | The guard cannot connect | Warning |
+
+  Limit: the guard does not check Bitbucket Cloud. The end-to-end test
+  checks that the guard gives no warning, removes the GitHub secret and
+  checks the warning, and puts the secret back. The end-to-end test
   adds an ApplicationSet with a Git generator for the platform repository,
   a project from the parameters and a pull request generator with a token
   and `insecure: true`, and checks the errors. It turns on the SCM

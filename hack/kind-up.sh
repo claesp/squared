@@ -61,7 +61,21 @@ install_charts() {
     --namespace argocd --create-namespace \
     --values "$ROOT/deploy/kind/argocd-values.yaml" \
     --set-string "configs.secret.extra.oidc\\.keycloak\\.clientSecret=$(secret keycloak-argocd-client-secret)" \
+    --set-string "configs.secret.gogsSecret=$(secret argocd-webhook-gogs)" \
+    --set-string "configs.secret.githubSecret=$(secret argocd-webhook-github)" \
+    --set-string "configs.secret.gitlabSecret=$(secret argocd-webhook-gitlab)" \
+    --set-string "configs.secret.bitbucketServerSecret=$(secret argocd-webhook-bitbucketserver)" \
+    --set-string "configs.secret.bitbucketUUID=$(secret argocd-webhook-bitbucket)" \
+    --set-string "configs.secret.azureDevops.username=squared" \
+    --set-string "configs.secret.azureDevops.password=$(secret argocd-webhook-azuredevops)" \
     --force-conflicts --wait --timeout 10m >/dev/null
+  # Without a secret, a webhook of Argo CD accepts each event of that
+  # provider from each pod that can connect. Forgejo signs its events with
+  # the Gogs secret, the other secrets only close their webhooks. The
+  # ApplicationSet controller reads them only at its start, and it starts
+  # its webhook only when the API server has made server.secretkey.
+  k -n argocd rollout restart deployment/argocd-applicationset-controller >/dev/null
+  k -n argocd rollout status deployment/argocd-applicationset-controller --timeout 5m >/dev/null
 
   k create namespace forgejo --dry-run=client -o yaml | k apply -f - >/dev/null
   log "installing the Forgejo database"
@@ -156,11 +170,17 @@ setup_forgejo() {
       '{"name": "readers", "permission": "read", "units": ["repo.code"], "includes_all_repositories": true}' | jq -r .id)"
   fi
   botapi PUT "/teams/$team/members/argocd-reader" >/dev/null
-  local hook_url="http://argocd-server.argocd.svc.cluster.local/api/webhook"
-  if ! botapi GET /orgs/squared/hooks | jq -e --arg u "$hook_url" '.[] | select(.config.url == $u)' >/dev/null; then
+  # Forgejo signs the events with the secret, and Argo CD checks the
+  # signature (webhook.gogs.secret). Also an existing webhook gets it.
+  local hook_url="http://argocd-server.argocd.svc.cluster.local/api/webhook" hook_id hook_config
+  hook_config="$(jq -n --arg u "$hook_url" --arg s "$(secret argocd-webhook-gogs)" '{url: $u, content_type: "json", secret: $s}')"
+  hook_id="$(botapi GET /orgs/squared/hooks | jq -r --arg u "$hook_url" '.[] | select(.config.url == $u) | .id' | head -1)"
+  if [[ -z "$hook_id" ]]; then
     log "making Forgejo webhook to Argo CD"
-    botapi POST /orgs/squared/hooks "$(jq -n --arg u "$hook_url" \
-      '{type: "gitea", active: true, events: ["push"], config: {url: $u, content_type: "json"}}')" >/dev/null
+    botapi POST /orgs/squared/hooks "$(jq -n --argjson c "$hook_config" \
+      '{type: "gitea", active: true, events: ["push"], config: $c}')" >/dev/null
+  else
+    botapi PATCH "/orgs/squared/hooks/$hook_id" "$(jq -n --argjson c "$hook_config" '{active: true, config: $c}')" >/dev/null
   fi
 }
 

@@ -135,6 +135,14 @@ type SourceConfig struct {
 	// application.namespaces and applicationsetcontroller.namespaces of
 	// Argo CD that an operator checked. Squared needs none.
 	AppNamespaces []string `json:"applicationNamespaces,omitempty"`
+	// AppSetWebhook and ServerWebhook are for argocd-applications: the
+	// addresses of the webhooks of the ApplicationSet controller and of the
+	// API server in the cluster, for example
+	// "http://argocd-applicationset-controller.argocd.svc:7000/api/webhook".
+	// The guard sends events without a signature for a repository that does
+	// not exist, and warns when a webhook accepts them. Empty: no check.
+	AppSetWebhook string `json:"appSetWebhook,omitempty"`
+	ServerWebhook string `json:"serverWebhook,omitempty"`
 	// ControllerBindRoles is for argocd-applications: the ClusterRoles that
 	// the application controller may bind, for example the ClusterRole of
 	// the worker (SQUARED_WORKER_CLUSTER_ROLE).
@@ -703,10 +711,42 @@ func (s *argoAppsSource) References(ctx context.Context) ([]Reference, []string,
 	warnings = append(warnings, dexWarnings...)
 	warnings = append(warnings, notifWarnings...)
 	warnings = append(warnings, commitWarnings...)
+	warnings = append(warnings, s.webhookWarnings(ctx)...)
 	if len(msgs) > 0 {
 		return nil, warnings, errors.New(joinSentences(msgs))
 	}
 	return nil, warnings, nil
+}
+
+// webhookWarnings sends the probes to the webhooks of the ApplicationSet
+// controller and of the API server, and returns the warnings. A webhook
+// that does not listen gives no warning: the ApplicationSet controller
+// starts its webhook only when it can read the settings of Argo CD.
+func (s *argoAppsSource) webhookWarnings(ctx context.Context) []string {
+	client := rest.NewHTTPClient(nil)
+	client.Timeout = 5 * time.Second
+	var w []string
+	for _, h := range []struct {
+		who, url string
+		probes   []webhookProbe
+		restart  bool
+	}{
+		{"the ApplicationSet controller", s.sc.AppSetWebhook, appSetWebhookProbes, true},
+		{"the API server", s.sc.ServerWebhook, serverWebhookProbes, false},
+	} {
+		if h.url == "" {
+			continue
+		}
+		accepted, err := probeWebhook(ctx, client, h.url, h.probes)
+		switch {
+		case errors.Is(err, errNotListening):
+		case err != nil:
+			w = append(w, fmt.Sprintf("the guard cannot check the webhook of %s at %s (%s)", h.who, h.url, strings.ReplaceAll(err.Error(), ";", ",")))
+		default:
+			w = append(w, webhookWarnings(h.who, accepted, h.restart)...)
+		}
+	}
+	return w
 }
 
 // joinSentences joins messages that end without a full stop into one

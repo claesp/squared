@@ -25,7 +25,11 @@ in a production cluster.
      the organization, with a token that has the scope `read:repository`.
 2. Add an organization webhook in Forgejo: type "Gitea", event "push",
    address `https://<argocd-server>/api/webhook`. Set a secret, and set the
-   same secret in Argo CD (`webhook.gogs.secret` in `argocd-secret`).
+   same secret in Argo CD (`webhook.gogs.secret` in `argocd-secret`). Set
+   random secrets for the other providers too (`configs.secret` of the
+   Helm chart): without a secret, the webhooks of Argo CD accept the events
+   of that provider without a signature. Restart the ApplicationSet
+   controller after a change of these secrets.
 3. Add a repository credential template in Argo CD for the address of the
    organization, with the Argo CD account.
 4. Apply the root application. Use

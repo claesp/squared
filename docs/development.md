@@ -239,7 +239,7 @@ all `*.localhost` names.
    commands in pods, a token of the API for the repository server and for
    Redis, the Role of the job for the password of Redis, more rights for
    the accounts of Dex, of the notifications controller and of the commit
-   server, and the
+   server, a webhook secret that is not there, and the
    ApplicationSet policy `sync` give errors,
    and that Keycloak
    mappers that write `groups` on the client `argocd` and `email` from

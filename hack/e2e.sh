@@ -1043,6 +1043,21 @@ YAML
   wait_for "the guard has no errors after the binding of the commit server is removed" 60 guard_clean
   log "the guard checks the rights of the commit server"
 
+  # The webhooks of Argo CD have secrets for all providers, thus they refuse
+  # events without a signature. Without the GitHub secret, the API server
+  # accepts them, and the guard must warn.
+  guard_webhooks_quiet() { guard_status | jq -e '[.warnings[]? | select(test("the webhook of .* accepts events|cannot check the webhook"))] | length == 0' >/dev/null; }
+  wait_for "the guard has no warnings about the webhooks" 60 guard_webhooks_quiet
+  k -n argocd patch secret argocd-secret --type json -p '[{"op":"remove","path":"/data/webhook.github.secret"}]' >/dev/null
+  guard_warns_webhook() {
+    guard_status | jq -e '[.warnings[]? | select(test("the webhook of the API server accepts events of GitHub without a signature"))] | length > 0' >/dev/null
+  }
+  wait_for "the guard warns about the webhook without the GitHub secret" 60 guard_warns_webhook
+  k -n argocd patch secret argocd-secret --type merge \
+    -p "$(jq -n --arg s "$(secret argocd-webhook-github)" '{stringData: {"webhook.github.secret": $s}}')" >/dev/null
+  wait_for "the guard has no warnings after the GitHub secret is back" 60 guard_webhooks_quiet
+  log "the guard checks the webhook secrets of Argo CD"
+
   # Keycloak mappers that write the groups claim or the email claim. These
   # are in no token, thus they are harmless, but the guard must report
   # each mapper that does not come from the group membership or the email

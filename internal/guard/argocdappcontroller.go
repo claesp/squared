@@ -250,3 +250,35 @@ func checkRedisSecretInit(sa rbacSubject, rbac *kube.RBAC) (problems, warnings [
 	}
 	return problems, warnings
 }
+
+// argoDex is the workload and the service account of Dex, the identity
+// broker of Argo CD.
+const argoDex = "argocd-dex-server"
+
+// dexRules are the rights of Dex in the namespace of Argo CD: the Role of
+// the Argo CD Helm chart 10. Dex reads its configuration in argocd-cm and
+// the secrets of its connectors in the Secrets.
+var dexRules = []rbacRule{
+	{[]string{""}, []string{"secrets", "configmaps"}, []string{"get", "list", "watch"}},
+}
+
+// checkDex returns the problems and the warnings of Dex (sa). Dex answers
+// the sign-ins from the browser, and its Role lets it read all Secrets of
+// the namespace of Argo CD: argocd-secret with the key that signs the
+// sessions of Argo CD, the repository credentials and the cluster Secrets.
+// Squared signs in to Argo CD with Keycloak directly (oidc.config), thus
+// Dex has no work when argocd-cm has no dex.config (dexConfig). running
+// tells if the Deployment of Dex exists. A binding for its service
+// account with more rights than the Role of the chart is a problem, also
+// without the Deployment.
+func checkDex(sa rbacSubject, running, dexConfig bool, rbac *kube.RBAC) (problems, warnings []string) {
+	permit := func(namespace, group, resource, verb string, _ []string) bool {
+		return namespace == sa.Namespace && rulesAllow(dexRules, group, resource, verb) ||
+			namespace == "" && rulesAllow(defaultClusterRules, group, resource, verb)
+	}
+	problems = checkRBAC("Dex", sa, rbac, permit, "Dex needs")
+	if running && !dexConfig {
+		warnings = append(warnings, fmt.Sprintf("Dex runs, but argocd-cm has no dex.config, thus Argo CD does not use it. Dex answers sign-ins and can read all Secrets of the namespace %s. Set dex.enabled to false", sa.Namespace))
+	}
+	return problems, warnings
+}

@@ -556,7 +556,11 @@ func (s *argoAppsSource) References(ctx context.Context) ([]Reference, []string,
 	if err != nil {
 		return nil, nil, err
 	}
-	var serverRBAC, repoProblems, redisProblems, redisWarnings []string
+	dexToken, err := s.kube.GetWorkloadToken(ctx, s.sc.Namespace, "deployments", argoDex)
+	if err != nil {
+		return nil, nil, err
+	}
+	var serverRBAC, repoProblems, redisProblems, redisWarnings, dexProblems, dexWarnings []string
 	if setSA != "" || appSA != "" || serverSA != "" || repoToken != nil || redisToken != nil {
 		rbac, err := s.kube.ListRBAC(ctx)
 		if err != nil {
@@ -571,6 +575,21 @@ func (s *argoAppsSource) References(ctx context.Context) ([]Reference, []string,
 		var initProblems []string
 		initProblems, redisWarnings = checkRedisSecretInit(rbacSubject{s.sc.Namespace, redisSecretInit}, rbac)
 		redisProblems = append(redisProblems, initProblems...)
+		// Also without the Deployment: a binding for the account of Dex can
+		// stay.
+		dexSA := argoDex
+		if dexToken != nil {
+			dexSA = dexToken.ServiceAccount
+		}
+		dexConfig := false
+		if dexToken != nil {
+			cm, err := s.kube.GetConfigMap(ctx, s.sc.Namespace, "argocd-cm")
+			if err != nil && !rest.HasStatus(err, http.StatusNotFound) {
+				return nil, nil, err
+			}
+			dexConfig = cm != nil && strings.TrimSpace(cm.Data["dex.config"]) != ""
+		}
+		dexProblems, dexWarnings = checkDex(rbacSubject{s.sc.Namespace, dexSA}, dexToken != nil, dexConfig, rbac)
 		if setSA != "" {
 			setRBAC = checkAppSetControllerRBAC(rbacSubject{s.sc.Namespace, setSA}, s.sc.AppNamespaces, rbac)
 		}
@@ -596,6 +615,10 @@ func (s *argoAppsSource) References(ctx context.Context) ([]Reference, []string,
 	if len(appRBAC) > 0 {
 		msgs = append(msgs, fmt.Sprintf("the application controller of Argo CD has more rights than the projects permit: %s. The guard keeps the current protection",
 			strings.Join(appRBAC, "; ")))
+	}
+	if len(dexProblems) > 0 {
+		msgs = append(msgs, fmt.Sprintf("Dex of Argo CD has more rights than it needs: %s. The guard keeps the current protection",
+			strings.Join(dexProblems, "; ")))
 	}
 	if len(redisProblems) > 0 {
 		msgs = append(msgs, fmt.Sprintf("the Redis of Argo CD has rights that it does not need: %s. The guard keeps the current protection",
@@ -635,6 +658,7 @@ func (s *argoAppsSource) References(ctx context.Context) ([]Reference, []string,
 	}
 	warnings = append(warnings, setWarnings...)
 	warnings = append(warnings, redisWarnings...)
+	warnings = append(warnings, dexWarnings...)
 	if len(msgs) > 0 {
 		return nil, warnings, errors.New(joinSentences(msgs))
 	}

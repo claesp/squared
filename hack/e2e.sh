@@ -959,6 +959,39 @@ YAML
   k -n argocd delete serviceaccount argocd-redis-secret-init >/dev/null
   log "the guard checks the rights and the token of Redis, and the job for its password"
 
+  # Argo CD signs in with Keycloak directly, thus Dex does not run. Then a
+  # binding for the account of Dex stays with more rights, and the guard
+  # must report it also without Dex.
+  ! k -n argocd get deployment argocd-dex-server >/dev/null 2>&1 || die "Dex runs"
+  ! k -n argocd get serviceaccount argocd-dex-server >/dev/null 2>&1 || die "the service account of Dex exists"
+  k apply -f - >/dev/null <<YAML
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: e2e-guard-dex
+  namespace: argocd
+rules:
+  - { apiGroups: [""], resources: [secrets, configmaps], verbs: [get, list, watch] }
+  - { apiGroups: [""], resources: [secrets], verbs: [create] }
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: e2e-guard-dex
+  namespace: argocd
+roleRef: { apiGroup: rbac.authorization.k8s.io, kind: Role, name: e2e-guard-dex }
+subjects:
+  - { kind: ServiceAccount, name: argocd-dex-server, namespace: argocd }
+YAML
+  guard_reports_dex() {
+    guard_status | jq -e '[.errors[]? | select(test("the RoleBinding argocd/e2e-guard-dex [(]Role e2e-guard-dex[)] gives Dex create on secrets [(]core[)] in the namespace argocd, more than Dex needs"))] | length > 0' >/dev/null
+  }
+  wait_for "the guard reports the rights of Dex" 60 guard_reports_dex
+  k -n argocd delete rolebinding e2e-guard-dex >/dev/null
+  k -n argocd delete role e2e-guard-dex >/dev/null
+  wait_for "the guard has no errors after the binding of Dex is removed" 60 guard_clean
+  log "the guard checks the rights of Dex"
+
   # Keycloak mappers that write the groups claim or the email claim. These
   # are in no token, thus they are harmless, but the guard must report
   # each mapper that does not come from the group membership or the email

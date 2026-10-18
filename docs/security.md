@@ -633,7 +633,26 @@ controls that it uses. Read [architecture.md](architecture.md) first.
   The end-to-end test checks that Redis has no token and that the account
   `argocd-redis-secret-init` does not exist. It gives the Redis pods a
   token and checks the error, then adds the Role of the job and checks the
-  warning. The end-to-end test
+  warning.
+
+- **Rights of Dex.** Dex is the identity broker of Argo CD. Squared signs
+  in to Argo CD with Keycloak directly (`oidc.config`), thus the
+  development environment turns Dex off (`dex.enabled: false`). With the
+  Helm chart default, Dex runs and answers the sign-ins from the browser,
+  and its Role lets it read all Secrets of the namespace of Argo CD:
+  `argocd-secret` with the key that signs the sessions of Argo CD, the
+  repository credentials and the cluster Secrets.
+
+  | Dex | Result |
+  |---|---|
+  | Dex does not run | No problem |
+  | Dex runs, but `argocd-cm` has no `dex.config`: Argo CD does not use it | Warning |
+  | The rights of the Role of the chart (read Secrets and ConfigMaps in the namespace of Argo CD), and the rights that Kubernetes gives each user | No problem |
+  | Each other right of the service account `argocd-dex-server`, also from a binding that stays when Dex does not run | Error |
+
+  The end-to-end test checks that Dex does not run and has no service
+  account, then adds a binding for that account with `create` on Secrets,
+  and checks the error. The end-to-end test
   adds an ApplicationSet with a Git generator for the platform repository,
   a project from the parameters and a pull request generator with a token
   and `insecure: true`, and checks the errors. It turns on the SCM

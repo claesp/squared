@@ -345,3 +345,38 @@ func TestCheckRedisSecretInit(t *testing.T) {
 		t.Fatalf("problems = %q", p)
 	}
 }
+
+func TestCheckDex(t *testing.T) {
+	sa := rbacSubject{"argocd", "argocd-dex-server"}
+	withDex := func(rules string) *kube.RBAC {
+		r := chartRBACWith(t, []kube.RoleBinding{binding(t, `{"metadata": {"name": "argocd-dex-server", "namespace": "argocd"},
+			"roleRef": {"kind": "Role", "name": "argocd-dex-server"},
+			"subjects": [{"kind": "ServiceAccount", "name": "argocd-dex-server", "namespace": "argocd"}]}`)}, nil)
+		var role kube.Role
+		if err := json.Unmarshal([]byte(`{"metadata": {"name": "argocd-dex-server", "namespace": "argocd"}, "rules": `+rules+`}`), &role); err != nil {
+			t.Fatal(err)
+		}
+		r.Roles = append(r.Roles, role)
+		return r
+	}
+	chart := `[{"apiGroups": [""], "resources": ["secrets", "configmaps"], "verbs": ["get", "list", "watch"]}]`
+
+	// Off, as in the development environment.
+	if p, w := checkDex(sa, false, false, chartRBACWith(t, nil, nil)); len(p) != 0 || len(w) != 0 {
+		t.Fatalf("problems = %q, warnings = %q", p, w)
+	}
+	// On, with a Dex configuration.
+	if p, w := checkDex(sa, true, true, withDex(chart)); len(p) != 0 || len(w) != 0 {
+		t.Fatalf("problems = %q, warnings = %q", p, w)
+	}
+	// On without work: the default of the chart with oidc.config.
+	p, w := checkDex(sa, true, false, withDex(chart))
+	if len(p) != 0 || len(w) != 1 || !strings.Contains(w[0], "Dex runs, but argocd-cm has no dex.config, thus Argo CD does not use it") {
+		t.Fatalf("problems = %q, warnings = %q", p, w)
+	}
+	// More rights: a binding stays also without the Deployment.
+	p, _ = checkDex(sa, false, false, withDex(`[{"apiGroups": [""], "resources": ["secrets"], "verbs": ["get", "list", "create"]}]`))
+	if len(p) != 1 || !strings.Contains(p[0], "the RoleBinding argocd/argocd-dex-server (Role argocd-dex-server) gives Dex create on secrets (core) in the namespace argocd, more than Dex needs") {
+		t.Fatalf("problems = %q", p)
+	}
+}

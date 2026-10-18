@@ -380,3 +380,80 @@ func TestCheckDex(t *testing.T) {
 		t.Fatalf("problems = %q", p)
 	}
 }
+
+// chartNotificationsRules are the rules of the Role and of the ClusterRole
+// of the notifications controller of the Helm chart 10.
+const chartNotificationsRules = `[
+	{"apiGroups": ["argoproj.io"], "resources": ["applications", "appprojects"], "verbs": ["get", "list", "watch", "update", "patch"]},
+	{"apiGroups": [""], "resources": ["configmaps", "secrets"], "verbs": ["list", "watch"]},
+	{"apiGroups": [""], "resourceNames": ["argocd-notifications-cm"], "resources": ["configmaps"], "verbs": ["get"]},
+	{"apiGroups": [""], "resourceNames": ["argocd-notifications-secret"], "resources": ["secrets"], "verbs": ["get"]}]`
+
+func TestCheckNotifications(t *testing.T) {
+	sa := rbacSubject{"argocd", "argocd-notifications-controller"}
+	chart := func(clusterRole bool, rules string) *kube.RBAC {
+		r := chartRBACWith(t, []kube.RoleBinding{binding(t, `{"metadata": {"name": "argocd-notifications-controller", "namespace": "argocd"},
+			"roleRef": {"kind": "Role", "name": "argocd-notifications-controller"},
+			"subjects": [{"kind": "ServiceAccount", "name": "argocd-notifications-controller", "namespace": "argocd"}]}`)}, nil)
+		var role kube.Role
+		if err := json.Unmarshal([]byte(`{"metadata": {"name": "argocd-notifications-controller", "namespace": "argocd"}, "rules": `+chartNotificationsRules+`}`), &role); err != nil {
+			t.Fatal(err)
+		}
+		r.Roles = append(r.Roles, role)
+		if clusterRole {
+			var cr kube.Role
+			if err := json.Unmarshal([]byte(`{"metadata": {"name": "argocd-notifications-controller"}, "rules": `+rules+`}`), &cr); err != nil {
+				t.Fatal(err)
+			}
+			r.ClusterRoles = append(r.ClusterRoles, cr)
+			r.ClusterRoleBindings = append(r.ClusterRoleBindings, binding(t, `{"metadata": {"name": "argocd-notifications-controller"},
+				"roleRef": {"kind": "ClusterRole", "name": "argocd-notifications-controller"},
+				"subjects": [{"kind": "ServiceAccount", "name": "argocd-notifications-controller", "namespace": "argocd"}]}`))
+		}
+		return r
+	}
+
+	// Off, and on with the Role only and a service.
+	if p, w := checkNotifications(sa, false, false, nil, chartRBACWith(t, nil, nil)); len(p) != 0 || len(w) != 0 {
+		t.Fatalf("problems = %q, warnings = %q", p, w)
+	}
+	if p, w := checkNotifications(sa, true, true, nil, chart(false, "")); len(p) != 0 || len(w) != 0 {
+		t.Fatalf("problems = %q, warnings = %q", p, w)
+	}
+	// Without a service.
+	if _, w := checkNotifications(sa, true, false, nil, chart(false, "")); len(w) != 1 || !strings.Contains(w[0], "argocd-notifications-cm has no service, thus it sends nothing") {
+		t.Fatalf("warnings = %q", w)
+	}
+	// The ClusterRole of the chart reads the Secrets of all namespaces.
+	p, _ := checkNotifications(sa, true, true, nil, chart(true, chartNotificationsRules))
+	got := strings.Join(p, " | ")
+	for _, want := range []string{
+		"gives the notifications controller get list watch update patch on applications (argoproj.io), get list watch update patch on appprojects (argoproj.io) in the cluster",
+		"list watch on configmaps (core), list watch on secrets (core) in the cluster",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("problems = %q, want %q", p, want)
+		}
+	}
+	// With application namespaces, only the rights on the applications and
+	// projects in the cluster are needed.
+	// The get on its ConfigMap and Secret by name in the ClusterRole counts
+	// for each namespace.
+	p, _ = checkNotifications(sa, true, true, []string{"team-a"}, chart(true, chartNotificationsRules))
+	got = strings.Join(p, " | ")
+	if len(p) != 3 || !strings.Contains(got, "list watch on configmaps (core), list watch on secrets (core) in the cluster") ||
+		!strings.Contains(got, "get on secrets (core) in the cluster") || strings.Contains(got, "applications") {
+		t.Fatalf("problems = %q", p)
+	}
+	// get on other Secrets of the namespace.
+	other := chartRBACWith(t, []kube.RoleBinding{binding(t, `{"metadata": {"name": "x", "namespace": "argocd"}, "roleRef": {"kind": "Role", "name": "x"},
+		"subjects": [{"kind": "ServiceAccount", "name": "argocd-notifications-controller", "namespace": "argocd"}]}`)}, nil)
+	var role kube.Role
+	if err := json.Unmarshal([]byte(`{"metadata": {"name": "x", "namespace": "argocd"}, "rules": [{"apiGroups": [""], "resources": ["secrets"], "verbs": ["get"]}]}`), &role); err != nil {
+		t.Fatal(err)
+	}
+	other.Roles = append(other.Roles, role)
+	if p, _ := checkNotifications(sa, true, true, nil, other); len(p) != 1 || !strings.Contains(p[0], "get on secrets (core) in the namespace argocd") {
+		t.Fatalf("problems = %q", p)
+	}
+}

@@ -44,7 +44,8 @@ in a production cluster.
    argocd-redis`. In an existing installation, the job made this Secret
    already: keep it, else Redis and the other components of Argo CD get
    different passwords. Turn off Dex (`dex.enabled: false`) when Argo CD
-   signs in with Keycloak directly. Use
+   signs in with Keycloak directly, and the notifications controller
+   (`notifications.enabled: false`) when Squared sends no notifications. Use
    [`deploy/kind/argocd-values.yaml`](../deploy/kind/argocd-values.yaml)
    as the template. The chart defaults give them rights on all kinds in
    the cluster, and the guard reports this.

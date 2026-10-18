@@ -992,6 +992,36 @@ YAML
   wait_for "the guard has no errors after the binding of Dex is removed" 60 guard_clean
   log "the guard checks the rights of Dex"
 
+  # Squared sends no notifications, thus the notifications controller does
+  # not run. Then its account gets read rights on the Secrets of all
+  # namespaces, as the ClusterRole of the Helm chart gives, and the guard
+  # must report them.
+  ! k -n argocd get deployment argocd-notifications-controller >/dev/null 2>&1 || die "the notifications controller runs"
+  k apply -f - >/dev/null <<YAML
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: e2e-guard-notifications
+rules:
+  - { apiGroups: [""], resources: [configmaps, secrets], verbs: [list, watch] }
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: e2e-guard-notifications
+roleRef: { apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: e2e-guard-notifications }
+subjects:
+  - { kind: ServiceAccount, name: argocd-notifications-controller, namespace: argocd }
+YAML
+  guard_reports_notifications() {
+    guard_status | jq -e '[.errors[]? | select(test("the ClusterRoleBinding e2e-guard-notifications [(]ClusterRole e2e-guard-notifications[)] gives the notifications controller list watch on configmaps [(]core[)], list watch on secrets [(]core[)] in the cluster"))] | length > 0' >/dev/null
+  }
+  wait_for "the guard reports the rights of the notifications controller" 60 guard_reports_notifications
+  k delete clusterrolebinding e2e-guard-notifications >/dev/null
+  k delete clusterrole e2e-guard-notifications >/dev/null
+  wait_for "the guard has no errors after the ClusterRoleBinding is removed" 60 guard_clean
+  log "the guard checks the rights of the notifications controller"
+
   # Keycloak mappers that write the groups claim or the email claim. These
   # are in no token, thus they are harmless, but the guard must report
   # each mapper that does not come from the group membership or the email

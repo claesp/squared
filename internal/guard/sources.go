@@ -560,7 +560,11 @@ func (s *argoAppsSource) References(ctx context.Context) ([]Reference, []string,
 	if err != nil {
 		return nil, nil, err
 	}
-	var serverRBAC, repoProblems, redisProblems, redisWarnings, dexProblems, dexWarnings []string
+	notifToken, err := s.kube.GetWorkloadToken(ctx, s.sc.Namespace, "deployments", argoNotifications)
+	if err != nil {
+		return nil, nil, err
+	}
+	var serverRBAC, repoProblems, redisProblems, redisWarnings, dexProblems, dexWarnings, notifProblems, notifWarnings []string
 	if setSA != "" || appSA != "" || serverSA != "" || repoToken != nil || redisToken != nil {
 		rbac, err := s.kube.ListRBAC(ctx)
 		if err != nil {
@@ -590,6 +594,24 @@ func (s *argoAppsSource) References(ctx context.Context) ([]Reference, []string,
 			dexConfig = cm != nil && strings.TrimSpace(cm.Data["dex.config"]) != ""
 		}
 		dexProblems, dexWarnings = checkDex(rbacSubject{s.sc.Namespace, dexSA}, dexToken != nil, dexConfig, rbac)
+		// Also without the Deployment, as for Dex.
+		notifSA := argoNotifications
+		if notifToken != nil {
+			notifSA = notifToken.ServiceAccount
+		}
+		services := false
+		if notifToken != nil {
+			cm, err := s.kube.GetConfigMap(ctx, s.sc.Namespace, "argocd-notifications-cm")
+			if err != nil && !rest.HasStatus(err, http.StatusNotFound) {
+				return nil, nil, err
+			}
+			if cm != nil {
+				for k := range cm.Data {
+					services = services || strings.HasPrefix(k, "service.")
+				}
+			}
+		}
+		notifProblems, notifWarnings = checkNotifications(rbacSubject{s.sc.Namespace, notifSA}, notifToken != nil, services, s.sc.AppNamespaces, rbac)
 		if setSA != "" {
 			setRBAC = checkAppSetControllerRBAC(rbacSubject{s.sc.Namespace, setSA}, s.sc.AppNamespaces, rbac)
 		}
@@ -615,6 +637,10 @@ func (s *argoAppsSource) References(ctx context.Context) ([]Reference, []string,
 	if len(appRBAC) > 0 {
 		msgs = append(msgs, fmt.Sprintf("the application controller of Argo CD has more rights than the projects permit: %s. The guard keeps the current protection",
 			strings.Join(appRBAC, "; ")))
+	}
+	if len(notifProblems) > 0 {
+		msgs = append(msgs, fmt.Sprintf("the notifications controller of Argo CD has more rights than it needs: %s. The guard keeps the current protection",
+			strings.Join(notifProblems, "; ")))
 	}
 	if len(dexProblems) > 0 {
 		msgs = append(msgs, fmt.Sprintf("Dex of Argo CD has more rights than it needs: %s. The guard keeps the current protection",
@@ -659,6 +685,7 @@ func (s *argoAppsSource) References(ctx context.Context) ([]Reference, []string,
 	warnings = append(warnings, setWarnings...)
 	warnings = append(warnings, redisWarnings...)
 	warnings = append(warnings, dexWarnings...)
+	warnings = append(warnings, notifWarnings...)
 	if len(msgs) > 0 {
 		return nil, warnings, errors.New(joinSentences(msgs))
 	}

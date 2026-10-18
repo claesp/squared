@@ -652,7 +652,31 @@ controls that it uses. Read [architecture.md](architecture.md) first.
 
   The end-to-end test checks that Dex does not run and has no service
   account, then adds a binding for that account with `create` on Secrets,
-  and checks the error. The end-to-end test
+  and checks the error.
+
+- **Rights of the notifications controller.** The notifications controller
+  sends messages about the applications to services such as email, Slack
+  or webhooks. Squared sends no notifications, thus the development
+  environment turns it off (`notifications.enabled: false`). It keeps its
+  state in annotations of the applications and projects, and its Role
+  lets it change each Application and AppProject of the namespace of Argo
+  CD: RBAC cannot limit `patch` to annotations. The guard checks these
+  objects, but the right is large. The Role also lets it read all Secrets
+  of the namespace (`list`). With the chart default, a ClusterRole gives it
+  these rights in all namespaces too, also on the Secrets of the tenants,
+  and with application namespaces also `create` on Secrets.
+
+  | Notifications controller | Result |
+  |---|---|
+  | It does not run | No problem |
+  | It runs, but `argocd-notifications-cm` has no service: it sends nothing | Warning |
+  | The rights of the Role of the chart in the namespace of Argo CD (`get` only on `argocd-notifications-cm` and `argocd-notifications-secret`), and the rights that Kubernetes gives each user | No problem |
+  | Its rights on applications and projects in the namespaces of `applicationNamespaces`, and in the cluster when that list is not empty | No problem |
+  | Each other right, for example the ClusterRole of the chart with the Secrets of all namespaces | Error |
+
+  The end-to-end test checks that the controller does not run, then gives
+  its account read rights on the Secrets of all namespaces, and checks the
+  error. The end-to-end test
   adds an ApplicationSet with a Git generator for the platform repository,
   a project from the parameters and a pull request generator with a token
   and `insecure: true`, and checks the errors. It turns on the SCM

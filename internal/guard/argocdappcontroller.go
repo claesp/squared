@@ -282,3 +282,54 @@ func checkDex(sa rbacSubject, running, dexConfig bool, rbac *kube.RBAC) (problem
 	}
 	return problems, warnings
 }
+
+// argoNotifications is the workload and the service account of the
+// notifications controller of Argo CD.
+const argoNotifications = "argocd-notifications-controller"
+
+// notificationsRules are the rights of the notifications controller in the
+// namespace of Argo CD: the Role of the Argo CD Helm chart 10. It keeps its
+// state in annotations of the applications and projects, but RBAC cannot
+// limit patch to annotations.
+var notificationsRules = []rbacRule{
+	{[]string{"argoproj.io"}, []string{"applications", "appprojects"}, []string{"get", "list", "watch", "update", "patch"}},
+	{[]string{""}, []string{"configmaps", "secrets"}, []string{"list", "watch"}},
+}
+
+// notificationsNamespaceRules are its rights for applications in other
+// namespaces (application namespaces).
+var notificationsNamespaceRules = notificationsRules[:1]
+
+// checkNotifications returns the problems and the warnings of the
+// notifications controller (sa). It sends messages about the applications
+// to services such as email, Slack or webhooks. With its Role, it can
+// change each application and project of the namespace of Argo CD, and
+// read its Secrets. The Helm chart also gives it a ClusterRole that reads
+// the Secrets of all namespaces and changes applications and projects in
+// all namespaces: this is a problem, except the rights on applications and
+// projects for application namespaces (appNamespaces). running tells if
+// its Deployment exists, and services if argocd-notifications-cm has a
+// service.
+func checkNotifications(sa rbacSubject, running, services bool, appNamespaces []string, rbac *kube.RBAC) (problems, warnings []string) {
+	permit := func(namespace, group, resource, verb string, names []string) bool {
+		switch {
+		case namespace == sa.Namespace:
+			// get only on its ConfigMap and its Secret.
+			if verb == "get" && group == "" {
+				return len(names) == 1 && (names[0] == "argocd-notifications-cm" || names[0] == "argocd-notifications-secret")
+			}
+			return rulesAllow(notificationsRules, group, resource, verb)
+		case namespace == "":
+			return rulesAllow(defaultClusterRules, group, resource, verb) ||
+				len(appNamespaces) > 0 && rulesAllow(notificationsNamespaceRules, group, resource, verb)
+		case slices.Contains(appNamespaces, namespace):
+			return rulesAllow(notificationsNamespaceRules, group, resource, verb)
+		}
+		return false
+	}
+	problems = checkRBAC("the notifications controller", sa, rbac, permit, "it needs")
+	if running && !services {
+		warnings = append(warnings, fmt.Sprintf("the notifications controller runs, but argocd-notifications-cm has no service, thus it sends nothing. It can change the applications and projects and read the Secrets of the namespace %s. Set notifications.enabled to false", sa.Namespace))
+	}
+	return problems, warnings
+}

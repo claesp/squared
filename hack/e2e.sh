@@ -1022,6 +1022,27 @@ YAML
   wait_for "the guard has no errors after the ClusterRoleBinding is removed" 60 guard_clean
   log "the guard checks the rights of the notifications controller"
 
+  # The source hydrator is off, thus the commit server does not run. Then
+  # its account gets read rights, and the guard must report them.
+  ! k -n argocd get deployment argocd-commit-server >/dev/null 2>&1 || die "the commit server runs"
+  k apply -f - >/dev/null <<YAML
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: e2e-guard-commit
+  namespace: argocd
+roleRef: { apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: view }
+subjects:
+  - { kind: ServiceAccount, name: argocd-commit-server, namespace: argocd }
+YAML
+  guard_reports_commit() {
+    guard_status | jq -e '[.errors[]? | select(test("the RoleBinding argocd/e2e-guard-commit [(]ClusterRole view[)] gives the commit server .* in the namespace argocd, more than it needs"))] | length > 0' >/dev/null
+  }
+  wait_for "the guard reports the rights of the commit server" 60 guard_reports_commit
+  k -n argocd delete rolebinding e2e-guard-commit >/dev/null
+  wait_for "the guard has no errors after the binding of the commit server is removed" 60 guard_clean
+  log "the guard checks the rights of the commit server"
+
   # Keycloak mappers that write the groups claim or the email claim. These
   # are in no token, thus they are harmless, but the guard must report
   # each mapper that does not come from the group membership or the email

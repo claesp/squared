@@ -457,3 +457,33 @@ func TestCheckNotifications(t *testing.T) {
 		t.Fatalf("problems = %q", p)
 	}
 }
+
+func TestCheckCommitServer(t *testing.T) {
+	sa := rbacSubject{"argocd", "argocd-commit-server"}
+	r := chartRBACWith(t, nil, nil)
+	running := &kube.WorkloadToken{ServiceAccount: "argocd-commit-server"}
+
+	// Off, as in the development environment, and on with the hydrator.
+	if p, w := checkCommitServer(sa, nil, false, r); len(p) != 0 || len(w) != 0 {
+		t.Fatalf("problems = %q, warnings = %q", p, w)
+	}
+	if p, w := checkCommitServer(sa, running, true, r); len(p) != 0 || len(w) != 0 {
+		t.Fatalf("problems = %q, warnings = %q", p, w)
+	}
+	// On without the hydrator.
+	if _, w := checkCommitServer(sa, running, false, r); len(w) != 1 || !strings.Contains(w[0], "the source hydrator is off") {
+		t.Fatalf("warnings = %q", w)
+	}
+	// A token: the service account of the chart mounts one.
+	p, _ := checkCommitServer(sa, &kube.WorkloadToken{ServiceAccount: "argocd-commit-server", Mounted: "automountServiceAccountToken of the pod template"}, true, r)
+	if len(p) != 1 || !strings.Contains(p[0], "its pods get a token of the Kubernetes API (automountServiceAccountToken of the pod template), which it does not need: it pushes to Git") {
+		t.Fatalf("problems = %q", p)
+	}
+	// A binding that stays when it does not run.
+	b := binding(t, `{"metadata": {"name": "x", "namespace": "argocd"}, "roleRef": {"kind": "ClusterRole", "name": "view"},
+		"subjects": [{"kind": "ServiceAccount", "name": "argocd-commit-server", "namespace": "argocd"}]}`)
+	p, _ = checkCommitServer(sa, nil, false, chartRBACWith(t, []kube.RoleBinding{b}, nil))
+	if len(p) != 1 || !strings.Contains(p[0], "the RoleBinding argocd/x (ClusterRole view) gives the commit server get list watch on pods (core)") {
+		t.Fatalf("problems = %q", p)
+	}
+}

@@ -676,7 +676,27 @@ controls that it uses. Read [architecture.md](architecture.md) first.
 
   The end-to-end test checks that the controller does not run, then gives
   its account read rights on the Secrets of all namespaces, and checks the
-  error. The end-to-end test
+  error.
+
+- **Rights of the commit server.** The commit server pushes the manifests
+  of the source hydrator to Git, with the write credentials of the
+  repositories, which it gets from the application controller. It needs
+  no rights and no token of the Kubernetes API. Squared does not use the
+  source hydrator, thus the development environment does not run the
+  commit server (`commitServer.enabled: false`, the chart default). The
+  chart gives it no Role, and its pods get no token, but its service
+  account has `automountServiceAccountToken: true`.
+
+  | Commit server | Result |
+  |---|---|
+  | It does not run | No problem |
+  | It runs, but `hydrator.enabled` in `argocd-cmd-params-cm` is not `true`: it has no work | Warning |
+  | Each right other than the rights that Kubernetes gives each user, also from a binding that stays when it does not run | Error |
+  | A token in its pods, or the service account `default` | Error |
+
+  The end-to-end test checks that the commit server does not run, then
+  gives its account read rights in the namespace of Argo CD, and checks
+  the error. The end-to-end test
   adds an ApplicationSet with a Git generator for the platform repository,
   a project from the parameters and a pull request generator with a token
   and `insecure: true`, and checks the errors. It turns on the SCM

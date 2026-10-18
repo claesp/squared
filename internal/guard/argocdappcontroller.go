@@ -197,12 +197,17 @@ func checkRedis(sa rbacSubject, token *kube.WorkloadToken, rbac *kube.RBAC) []st
 // rights and no token of the Kubernetes API. It may have only the rights
 // that Kubernetes gives to each user. Its pods must not get a token: else
 // each right that is given later to a group of all service accounts also
-// reaches it. risk tells who can use the token.
+// reaches it. risk tells who can use the token. Without token, the
+// component does not run, and only the bindings of its account count.
 func checkNoAPI(who, risk string, sa rbacSubject, token *kube.WorkloadToken, rbac *kube.RBAC) []string {
 	permit := func(namespace, group, resource, verb string, _ []string) bool {
 		return namespace == "" && rulesAllow(defaultClusterRules, group, resource, verb)
 	}
 	p := checkRBAC(who, sa, rbac, permit, "it needs")
+	if token == nil {
+		// It does not run: only its bindings count.
+		return p
+	}
 	if token.Mounted != "" {
 		p = append(p, fmt.Sprintf("its pods get a token of the Kubernetes API (%s), which it does not need: %s", token.Mounted, risk))
 	}
@@ -330,6 +335,24 @@ func checkNotifications(sa rbacSubject, running, services bool, appNamespaces []
 	problems = checkRBAC("the notifications controller", sa, rbac, permit, "it needs")
 	if running && !services {
 		warnings = append(warnings, fmt.Sprintf("the notifications controller runs, but argocd-notifications-cm has no service, thus it sends nothing. It can change the applications and projects and read the Secrets of the namespace %s. Set notifications.enabled to false", sa.Namespace))
+	}
+	return problems, warnings
+}
+
+// argoCommitServer is the workload and the service account of the commit
+// server of Argo CD.
+const argoCommitServer = "argocd-commit-server"
+
+// checkCommitServer returns the problems and the warnings of the commit
+// server (sa, token, nil when it does not run). The commit server pushes
+// the manifests of the source hydrator to Git, with the write credentials
+// of the repositories that it gets from the application controller. It
+// needs no rights and no token of the Kubernetes API. When the source
+// hydrator is off (hydrator), it has no work.
+func checkCommitServer(sa rbacSubject, token *kube.WorkloadToken, hydrator bool, rbac *kube.RBAC) (problems, warnings []string) {
+	problems = checkNoAPI("the commit server", "it pushes to Git with the write credentials of the repositories", sa, token, rbac)
+	if token != nil && !hydrator {
+		warnings = append(warnings, "the commit server runs, but the source hydrator is off (hydrator.enabled in argocd-cmd-params-cm), thus it has no work. It can push to Git. Set commitServer.enabled to false")
 	}
 	return problems, warnings
 }

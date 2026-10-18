@@ -238,7 +238,8 @@ all `*.localhost` names.
    application controller on Secrets, the right of the API server to run
    commands in pods, a token of the API for the repository server and for
    Redis, the Role of the job for the password of Redis, more rights for
-   the accounts of Dex and of the notifications controller, and the
+   the accounts of Dex, of the notifications controller and of the commit
+   server, and the
    ApplicationSet policy `sync` give errors,
    and that Keycloak
    mappers that write `groups` on the client `argocd` and `email` from

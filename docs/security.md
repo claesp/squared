@@ -744,8 +744,22 @@ controls that it uses. Read [architecture.md](architecture.md) first.
   commit server pushes to Git with the write credentials, and Dex gives
   the API server the identities of the users. The Helm chart makes
   NetworkPolicies that let only the components that need them connect to
-  these ports (`global.networkPolicy.create`, the default). It makes no
-  policy for the ApplicationSet controller, and no default deny.
+  these ports (`global.networkPolicy.create`, the default), but no default
+  deny.
+
+  The webhook of the ApplicationSet controller runs the generators of the
+  matching ApplicationSets again for each event. Forgejo sends its events
+  to the API server, thus no pod needs to connect to this webhook. The
+  chart makes a policy for the ApplicationSet controller only with its
+  metrics, an Ingress or an HTTPRoute: without them, each pod can connect
+  to the webhook and the metrics, and with an Ingress or an HTTPRoute,
+  the policy opens the webhook to all. The development environment turns
+  on the metrics (`applicationSet.metrics.enabled`), thus the policy of the
+  chart closes the webhook. An installation that uses this webhook sets
+  `appSetWebhookOpen`. The signatures of the events must then protect it
+  (see the webhooks above). Because the policy closes the webhook, the
+  guard of the development environment does not test it
+  (`appSetWebhook` is empty).
 
   The guard reads the NetworkPolicies of the namespace of Argo CD (right
   `list`) and the pod templates of the components that run. A pod can
@@ -759,6 +773,7 @@ controls that it uses. Read [architecture.md](architecture.md) first.
   | `redis` of Redis | API server, repository server, application controller |
   | `server` of the commit server | application controller |
   | `http` and `grpc` of Dex | API server |
+  | `webhook` of the ApplicationSet controller | none, except with `appSetWebhookOpen` |
 
   | NetworkPolicies | Result |
   |---|---|
@@ -769,9 +784,10 @@ controls that it uses. Read [architecture.md](architecture.md) first.
 
   Limit: NetworkPolicies work only when the network plugin of the
   cluster enforces them. The end-to-end test checks with a pod of a tenant
-  that it cannot connect to the repository server and to Redis but to the
-  API server, then adds a policy that opens the repository server, and
-  checks the error. The end-to-end test
+  that it cannot connect to the repository server, to Redis and to the
+  webhook of the ApplicationSet controller, but to the API server. Then it
+  adds a policy that opens the repository server and one that opens the
+  webhook, and checks the errors. The end-to-end test
   adds an ApplicationSet with a Git generator for the platform repository,
   a project from the parameters and a pull request generator with a token
   and `insecure: true`, and checks the errors. It turns on the SCM

@@ -28,6 +28,11 @@ var protectedPorts = []protectedPort{
 		"it pushes to Git with the write credentials of the repositories"},
 	{argoDex, "http", []string{argoServer}, "it answers the sign-ins for the API server"},
 	{argoDex, "grpc", []string{argoServer}, "it gives the API server the identities of the users"},
+	// The ApplicationSet controller runs the generators again for each
+	// event, and Forgejo sends its events to the API server. The setting
+	// appSetWebhookOpen is for installations that use this webhook.
+	{argoAppSetController, "webhook", nil,
+		"Squared sends no events to it, and each event makes it run the generators of the ApplicationSets again"},
 }
 
 // selects tells if a label selector selects an object with the labels.
@@ -162,7 +167,11 @@ func checkProtectedPort(pp protectedPort, tpl *kube.PodTemplate, policies []kube
 						continue
 					}
 					for _, n := range names {
-						if !slices.Contains(pp.Callers, n) {
+						switch {
+						case slices.Contains(pp.Callers, n):
+						case len(pp.Callers) == 0:
+							p = append(p, fmt.Sprintf("%s permits %s to connect to %s, which no component needs", rulePlace, n, where))
+						default:
 							p = append(p, fmt.Sprintf("%s permits %s to connect to %s, which only %s need", rulePlace, n, where, strings.Join(pp.Callers, ", ")))
 						}
 					}

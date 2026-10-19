@@ -123,3 +123,38 @@ func TestSelects(t *testing.T) {
 		t.Fatal("selects is not correct")
 	}
 }
+
+func TestCheckAppSetWebhookPort(t *testing.T) {
+	webhook := protectedPorts[len(protectedPorts)-1]
+	if webhook.Workload != argoAppSetController || webhook.Port != "webhook" {
+		t.Fatalf("the last protected port is %+v", webhook)
+	}
+	tpl := &kube.PodTemplate{
+		Labels:     map[string]string{"app.kubernetes.io/name": "argocd-applicationset-controller", "app.kubernetes.io/instance": "argocd"},
+		Containers: containersFromPorts(map[string]int{"metrics": 8080, "probe": 8081, "webhook": 7000}),
+	}
+	// The policy of the Helm chart with metrics.
+	chart := `[{"metadata": {"name": "argocd-applicationset-controller"}, "spec": {
+		"podSelector": {"matchLabels": {"app.kubernetes.io/name": "argocd-applicationset-controller", "app.kubernetes.io/instance": "argocd"}},
+		"policyTypes": ["Ingress"], "ingress": [{"from": [{"namespaceSelector": {}}], "ports": [{"port": "metrics"}]}]}}]`
+	if p := checkProtectedPort(webhook, tpl, policies(t, chart)); len(p) != 0 {
+		t.Fatalf("problems = %q", p)
+	}
+	// Without metrics, the chart makes no policy.
+	if p := checkProtectedPort(webhook, tpl, nil); len(p) != 1 || !strings.Contains(p[0], "no NetworkPolicy limits the connections to argocd-applicationset-controller") {
+		t.Fatalf("problems = %q", p)
+	}
+	// With an Ingress, the chart opens the webhook.
+	open := `[{"metadata": {"name": "argocd-applicationset-controller"}, "spec": {
+		"podSelector": {"matchLabels": {"app.kubernetes.io/name": "argocd-applicationset-controller"}},
+		"ingress": [{"ports": [{"port": "webhook"}]}, {"from": [{"namespaceSelector": {}}], "ports": [{"port": "metrics"}]}]}}]`
+	if p := checkProtectedPort(webhook, tpl, policies(t, open)); len(p) != 1 || !strings.Contains(p[0], "permits each pod and each address to connect to the port webhook of argocd-applicationset-controller: Squared sends no events to it") {
+		t.Fatalf("problems = %q", p)
+	}
+	// Also the API server needs no connection.
+	server := `[{"metadata": {"name": "x"}, "spec": {"podSelector": {"matchLabels": {"app.kubernetes.io/name": "argocd-applicationset-controller"}},
+		"ingress": [{"from": [{"podSelector": {"matchLabels": {"app.kubernetes.io/name": "argocd-server"}}}], "ports": [{"port": 7000}]}]}}]`
+	if p := checkProtectedPort(webhook, tpl, policies(t, server)); len(p) != 1 || !strings.Contains(p[0], "permits argocd-server to connect to the port webhook of argocd-applicationset-controller, which no component needs") {
+		t.Fatalf("problems = %q", p)
+	}
+}

@@ -143,6 +143,11 @@ type SourceConfig struct {
 	// not exist, and warns when a webhook accepts them. Empty: no check.
 	AppSetWebhook string `json:"appSetWebhook,omitempty"`
 	ServerWebhook string `json:"serverWebhook,omitempty"`
+	// AppSetWebhookOpen is for argocd-applications: Git servers send
+	// events to the webhook of the ApplicationSet controller, thus
+	// NetworkPolicies may let other pods connect to it. Without it, the
+	// webhook must be closed.
+	AppSetWebhookOpen bool `json:"appSetWebhookOpen,omitempty"`
 	// ControllerBindRoles is for argocd-applications: the ClusterRoles that
 	// the application controller may bind, for example the ClusterRole of
 	// the worker (SQUARED_WORKER_CLUSTER_ROLE).
@@ -737,6 +742,9 @@ func (s *argoAppsSource) networkProblems(ctx context.Context) ([]string, error) 
 	templates := map[string]*kube.PodTemplate{}
 	var p []string
 	for _, pp := range protectedPorts {
+		if s.sc.AppSetWebhookOpen && pp.Workload == argoAppSetController && pp.Port == "webhook" {
+			continue
+		}
 		tpl, ok := templates[pp.Workload]
 		if !ok {
 			tpl, err = s.kube.GetPodTemplate(ctx, s.sc.Namespace, "deployments", pp.Workload)

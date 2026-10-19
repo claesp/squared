@@ -653,7 +653,16 @@ func (s *argoAppsSource) References(ctx context.Context) ([]Reference, []string,
 		}
 	}
 
+	netProblems, err := s.networkProblems(ctx)
+	if err != nil {
+		return nil, nil, err
+	}
+
 	var msgs []string
+	if len(netProblems) > 0 {
+		msgs = append(msgs, fmt.Sprintf("the NetworkPolicies of Argo CD do not protect its components: %s. The guard keeps the current protection",
+			strings.Join(netProblems, "; ")))
+	}
 	if len(appRBAC) > 0 {
 		msgs = append(msgs, fmt.Sprintf("the application controller of Argo CD has more rights than the projects permit: %s. The guard keeps the current protection",
 			strings.Join(appRBAC, "; ")))
@@ -716,6 +725,31 @@ func (s *argoAppsSource) References(ctx context.Context) ([]Reference, []string,
 		return nil, warnings, errors.New(joinSentences(msgs))
 	}
 	return nil, warnings, nil
+}
+
+// networkProblems returns the problems of the NetworkPolicies for the
+// protected ports of the components of Argo CD that run.
+func (s *argoAppsSource) networkProblems(ctx context.Context) ([]string, error) {
+	policies, err := s.kube.ListNetworkPolicies(ctx, s.sc.Namespace)
+	if err != nil {
+		return nil, err
+	}
+	templates := map[string]*kube.PodTemplate{}
+	var p []string
+	for _, pp := range protectedPorts {
+		tpl, ok := templates[pp.Workload]
+		if !ok {
+			tpl, err = s.kube.GetPodTemplate(ctx, s.sc.Namespace, "deployments", pp.Workload)
+			if err != nil {
+				return nil, err
+			}
+			templates[pp.Workload] = tpl
+		}
+		if tpl != nil {
+			p = append(p, checkProtectedPort(pp, tpl, policies)...)
+		}
+	}
+	return p, nil
 }
 
 // webhookWarnings sends the probes to the webhooks of the ApplicationSet

@@ -733,7 +733,45 @@ controls that it uses. Read [architecture.md](architecture.md) first.
 
   Limit: the guard does not check Bitbucket Cloud. The end-to-end test
   checks that the guard gives no warning, removes the GitHub secret and
-  checks the warning, and puts the secret back. The end-to-end test
+  checks the warning, and puts the secret back.
+
+- **NetworkPolicies of Argo CD.** Some components of Argo CD do not check
+  who connects. The repository server renders the manifests of each
+  repository with the credentials of Argo CD for each caller: a tenant pod
+  could get the manifests of other tenants and of the platform
+  repository. Redis has the cache with the manifests, which the
+  application controller trusts, and only its password protects it. The
+  commit server pushes to Git with the write credentials, and Dex gives
+  the API server the identities of the users. The Helm chart makes
+  NetworkPolicies that let only the components that need them connect to
+  these ports (`global.networkPolicy.create`, the default). It makes no
+  policy for the ApplicationSet controller, and no default deny.
+
+  The guard reads the NetworkPolicies of the namespace of Argo CD (right
+  `list`) and the pod templates of the components that run. A pod can
+  connect to a port when no policy selects the pods of the component, or
+  when a rule of one policy permits it. The guard finds the rules for a
+  port by its number and by the name of the container port.
+
+  | Port | Only these components may connect |
+  |---|---|
+  | `repo-server` of the repository server | API server, application controller, ApplicationSet controller, notifications controller |
+  | `redis` of Redis | API server, repository server, application controller |
+  | `server` of the commit server | application controller |
+  | `http` and `grpc` of Dex | API server |
+
+  | NetworkPolicies | Result |
+  |---|---|
+  | No policy selects the component | Error |
+  | A rule for the port without `from`, with `ipBlock` or `namespaceSelector`, or with a `podSelector` that does not name components (`app.kubernetes.io/name`) | Error |
+  | A rule for the port that names another component | Error |
+  | Rules for other ports, for example `metrics` | No problem |
+
+  Limit: NetworkPolicies work only when the network plugin of the
+  cluster enforces them. The end-to-end test checks with a pod of a tenant
+  that it cannot connect to the repository server and to Redis but to the
+  API server, then adds a policy that opens the repository server, and
+  checks the error. The end-to-end test
   adds an ApplicationSet with a Git generator for the platform repository,
   a project from the parameters and a pull request generator with a token
   and `insecure: true`, and checks the errors. It turns on the SCM

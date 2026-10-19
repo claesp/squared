@@ -233,6 +233,91 @@ type Container struct {
 		} `json:"valueFrom"`
 	} `json:"env"`
 	EnvFrom []json.RawMessage `json:"envFrom"`
+	Ports   []struct {
+		Name          string `json:"name"`
+		ContainerPort int    `json:"containerPort"`
+	} `json:"ports"`
+}
+
+// PodTemplate is the part of the pod template of a workload that Squared
+// reads: the labels and the containers.
+type PodTemplate struct {
+	Labels     map[string]string
+	Containers []Container
+}
+
+// GetPodTemplate returns the pod template of a workload, for example
+// resource "deployments" of the group apps. It returns nil and no error
+// when the workload does not exist.
+func (c *Client) GetPodTemplate(ctx context.Context, namespace, resource, name string) (*PodTemplate, error) {
+	var w struct {
+		Spec struct {
+			Template struct {
+				Metadata struct {
+					Labels map[string]string `json:"labels"`
+				} `json:"metadata"`
+				Spec struct {
+					InitContainers []Container `json:"initContainers"`
+					Containers     []Container `json:"containers"`
+				} `json:"spec"`
+			} `json:"template"`
+		} `json:"spec"`
+	}
+	path := "/apis/apps/v1/namespaces/" + url.PathEscape(namespace) + "/" + url.PathEscape(resource) + "/" + url.PathEscape(name)
+	err := c.rest.Do(ctx, http.MethodGet, path, nil, &w)
+	if rest.HasStatus(err, http.StatusNotFound) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	t := w.Spec.Template
+	return &PodTemplate{Labels: t.Metadata.Labels, Containers: append(t.Spec.InitContainers, t.Spec.Containers...)}, nil
+}
+
+// LabelSelector is a selector of Kubernetes objects by their labels.
+type LabelSelector struct {
+	MatchLabels      map[string]string `json:"matchLabels"`
+	MatchExpressions []struct {
+		Key      string   `json:"key"`
+		Operator string   `json:"operator"`
+		Values   []string `json:"values"`
+	} `json:"matchExpressions"`
+}
+
+// NetworkPolicy is the part of a NetworkPolicy that tells who can connect
+// to the pods.
+type NetworkPolicy struct {
+	Metadata struct {
+		Name string `json:"name"`
+	} `json:"metadata"`
+	Spec struct {
+		PodSelector LabelSelector `json:"podSelector"`
+		PolicyTypes []string      `json:"policyTypes"`
+		Ingress     []struct {
+			From []struct {
+				PodSelector       *LabelSelector  `json:"podSelector"`
+				NamespaceSelector *LabelSelector  `json:"namespaceSelector"`
+				IPBlock           json.RawMessage `json:"ipBlock"`
+			} `json:"from"`
+			Ports []struct {
+				Port json.RawMessage `json:"port"`
+			} `json:"ports"`
+		} `json:"ingress"`
+		Egress []json.RawMessage `json:"egress"`
+	} `json:"spec"`
+}
+
+// ListNetworkPolicies returns the NetworkPolicies of a namespace.
+func (c *Client) ListNetworkPolicies(ctx context.Context, namespace string) ([]NetworkPolicy, error) {
+	var out struct {
+		Items []NetworkPolicy `json:"items"`
+	}
+	path := "/apis/networking.k8s.io/v1/namespaces/" + url.PathEscape(namespace) + "/networkpolicies"
+	if err := c.rest.Do(ctx, http.MethodGet, path, nil, &out); err != nil {
+		return nil, err
+	}
+	return out.Items, nil
 }
 
 // GetContainers returns the containers of the pod template of a workload,

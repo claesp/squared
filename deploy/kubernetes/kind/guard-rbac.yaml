@@ -25,6 +25,10 @@ rules:
     resourceNames: ["argocd-server", "argocd-applicationset-controller", "argocd-repo-server", "argocd-redis", "argocd-dex-server",
       "argocd-notifications-controller", "argocd-commit-server"]
     verbs: ["get"]
+  # Who can connect to the components.
+  - apiGroups: ["networking.k8s.io"]
+    resources: ["networkpolicies"]
+    verbs: ["list"]
   # The service accounts of the components, which tell if their pods get a
   # token of the Kubernetes API.
   - apiGroups: [""]

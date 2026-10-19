@@ -239,7 +239,8 @@ all `*.localhost` names.
    commands in pods, a token of the API for the repository server and for
    Redis, the Role of the job for the password of Redis, more rights for
    the accounts of Dex, of the notifications controller and of the commit
-   server, a webhook secret that is not there, and the
+   server, a webhook secret that is not there, a NetworkPolicy that opens
+   the repository server, and the
    ApplicationSet policy `sync` give errors,
    and that Keycloak
    mappers that write `groups` on the client `argocd` and `email` from
@@ -289,7 +290,9 @@ all `*.localhost` names.
    As administrator, it uses the web interface of Argo CD: it shows the
    Deployment, its events and the logs of its pod, and runs the action
    `restart`.
-10. Checks that a pod in another namespace cannot connect to the service.
+10. Checks that a pod in another namespace cannot connect to the service,
+    and that a pod of the tenant cannot connect to the repository server and
+    to Redis of Argo CD.
 11. Changes a value (revision 2) and checks the new answer.
 12. Rolls back to revision 1 (revision 3) and checks the old answer.
 13. Removes `dev` from the tenant and checks that `dev` loses the access.

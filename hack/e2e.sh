@@ -1122,6 +1122,43 @@ YAML
   wait_for "the guard has no errors after the NetworkPolicy of the metrics is removed" 60 guard_clean
   log "the guard checks the NetworkPolicies of the metrics of Argo CD"
 
+  # An Ingress for the API server without TLS, and a Service of type
+  # ExternalName in another namespace that points to Redis, which an
+  # Ingress there could use. Kind has no ingress controller, thus nothing
+  # becomes reachable.
+  k apply -f - >/dev/null <<YAML
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: e2e-guard-plain
+  namespace: argocd
+spec:
+  rules:
+    - host: argocd.e2e.invalid
+      http:
+        paths:
+          - { path: /, pathType: Prefix, backend: { service: { name: argocd-server, port: { number: 80 } } } }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: e2e-guard-cache
+  namespace: default
+spec:
+  type: ExternalName
+  externalName: argocd-redis.argocd.svc.cluster.local
+YAML
+  guard_reports_ingress() {
+    guard_status | jq -e '[.errors[]? | select(test("the Ingress e2e-guard-plain sends requests for argocd.e2e.invalid to the API server without TLS"))] | length > 0' >/dev/null &&
+      guard_status | jq -e '[.errors[]? | select(test("the Service default/e2e-guard-cache of type ExternalName makes the port redis of argocd-redis"))] | length > 0' >/dev/null
+  }
+  wait_for "the guard reports the Ingress without TLS and the ExternalName to Redis" 60 guard_reports_ingress
+  [[ "$(worker_may_add_dev squared-admins)" == 403 ]] || die "the protection of /squared-admins is gone after the Ingress"
+  k -n argocd delete ingress e2e-guard-plain >/dev/null
+  k -n default delete service e2e-guard-cache >/dev/null
+  wait_for "the guard has no errors after the Ingress and the Service are removed" 60 guard_clean
+  log "the guard checks how Argo CD is reachable from outside its namespace"
+
   # Keycloak mappers that write the groups claim or the email claim. These
   # are in no token, thus they are harmless, but the guard must report
   # each mapper that does not come from the group membership or the email

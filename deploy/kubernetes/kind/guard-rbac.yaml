@@ -25,9 +25,10 @@ rules:
     resourceNames: ["argocd-server", "argocd-applicationset-controller", "argocd-repo-server", "argocd-redis", "argocd-dex-server",
       "argocd-notifications-controller", "argocd-commit-server"]
     verbs: ["get"]
-  # Who can connect to the components.
+  # Who can connect to the components, and how they are reachable from
+  # outside the namespace.
   - apiGroups: ["networking.k8s.io"]
-    resources: ["networkpolicies"]
+    resources: ["networkpolicies", "ingresses"]
     verbs: ["list"]
   # The service accounts of the components, which tell if their pods get a
   # token of the Kubernetes API.
@@ -62,6 +63,28 @@ kind: ClusterRoleBinding
 metadata:
   name: squared-guard-applications
 roleRef: { apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: squared-guard-applications }
+subjects:
+  - { kind: ServiceAccount, name: squared-guard, namespace: squared-guard }
+---
+# The Services and the HTTPRoutes of all namespaces can make Argo CD
+# reachable from outside its namespace. They have no secrets.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: squared-guard-routes
+rules:
+  - apiGroups: [""]
+    resources: ["services"]
+    verbs: ["list"]
+  - apiGroups: ["gateway.networking.k8s.io"]
+    resources: ["httproutes"]
+    verbs: ["list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: squared-guard-routes
+roleRef: { apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: squared-guard-routes }
 subjects:
   - { kind: ServiceAccount, name: squared-guard, namespace: squared-guard }
 ---

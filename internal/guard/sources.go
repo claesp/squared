@@ -152,6 +152,10 @@ type SourceConfig struct {
 	// pods may connect to the metrics of Argo CD, for example of
 	// Prometheus. Empty: no pod.
 	MetricsNamespaces []string `json:"metricsNamespaces,omitempty"`
+	// PlainHTTPServices is for argocd-applications: the Services that may
+	// publish the API server outside the cluster with HTTP without TLS, for
+	// example a NodePort that only 127.0.0.1 can reach.
+	PlainHTTPServices []string `json:"plainHTTPServices,omitempty"`
 	// ControllerBindRoles is for argocd-applications: the ClusterRoles that
 	// the application controller may bind, for example the ClusterRole of
 	// the worker (SQUARED_WORKER_CLUSTER_ROLE).
@@ -662,12 +666,24 @@ func (s *argoAppsSource) References(ctx context.Context) ([]Reference, []string,
 		}
 	}
 
-	netProblems, err := s.networkProblems(ctx)
+	templates, err := s.componentTemplates(ctx)
+	if err != nil {
+		return nil, nil, err
+	}
+	netProblems, err := s.networkProblems(ctx, templates)
+	if err != nil {
+		return nil, nil, err
+	}
+	ingressProblems, err := s.ingressProblems(ctx, params, templates)
 	if err != nil {
 		return nil, nil, err
 	}
 
 	var msgs []string
+	if len(ingressProblems) > 0 {
+		msgs = append(msgs, fmt.Sprintf("Argo CD is reachable from outside its namespace in a way that is not safe: %s. The guard keeps the current protection",
+			strings.Join(ingressProblems, "; ")))
+	}
 	if len(netProblems) > 0 {
 		msgs = append(msgs, fmt.Sprintf("the NetworkPolicies of Argo CD do not protect its components: %s. The guard keeps the current protection",
 			strings.Join(netProblems, "; ")))
@@ -736,32 +752,65 @@ func (s *argoAppsSource) References(ctx context.Context) ([]Reference, []string,
 	return nil, warnings, nil
 }
 
+// componentTemplates returns the pod templates of the components of Argo
+// CD that run.
+func (s *argoAppsSource) componentTemplates(ctx context.Context) (map[string]*kube.PodTemplate, error) {
+	templates := map[string]*kube.PodTemplate{}
+	for _, w := range metricsWorkloads {
+		tpl, err := s.kube.GetPodTemplate(ctx, s.sc.Namespace, cmp.Or(w.Resource, "deployments"), w.Workload)
+		if err != nil {
+			return nil, err
+		}
+		if tpl != nil {
+			templates[w.Workload] = tpl
+		}
+	}
+	return templates, nil
+}
+
 // networkProblems returns the problems of the NetworkPolicies for the
-// protected ports of the components of Argo CD that run.
-func (s *argoAppsSource) networkProblems(ctx context.Context) ([]string, error) {
+// protected ports of the components of Argo CD that run (templates).
+func (s *argoAppsSource) networkProblems(ctx context.Context, templates map[string]*kube.PodTemplate) ([]string, error) {
 	policies, err := s.kube.ListNetworkPolicies(ctx, s.sc.Namespace)
 	if err != nil {
 		return nil, err
 	}
-	templates := map[string]*kube.PodTemplate{}
 	var p []string
 	for _, pp := range append(slices.Clone(protectedPorts), metricsPorts(s.sc.MetricsNamespaces)...) {
 		if s.sc.AppSetWebhookOpen && pp.Workload == argoAppSetController && pp.Port == "webhook" {
 			continue
 		}
-		tpl, ok := templates[pp.Workload]
-		if !ok {
-			tpl, err = s.kube.GetPodTemplate(ctx, s.sc.Namespace, pp.resource(), pp.Workload)
-			if err != nil {
-				return nil, err
-			}
-			templates[pp.Workload] = tpl
-		}
-		if tpl != nil {
+		if tpl := templates[pp.Workload]; tpl != nil {
 			p = append(p, checkProtectedPort(pp, tpl, policies)...)
 		}
 	}
 	return p, nil
+}
+
+// ingressProblems returns the problems of the ways from outside the
+// namespace of Argo CD to its components (templates).
+func (s *argoAppsSource) ingressProblems(ctx context.Context, params map[string]string, templates map[string]*kube.PodTemplate) ([]string, error) {
+	services, err := s.kube.ListServices(ctx, "")
+	if err != nil {
+		return nil, err
+	}
+	ingresses, err := s.kube.ListIngresses(ctx, s.sc.Namespace)
+	if err != nil {
+		return nil, err
+	}
+	routes, err := s.kube.ListHTTPRoutes(ctx)
+	if err != nil {
+		return nil, err
+	}
+	a := argoIngress{Namespace: s.sc.Namespace, Templates: templates, PlainHTTP: s.sc.PlainHTTPServices, WebhookOpen: s.sc.AppSetWebhookOpen}
+	if tpl := templates[argoServer]; tpl != nil {
+		for _, c := range tpl.Containers {
+			v, _ := effectiveParam(params, c, serverInsecure, true, "false")
+			on, _ := strconv.ParseBool(strings.TrimSpace(v))
+			a.Insecure = a.Insecure || on
+		}
+	}
+	return checkArgoIngress(a, services, ingresses, routes), nil
 }
 
 // webhookWarnings sends the probes to the webhooks of the ApplicationSet

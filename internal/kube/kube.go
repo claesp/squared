@@ -17,6 +17,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -306,6 +307,190 @@ type NetworkPolicy struct {
 		} `json:"ingress"`
 		Egress []json.RawMessage `json:"egress"`
 	} `json:"spec"`
+}
+
+// Service is the part of a Service that tells where its traffic goes and
+// if it is reachable from outside the cluster.
+type Service struct {
+	Metadata struct {
+		Name      string `json:"name"`
+		Namespace string `json:"namespace"`
+	} `json:"metadata"`
+	Spec struct {
+		Type         string            `json:"type"`
+		Selector     map[string]string `json:"selector"`
+		ExternalName string            `json:"externalName"`
+		ExternalIPs  []string          `json:"externalIPs"`
+		Ports        []struct {
+			Name       string          `json:"name"`
+			Port       int             `json:"port"`
+			TargetPort json.RawMessage `json:"targetPort"`
+		} `json:"ports"`
+	} `json:"spec"`
+}
+
+// ListServices returns the Services of a namespace, or of all namespaces
+// when namespace is "".
+func (c *Client) ListServices(ctx context.Context, namespace string) ([]Service, error) {
+	var out struct {
+		Items []Service `json:"items"`
+	}
+	path := "/api/v1/services"
+	if namespace != "" {
+		path = "/api/v1/namespaces/" + url.PathEscape(namespace) + "/services"
+	}
+	if err := c.rest.Do(ctx, http.MethodGet, path, nil, &out); err != nil {
+		return nil, err
+	}
+	return out.Items, nil
+}
+
+// ServiceBackend is a Service and a port (number or name) that an Ingress
+// or an HTTPRoute sends requests to.
+type ServiceBackend struct {
+	Name      string
+	Namespace string // "" for the namespace of the route.
+	Port      string
+}
+
+// Ingress is the part of an Ingress that tells its backends and its TLS
+// hosts.
+type Ingress struct {
+	Name     string
+	Backends []IngressBackend
+	// TLS are the hosts with TLS. A TLS entry without hosts gives "".
+	TLS []string
+}
+
+// IngressBackend is a backend of an Ingress, with the host of its rule.
+type IngressBackend struct {
+	ServiceBackend
+	Host string
+}
+
+// ListIngresses returns the Ingresses of a namespace.
+func (c *Client) ListIngresses(ctx context.Context, namespace string) ([]Ingress, error) {
+	type backend struct {
+		Service *struct {
+			Name string `json:"name"`
+			Port struct {
+				Number int    `json:"number"`
+				Name   string `json:"name"`
+			} `json:"port"`
+		} `json:"service"`
+	}
+	var out struct {
+		Items []struct {
+			Metadata struct {
+				Name string `json:"name"`
+			} `json:"metadata"`
+			Spec struct {
+				DefaultBackend *backend `json:"defaultBackend"`
+				Rules          []struct {
+					Host string `json:"host"`
+					HTTP *struct {
+						Paths []struct {
+							Backend backend `json:"backend"`
+						} `json:"paths"`
+					} `json:"http"`
+				} `json:"rules"`
+				TLS []struct {
+					Hosts []string `json:"hosts"`
+				} `json:"tls"`
+			} `json:"spec"`
+		} `json:"items"`
+	}
+	path := "/apis/networking.k8s.io/v1/namespaces/" + url.PathEscape(namespace) + "/ingresses"
+	if err := c.rest.Do(ctx, http.MethodGet, path, nil, &out); err != nil {
+		return nil, err
+	}
+	toBackend := func(b *backend, host string) (IngressBackend, bool) {
+		if b == nil || b.Service == nil {
+			return IngressBackend{}, false
+		}
+		port := b.Service.Port.Name
+		if port == "" {
+			port = strconv.Itoa(b.Service.Port.Number)
+		}
+		return IngressBackend{ServiceBackend{Name: b.Service.Name, Port: port}, host}, true
+	}
+	var ingresses []Ingress
+	for _, it := range out.Items {
+		in := Ingress{Name: it.Metadata.Name}
+		if b, ok := toBackend(it.Spec.DefaultBackend, ""); ok {
+			in.Backends = append(in.Backends, b)
+		}
+		for _, r := range it.Spec.Rules {
+			if r.HTTP == nil {
+				continue
+			}
+			for _, p := range r.HTTP.Paths {
+				if b, ok := toBackend(&p.Backend, r.Host); ok {
+					in.Backends = append(in.Backends, b)
+				}
+			}
+		}
+		for _, t := range it.Spec.TLS {
+			if len(t.Hosts) == 0 {
+				in.TLS = append(in.TLS, "")
+			}
+			in.TLS = append(in.TLS, t.Hosts...)
+		}
+		ingresses = append(ingresses, in)
+	}
+	return ingresses, nil
+}
+
+// HTTPRoute is the part of an HTTPRoute of the Gateway API that tells its
+// backends.
+type HTTPRoute struct {
+	Name, Namespace string
+	Backends        []ServiceBackend
+}
+
+// ListHTTPRoutes returns the HTTPRoutes of all namespaces. It returns none
+// when the cluster has no Gateway API.
+func (c *Client) ListHTTPRoutes(ctx context.Context) ([]HTTPRoute, error) {
+	var out struct {
+		Items []struct {
+			Metadata struct {
+				Name      string `json:"name"`
+				Namespace string `json:"namespace"`
+			} `json:"metadata"`
+			Spec struct {
+				Rules []struct {
+					BackendRefs []struct {
+						Group     string `json:"group"`
+						Kind      string `json:"kind"`
+						Name      string `json:"name"`
+						Namespace string `json:"namespace"`
+						Port      int    `json:"port"`
+					} `json:"backendRefs"`
+				} `json:"rules"`
+			} `json:"spec"`
+		} `json:"items"`
+	}
+	err := c.rest.Do(ctx, http.MethodGet, "/apis/gateway.networking.k8s.io/v1/httproutes", nil, &out)
+	if rest.HasStatus(err, http.StatusNotFound) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	var routes []HTTPRoute
+	for _, it := range out.Items {
+		r := HTTPRoute{Name: it.Metadata.Name, Namespace: it.Metadata.Namespace}
+		for _, rule := range it.Spec.Rules {
+			for _, b := range rule.BackendRefs {
+				if (b.Kind != "" && b.Kind != "Service") || (b.Group != "" && b.Group != "core") {
+					continue
+				}
+				r.Backends = append(r.Backends, ServiceBackend{Name: b.Name, Namespace: b.Namespace, Port: strconv.Itoa(b.Port)})
+			}
+		}
+		routes = append(routes, r)
+	}
+	return routes, nil
 }
 
 // ListNetworkPolicies returns the NetworkPolicies of a namespace.

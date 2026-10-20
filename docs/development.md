@@ -240,7 +240,8 @@ all `*.localhost` names.
    Redis, the Role of the job for the password of Redis, more rights for
    the accounts of Dex, of the notifications controller and of the commit
    server, a webhook secret that is not there, NetworkPolicies that open
-   the repository server, the ApplicationSet webhook and the metrics, and
+   the repository server, the ApplicationSet webhook and the metrics, an
+   Ingress for the API server without TLS, an ExternalName to Redis, and
    the
    ApplicationSet policy `sync` give errors,
    and that Keycloak

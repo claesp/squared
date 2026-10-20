@@ -34,7 +34,8 @@ in a production cluster.
    false`) with your own, which let only Prometheus connect to the
    metrics, and no pod to the webhook of the ApplicationSet controller. Use
    [`deploy/kind/argocd-network-policies.yaml`](../deploy/kind/argocd-network-policies.yaml)
-   as the template, and set `metricsNamespaces` of the guard.
+   as the template, and set `metricsNamespaces` of the guard. Publish only
+   the API server, with TLS at the Ingress.
 3. Add a repository credential template in Argo CD for the address of the
    organization, with the Argo CD account.
 4. Apply the root application. Use

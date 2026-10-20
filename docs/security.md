@@ -819,6 +819,42 @@ controls that it uses. Read [architecture.md](architecture.md) first.
   that opens the webhook, and one that lets all namespaces connect to the
   metrics of the application controller, and checks the errors.
 
+- **Ingress of Argo CD.** An Ingress (`server.ingress`,
+  `server.ingressGrpc` and `applicationSet.ingress` of the Helm chart), an
+  HTTPRoute, or a Service of type NodePort or LoadBalancer or with
+  `externalIPs` makes a component reachable from outside the cluster, past
+  the NetworkPolicies. A Service of type ExternalName in another namespace
+  can point to a Service of Argo CD, and an Ingress in that namespace can
+  then use it. Only the port `server` of the API server may be reachable
+  in these ways, and the webhook of the ApplicationSet controller with
+  `appSetWebhookOpen`. The web interface and the API carry passwords,
+  tokens and session cookies, thus they need TLS. With `server.insecure`,
+  the API server speaks HTTP, and the TLS must end at the Ingress. The
+  development environment publishes the API server with a NodePort and
+  HTTP, but Kind publishes the port only on 127.0.0.1
+  ([`deploy/kind/cluster.yaml`](../deploy/kind/cluster.yaml)), thus the
+  guard of the development environment permits this Service
+  (`plainHTTPServices`).
+
+  The guard reads the Ingresses of the namespace of Argo CD, the
+  HTTPRoutes and the Services of all namespaces (right `list`, no
+  secrets), and the pod templates of the components. It follows a
+  Service by its selector and its target port to the container port of a
+  component.
+
+  | Way from outside | Result |
+  |---|---|
+  | To another port than `server` of the API server, for example `metrics`, or to another component | Error |
+  | To the webhook of the ApplicationSet controller without `appSetWebhookOpen` | Error |
+  | An Ingress to the API server, for a host without TLS in the Ingress | Error |
+  | A NodePort, LoadBalancer or `externalIPs` to the API server with `server.insecure`, except the Services in `plainHTTPServices` | Error |
+
+  Limit: the guard does not check the TLS of the Gateway of an HTTPRoute,
+  and it trusts the TLS settings of the Ingress, not the certificate. The
+  end-to-end test adds an Ingress for the API server without TLS and a
+  Service of type ExternalName in the namespace `default` that points to
+  Redis, and checks the errors.
+
 - **Harbor configuration.** Only the Harbor system administrator can read
   the configuration through the API, and a robot account cannot get that
   right. The table `properties` of the Harbor database has all settings,

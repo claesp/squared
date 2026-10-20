@@ -194,10 +194,9 @@ redis:
 redisSecretInit:
   enabled: false
 
-# With metrics, the chart makes a NetworkPolicy for the ApplicationSet
-# controller, which lets all namespaces connect to the metrics, and no pod
-# to the webhook: Forgejo sends its events to the API server (see
-# docs/security.md). Without it, each pod can connect to both.
-applicationSet:
-  metrics:
-    enabled: true
+# The NetworkPolicies of the chart let all namespaces connect to the
+# metrics, and it has no setting for this. deploy/kind/argocd-network-policies.yaml
+# replaces them (see docs/security.md).
+global:
+  networkPolicy:
+    create: false

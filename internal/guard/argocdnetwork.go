@@ -1,6 +1,7 @@
 package guard
 
 import (
+	"cmp"
 	"encoding/json"
 	"fmt"
 	"slices"
@@ -13,26 +14,56 @@ import (
 // protectedPort is a port of a component of Argo CD that does not check
 // who connects, thus only some components may connect to it.
 type protectedPort struct {
-	Workload string   // The Deployment.
+	Workload string   // The Deployment, or the StatefulSet with Resource "statefulsets".
+	Resource string   // "" for deployments.
 	Port     string   // The name of the container port.
 	Callers  []string // The components that may connect: app.kubernetes.io/name.
-	Why      string   // For the messages.
+	// Namespaces are the namespaces whose pods may connect
+	// (kubernetes.io/metadata.name), for example of Prometheus.
+	Namespaces []string
+	Why        string // For the messages.
+	// Optional tells that the component can run without the port.
+	Optional bool
+}
+
+// resource returns the resource of the workload.
+func (pp protectedPort) resource() string { return cmp.Or(pp.Resource, "deployments") }
+
+// metricsWorkloads are the components of Argo CD with a port metrics, and
+// the resources of their workloads.
+var metricsWorkloads = []struct{ Workload, Resource string }{
+	{argoAppController, "statefulsets"}, {argoServer, ""}, {argoRepoServer, ""}, {argoAppSetController, ""},
+	{argoRedis, ""}, {argoDex, ""}, {argoNotifications, ""}, {argoCommitServer, ""},
+}
+
+// metricsPorts returns the protected ports for the metrics of the
+// components: only pods in the namespaces (metricsNamespaces) may connect.
+// The metrics of the application controller tell the name, the project,
+// the repository and the destination of each application, thus of all
+// tenants, and those of the repository server the repositories.
+func metricsPorts(metricsNamespaces []string) []protectedPort {
+	var p []protectedPort
+	for _, w := range metricsWorkloads {
+		p = append(p, protectedPort{Workload: w.Workload, Resource: w.Resource, Port: "metrics", Namespaces: metricsNamespaces, Optional: true,
+			Why: "the metrics tell the applications, the repositories and the namespaces of all tenants"})
+	}
+	return p
 }
 
 var protectedPorts = []protectedPort{
-	{argoRepoServer, "repo-server", []string{argoServer, argoAppController, argoAppSetController, argoNotifications},
-		"it renders the manifests of each repository with the credentials of Argo CD for each caller"},
-	{argoRedis, "redis", []string{argoServer, argoRepoServer, argoAppController},
-		"it has the cache with the manifests, which the application controller trusts"},
-	{argoCommitServer, "server", []string{argoAppController},
-		"it pushes to Git with the write credentials of the repositories"},
-	{argoDex, "http", []string{argoServer}, "it answers the sign-ins for the API server"},
-	{argoDex, "grpc", []string{argoServer}, "it gives the API server the identities of the users"},
+	{Workload: argoRepoServer, Port: "repo-server", Callers: []string{argoServer, argoAppController, argoAppSetController, argoNotifications},
+		Why: "it renders the manifests of each repository with the credentials of Argo CD for each caller"},
+	{Workload: argoRedis, Port: "redis", Callers: []string{argoServer, argoRepoServer, argoAppController},
+		Why: "it has the cache with the manifests, which the application controller trusts"},
+	{Workload: argoCommitServer, Port: "server", Callers: []string{argoAppController},
+		Why: "it pushes to Git with the write credentials of the repositories"},
+	{Workload: argoDex, Port: "http", Callers: []string{argoServer}, Why: "it answers the sign-ins for the API server"},
+	{Workload: argoDex, Port: "grpc", Callers: []string{argoServer}, Why: "it gives the API server the identities of the users"},
 	// The ApplicationSet controller runs the generators again for each
 	// event, and Forgejo sends its events to the API server. The setting
 	// appSetWebhookOpen is for installations that use this webhook.
-	{argoAppSetController, "webhook", nil,
-		"Squared sends no events to it, and each event makes it run the generators of the ApplicationSets again"},
+	{Workload: argoAppSetController, Port: "webhook",
+		Why: "Squared sends no events to it, and each event makes it run the generators of the ApplicationSets again"},
 }
 
 // selects tells if a label selector selects an object with the labels.
@@ -72,7 +103,12 @@ func selects(sel kube.LabelSelector, labels map[string]string) bool {
 // selectedNames returns the values of app.kubernetes.io/name that a pod
 // selector permits, or nil when it permits other pods too.
 func selectedNames(sel kube.LabelSelector) []string {
-	const key = "app.kubernetes.io/name"
+	return selectedValues(sel, "app.kubernetes.io/name")
+}
+
+// selectedValues returns the values of a label that a selector permits,
+// or nil when it permits other objects too.
+func selectedValues(sel kube.LabelSelector, key string) []string {
 	var names []string
 	if v, ok := sel.MatchLabels[key]; ok {
 		names = []string{v}
@@ -129,6 +165,9 @@ func checkProtectedPort(pp protectedPort, tpl *kube.PodTemplate, policies []kube
 		}
 	}
 	where := fmt.Sprintf("the port %s of %s", pp.Port, pp.Workload)
+	if number == 0 && pp.Optional {
+		return nil
+	}
 	if number == 0 {
 		return []string{fmt.Sprintf("%s has no container port %s, thus the guard cannot check its NetworkPolicies", pp.Workload, pp.Port)}
 	}
@@ -157,7 +196,19 @@ func checkProtectedPort(pp protectedPort, tpl *kube.PodTemplate, policies []kube
 				case len(peer.IPBlock) > 0 && string(peer.IPBlock) != "null":
 					p = append(p, fmt.Sprintf("%s permits addresses (ipBlock) to connect to %s", rulePlace, where))
 				case peer.NamespaceSelector != nil:
-					p = append(p, fmt.Sprintf("%s permits pods of other namespaces to connect to %s", rulePlace, where))
+					names := selectedValues(*peer.NamespaceSelector, "kubernetes.io/metadata.name")
+					switch {
+					case names == nil && len(pp.Namespaces) == 0:
+						p = append(p, fmt.Sprintf("%s permits pods of other namespaces to connect to %s", rulePlace, where))
+					case names == nil:
+						p = append(p, fmt.Sprintf("%s permits pods of other namespaces than %s to connect to %s", rulePlace, strings.Join(pp.Namespaces, ", "), where))
+					default:
+						for _, n := range names {
+							if !slices.Contains(pp.Namespaces, n) {
+								p = append(p, fmt.Sprintf("%s permits pods of the namespace %s to connect to %s", rulePlace, n, where))
+							}
+						}
+					}
 				case peer.PodSelector == nil:
 					p = append(p, fmt.Sprintf("%s permits each pod to connect to %s", rulePlace, where))
 				default:

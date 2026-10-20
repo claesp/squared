@@ -76,6 +76,9 @@ install_charts() {
   # its webhook only when the API server has made server.secretkey.
   k -n argocd rollout restart deployment/argocd-applicationset-controller >/dev/null
   k -n argocd rollout status deployment/argocd-applicationset-controller --timeout 5m >/dev/null
+  # Who can connect to the components of Argo CD, instead of the policies
+  # of the chart.
+  k apply -f "$ROOT/deploy/kind/argocd-network-policies.yaml" >/dev/null
 
   k create namespace forgejo --dry-run=client -o yaml | k apply -f - >/dev/null
   log "installing the Forgejo database"

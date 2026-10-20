@@ -29,9 +29,12 @@ in a production cluster.
    random secrets for the other providers too (`configs.secret` of the
    Helm chart): without a secret, the webhooks of Argo CD accept the events
    of that provider without a signature. Restart the ApplicationSet
-   controller after a change of these secrets. Turn on the metrics of the
-   ApplicationSet controller (`applicationSet.metrics.enabled`), thus the
-   chart makes a NetworkPolicy that closes its webhook.
+   controller after a change of these secrets.
+   Replace the NetworkPolicies of the chart (`global.networkPolicy.create:
+   false`) with your own, which let only Prometheus connect to the
+   metrics, and no pod to the webhook of the ApplicationSet controller. Use
+   [`deploy/kind/argocd-network-policies.yaml`](../deploy/kind/argocd-network-policies.yaml)
+   as the template, and set `metricsNamespaces` of the guard.
 3. Add a repository credential template in Argo CD for the address of the
    organization, with the Argo CD account.
 4. Apply the root application. Use

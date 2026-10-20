@@ -148,6 +148,10 @@ type SourceConfig struct {
 	// NetworkPolicies may let other pods connect to it. Without it, the
 	// webhook must be closed.
 	AppSetWebhookOpen bool `json:"appSetWebhookOpen,omitempty"`
+	// MetricsNamespaces is for argocd-applications: the namespaces whose
+	// pods may connect to the metrics of Argo CD, for example of
+	// Prometheus. Empty: no pod.
+	MetricsNamespaces []string `json:"metricsNamespaces,omitempty"`
 	// ControllerBindRoles is for argocd-applications: the ClusterRoles that
 	// the application controller may bind, for example the ClusterRole of
 	// the worker (SQUARED_WORKER_CLUSTER_ROLE).
@@ -741,13 +745,13 @@ func (s *argoAppsSource) networkProblems(ctx context.Context) ([]string, error) 
 	}
 	templates := map[string]*kube.PodTemplate{}
 	var p []string
-	for _, pp := range protectedPorts {
+	for _, pp := range append(slices.Clone(protectedPorts), metricsPorts(s.sc.MetricsNamespaces)...) {
 		if s.sc.AppSetWebhookOpen && pp.Workload == argoAppSetController && pp.Port == "webhook" {
 			continue
 		}
 		tpl, ok := templates[pp.Workload]
 		if !ok {
-			tpl, err = s.kube.GetPodTemplate(ctx, s.sc.Namespace, "deployments", pp.Workload)
+			tpl, err = s.kube.GetPodTemplate(ctx, s.sc.Namespace, pp.resource(), pp.Workload)
 			if err != nil {
 				return nil, err
 			}

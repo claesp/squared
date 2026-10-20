@@ -1100,6 +1100,28 @@ YAML
   wait_for "the guard has no errors after the NetworkPolicy of the webhook is removed" 60 guard_clean
   log "the guard checks the NetworkPolicy of the ApplicationSet controller"
 
+  # A NetworkPolicy that lets all namespaces connect to the metrics of the
+  # application controller, as the Helm chart makes.
+  k apply -f - >/dev/null <<YAML
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: e2e-guard-metrics
+  namespace: argocd
+spec:
+  podSelector: { matchLabels: { app.kubernetes.io/name: argocd-application-controller } }
+  ingress:
+    - from: [{ namespaceSelector: {} }]
+      ports: [{ port: metrics }]
+YAML
+  guard_reports_metrics() {
+    guard_status | jq -e '[.errors[]? | select(test("rule 1 of the NetworkPolicy e2e-guard-metrics permits pods of other namespaces to connect to the port metrics of argocd-application-controller"))] | length > 0' >/dev/null
+  }
+  wait_for "the guard reports the open metrics of the application controller" 60 guard_reports_metrics
+  k -n argocd delete networkpolicy e2e-guard-metrics >/dev/null
+  wait_for "the guard has no errors after the NetworkPolicy of the metrics is removed" 60 guard_clean
+  log "the guard checks the NetworkPolicies of the metrics of Argo CD"
+
   # Keycloak mappers that write the groups claim or the email claim. These
   # are in no token, thus they are harmless, but the guard must report
   # each mapper that does not come from the group membership or the email
@@ -1467,9 +1489,10 @@ wait_for "probe pod has finished" 180 probe_done
 k delete namespace "${TENANT}-outside" --wait=false >/dev/null
 log "pods of other namespaces cannot connect"
 
-# A pod of the tenant cannot connect to the repository server, to Redis
-# and to the webhook of the ApplicationSet controller of Argo CD (the
-# NetworkPolicies of the Helm chart), but to the API server.
+# A pod of the tenant cannot connect to the repository server and its
+# metrics, to Redis and to the webhook of the ApplicationSet controller of
+# Argo CD (deploy/kind/argocd-network-policies.yaml), but to the API
+# server.
 k -n "$NS" apply -f - >/dev/null <<YAML
 apiVersion: v1
 kind: Pod
@@ -1484,7 +1507,7 @@ spec:
   containers:
     - name: probe
       image: docker.io/library/busybox:1.37
-      command: ["sh", "-c", "for t in argocd-repo-server:8081 argocd-redis:6379 argocd-applicationset-controller:7000 argocd-server:80; do nc -z -w 3 \${t%:*}.argocd.svc.cluster.local \${t#*:} && echo open \$t || echo closed \$t; done"]
+      command: ["sh", "-c", "for t in argocd-repo-server:8081 argocd-repo-server:8084 argocd-redis:6379 argocd-applicationset-controller:7000 argocd-server:80; do nc -z -w 3 \${t%:*}.argocd.svc.cluster.local \${t#*:} && echo open \$t || echo closed \$t; done"]
       securityContext:
         allowPrivilegeEscalation: false
         readOnlyRootFilesystem: true
@@ -1493,11 +1516,11 @@ YAML
 argocd_probe_done() { [[ "$(k -n "$NS" get pod argocd-probe -o jsonpath='{.status.phase}')" =~ ^(Succeeded|Failed)$ ]]; }
 wait_for "the probe pod of the tenant has finished" 180 argocd_probe_done
 probe_out="$(k -n "$NS" logs argocd-probe)"
-[[ "$probe_out" == *"closed argocd-repo-server:8081"* && "$probe_out" == *"closed argocd-redis:6379"* \
+[[ "$probe_out" == *"closed argocd-repo-server:8081"* && "$probe_out" == *"closed argocd-repo-server:8084"* && "$probe_out" == *"closed argocd-redis:6379"* \
   && "$probe_out" == *"closed argocd-applicationset-controller:7000"* && "$probe_out" == *"open argocd-server:80"* ]] \
   || die "a pod of the tenant reaches the wrong components of Argo CD: $probe_out"
 k -n "$NS" delete pod argocd-probe --wait=false >/dev/null
-log "pods of the tenant cannot connect to the repository server, to Redis and to the ApplicationSet webhook of Argo CD"
+log "pods of the tenant cannot connect to the repository server, its metrics, Redis and the ApplicationSet webhook of Argo CD"
 
 step "deploy revision 2 with a changed value"
 api PUT "/tenants/$TENANT/deployments/dev/hello" "$(jq -n \

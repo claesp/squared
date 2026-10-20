@@ -240,7 +240,8 @@ all `*.localhost` names.
    Redis, the Role of the job for the password of Redis, more rights for
    the accounts of Dex, of the notifications controller and of the commit
    server, a webhook secret that is not there, NetworkPolicies that open
-   the repository server and the ApplicationSet webhook, and the
+   the repository server, the ApplicationSet webhook and the metrics, and
+   the
    ApplicationSet policy `sync` give errors,
    and that Keycloak
    mappers that write `groups` on the client `argocd` and `email` from
@@ -291,8 +292,8 @@ all `*.localhost` names.
    Deployment, its events and the logs of its pod, and runs the action
    `restart`.
 10. Checks that a pod in another namespace cannot connect to the service,
-    and that a pod of the tenant cannot connect to the repository server, to
-    Redis and to the ApplicationSet webhook of Argo CD.
+    and that a pod of the tenant cannot connect to the repository server and
+    its metrics, to Redis and to the ApplicationSet webhook of Argo CD.
 11. Changes a value (revision 2) and checks the new answer.
 12. Rolls back to revision 1 (revision 3) and checks the old answer.
 13. Removes `dev` from the tenant and checks that `dev` loses the access.

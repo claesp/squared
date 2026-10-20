@@ -83,7 +83,8 @@ func TestCheckProtectedPort(t *testing.T) {
 		{"no policy", nil, "no NetworkPolicy limits the connections to argocd-repo-server, thus each pod, also of a tenant, can connect to the port repo-server of argocd-repo-server"},
 		{"only egress", policies(t, `[{"metadata": {"name": "out"}, "spec": {"podSelector": {}, "policyTypes": ["Egress"]}}]`), "no NetworkPolicy limits"},
 		{"all sources", extra(`{}`), "rule 1 of the NetworkPolicy extra permits each pod and each address to connect to the port repo-server of argocd-repo-server: it renders the manifests"},
-		{"other namespaces", extra(`{"from": [{"namespaceSelector": {"matchLabels": {"kubernetes.io/metadata.name": "acme-dev"}}}]}`), "permits pods of other namespaces"},
+		{"other namespaces", extra(`{"from": [{"namespaceSelector": {"matchLabels": {"kubernetes.io/metadata.name": "acme-dev"}}}]}`), "permits pods of the namespace acme-dev to connect"},
+		{"all namespaces", extra(`{"from": [{"namespaceSelector": {}}]}`), "permits pods of other namespaces to connect"},
 		{"addresses", extra(`{"from": [{"ipBlock": {"cidr": "10.0.0.0/8"}}], "ports": [{"port": 8081}]}`), "permits addresses (ipBlock)"},
 		{"all pods of the namespace", extra(`{"from": [{"podSelector": {}}], "ports": [{"port": "repo-server"}]}`), "permits pods without a name of a component"},
 		{"another component", extra(`{"from": [{"podSelector": {"matchExpressions": [{"key": "app.kubernetes.io/name", "operator": "In", "values": ["argocd-server", "argocd-dex-server"]}]}}]}`),
@@ -155,6 +156,63 @@ func TestCheckAppSetWebhookPort(t *testing.T) {
 	server := `[{"metadata": {"name": "x"}, "spec": {"podSelector": {"matchLabels": {"app.kubernetes.io/name": "argocd-applicationset-controller"}},
 		"ingress": [{"from": [{"podSelector": {"matchLabels": {"app.kubernetes.io/name": "argocd-server"}}}], "ports": [{"port": 7000}]}]}}]`
 	if p := checkProtectedPort(webhook, tpl, policies(t, server)); len(p) != 1 || !strings.Contains(p[0], "permits argocd-server to connect to the port webhook of argocd-applicationset-controller, which no component needs") {
+		t.Fatalf("problems = %q", p)
+	}
+}
+
+func TestCheckMetricsPorts(t *testing.T) {
+	controller := &kube.PodTemplate{
+		Labels:     map[string]string{"app.kubernetes.io/name": "argocd-application-controller", "app.kubernetes.io/instance": "argocd"},
+		Containers: containersFromPorts(map[string]int{"metrics": 8082}),
+	}
+	ports := metricsPorts([]string{"monitoring"})
+	if ports[0].Workload != argoAppController || ports[0].resource() != "statefulsets" {
+		t.Fatalf("ports[0] = %+v", ports[0])
+	}
+	metrics := ports[0]
+	// The policy of the Helm chart lets all namespaces connect.
+	chart := policies(t, `[{"metadata": {"name": "argocd-application-controller"}, "spec": {
+		"podSelector": {"matchLabels": {"app.kubernetes.io/name": "argocd-application-controller"}},
+		"policyTypes": ["Ingress"], "ingress": [{"from": [{"namespaceSelector": {}}], "ports": [{"port": "metrics"}]}]}}]`)
+	p := checkProtectedPort(metrics, controller, chart)
+	if len(p) != 1 || !strings.Contains(p[0], "permits pods of other namespaces than monitoring to connect to the port metrics of argocd-application-controller: the metrics tell the applications") {
+		t.Fatalf("problems = %q", p)
+	}
+	// Prometheus in the namespace monitoring.
+	prometheus := policies(t, `[{"metadata": {"name": "metrics"}, "spec": {
+		"podSelector": {"matchLabels": {"app.kubernetes.io/name": "argocd-application-controller"}},
+		"ingress": [{"from": [{"namespaceSelector": {"matchLabels": {"kubernetes.io/metadata.name": "monitoring"}},
+			"podSelector": {"matchLabels": {"app.kubernetes.io/name": "prometheus"}}}], "ports": [{"port": 8082}]}]}}]`)
+	if p := checkProtectedPort(metrics, controller, prometheus); len(p) != 0 {
+		t.Fatalf("problems = %q", p)
+	}
+	// Without metricsNamespaces, no namespace may connect.
+	if p := checkProtectedPort(metricsPorts(nil)[0], controller, prometheus); len(p) != 1 || !strings.Contains(p[0], "permits pods of the namespace monitoring") {
+		t.Fatalf("problems = %q", p)
+	}
+	// The default deny of the development environment.
+	deny := policies(t, `[{"metadata": {"name": "squared-default-deny"}, "spec": {"podSelector": {}, "policyTypes": ["Ingress"]}}]`)
+	if p := checkProtectedPort(metricsPorts(nil)[0], controller, deny); len(p) != 0 {
+		t.Fatalf("problems = %q", p)
+	}
+	// A component without metrics.
+	redis := &kube.PodTemplate{Labels: map[string]string{"app.kubernetes.io/name": "argocd-redis"}, Containers: containersFromPorts(map[string]int{"redis": 6379})}
+	if p := checkProtectedPort(metricsPorts(nil)[4], redis, nil); len(p) != 0 {
+		t.Fatalf("problems = %q", p)
+	}
+	// The policy of the API server of the chart has no ports, thus it also
+	// opens the metrics.
+	server := &kube.PodTemplate{Labels: map[string]string{"app.kubernetes.io/name": "argocd-server"},
+		Containers: containersFromPorts(map[string]int{"server": 8080, "metrics": 8083})}
+	open := policies(t, `[{"metadata": {"name": "argocd-server"}, "spec": {"podSelector": {"matchLabels": {"app.kubernetes.io/name": "argocd-server"}},
+		"policyTypes": ["Ingress"], "ingress": [{}]}}]`)
+	if p := checkProtectedPort(metricsPorts(nil)[1], server, open); len(p) != 1 || !strings.Contains(p[0], "permits each pod and each address to connect to the port metrics of argocd-server") {
+		t.Fatalf("problems = %q", p)
+	}
+	// The policy of the development environment opens only the port server.
+	dev := policies(t, `[{"metadata": {"name": "squared-argocd-server"}, "spec": {"podSelector": {"matchLabels": {"app.kubernetes.io/name": "argocd-server"}},
+		"policyTypes": ["Ingress"], "ingress": [{"ports": [{"port": "server"}]}]}}]`)
+	if p := checkProtectedPort(metricsPorts(nil)[1], server, dev); len(p) != 0 {
 		t.Fatalf("problems = %q", p)
 	}
 }

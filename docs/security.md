@@ -508,6 +508,26 @@ controls that it uses. Read [architecture.md](architecture.md) first.
   | In the namespaces of `applicationNamespaces`, and in the cluster when that list is not empty: the rights of the Role for applications, ApplicationSets, projects and events | No problem |
   | Each other right, for example a write right in the namespace of Argo CD, or a read right in another namespace or in the cluster | Error |
 
+  The end-to-end test
+  adds an ApplicationSet with a Git generator for the platform repository,
+  a project from the parameters and a pull request generator with a token
+  and `insecure: true`, and checks the errors. It turns on the SCM
+  generators without limits and checks the errors. The ApplicationSet
+  also has a template patch with the finalizer of Argo CD and a tenant
+  project in a branch, and a Git generator with a template with a tenant
+  project. It adds a plugin generator with a token from a key that is
+  not a plugin token and a `baseUrl` without TLS, and one without a
+  ConfigMap, and a cluster decision resource generator with the status
+  of Argo CD applications, and one with a ConfigMap name from a list, and
+  checks the errors and the warning. It gives read rights in the
+  namespace `default` to the group of the service accounts of the
+  namespace of Argo CD, and checks the error. It lets an
+  ApplicationSet take over a test application with the labels of Squared,
+  checks the errors, and checks that Kubernetes removes the application
+  with the ApplicationSet. It sets the policy `sync`, then turns on the
+  override and adds an ApplicationSet with the policy `sync`, and checks
+  the errors.
+
 - **Rights of the application controller of Argo CD.** The Helm chart
   gives the application controller all rights in the cluster (`*` on
   `*`), because Argo CD can deploy each kind. But the projects tell which
@@ -742,24 +762,31 @@ controls that it uses. Read [architecture.md](architecture.md) first.
   repository. Redis has the cache with the manifests, which the
   application controller trusts, and only its password protects it. The
   commit server pushes to Git with the write credentials, and Dex gives
-  the API server the identities of the users. The Helm chart makes
-  NetworkPolicies that let only the components that need them connect to
-  these ports (`global.networkPolicy.create`, the default), but no default
-  deny.
+  the API server the identities of the users. The webhook of the
+  ApplicationSet controller runs the generators again for each event,
+  and Forgejo sends its events to the API server, thus no pod needs it.
+  The metrics of the application controller tell the name, the project,
+  the repository and the destination of each application, thus of all
+  tenants, and those of the repository server tell the repositories.
 
-  The webhook of the ApplicationSet controller runs the generators of the
-  matching ApplicationSets again for each event. Forgejo sends its events
-  to the API server, thus no pod needs to connect to this webhook. The
-  chart makes a policy for the ApplicationSet controller only with its
-  metrics, an Ingress or an HTTPRoute: without them, each pod can connect
-  to the webhook and the metrics, and with an Ingress or an HTTPRoute,
-  the policy opens the webhook to all. The development environment turns
-  on the metrics (`applicationSet.metrics.enabled`), thus the policy of the
-  chart closes the webhook. An installation that uses this webhook sets
-  `appSetWebhookOpen`. The signatures of the events must then protect it
-  (see the webhooks above). Because the policy closes the webhook, the
-  guard of the development environment does not test it
-  (`appSetWebhook` is empty).
+  The Helm chart makes NetworkPolicies (`global.networkPolicy.create`, the
+  default). They protect the repository server, Redis, the commit server
+  and Dex, but they let all namespaces connect to the metrics, the policy
+  of the API server has no port limit and thus also opens its metrics,
+  and there is no default deny. The chart makes a policy for the
+  ApplicationSet controller only with its metrics, an Ingress or an
+  HTTPRoute: without them, each pod can connect to its webhook and its
+  metrics, and with an Ingress or an HTTPRoute, the policy opens the
+  webhook to all. The chart has no setting for the sources of the
+  metrics. Thus the development environment turns the policies of the
+  chart off, and applies
+  [`deploy/kind/argocd-network-policies.yaml`](../deploy/kind/argocd-network-policies.yaml):
+  a default deny for the namespace of Argo CD, the API server only on its
+  port `server`, and the repository server and Redis as in the chart. It
+  has no Prometheus, thus no pod can connect to the metrics. The kubelet
+  can still check the health of the pods. Because no pod can connect to
+  the webhook of the ApplicationSet controller, the guard of the
+  development environment does not test it (`appSetWebhook` is empty).
 
   The guard reads the NetworkPolicies of the namespace of Argo CD (right
   `list`) and the pod templates of the components that run. A pod can
@@ -767,45 +794,31 @@ controls that it uses. Read [architecture.md](architecture.md) first.
   when a rule of one policy permits it. The guard finds the rules for a
   port by its number and by the name of the container port.
 
-  | Port | Only these components may connect |
+  | Port | Only these may connect |
   |---|---|
   | `repo-server` of the repository server | API server, application controller, ApplicationSet controller, notifications controller |
   | `redis` of Redis | API server, repository server, application controller |
   | `server` of the commit server | application controller |
   | `http` and `grpc` of Dex | API server |
-  | `webhook` of the ApplicationSet controller | none, except with `appSetWebhookOpen` |
+  | `webhook` of the ApplicationSet controller | none, except with `appSetWebhookOpen` (Git servers send events to it, thus the signatures must protect it, see the webhooks above) |
+  | `metrics` of each component that has it | pods of the namespaces in `metricsNamespaces`, for example of Prometheus, else none |
 
   | NetworkPolicies | Result |
   |---|---|
   | No policy selects the component | Error |
-  | A rule for the port without `from`, with `ipBlock` or `namespaceSelector`, or with a `podSelector` that does not name components (`app.kubernetes.io/name`) | Error |
+  | A rule for the port without `from`, with `ipBlock`, or with a `podSelector` that does not name components (`app.kubernetes.io/name`) | Error |
   | A rule for the port that names another component | Error |
-  | Rules for other ports, for example `metrics` | No problem |
+  | A rule for the port with a `namespaceSelector` that does not name only namespaces of the list (`kubernetes.io/metadata.name`) | Error |
+  | Rules for other ports | No problem |
 
   Limit: NetworkPolicies work only when the network plugin of the
   cluster enforces them. The end-to-end test checks with a pod of a tenant
-  that it cannot connect to the repository server, to Redis and to the
-  webhook of the ApplicationSet controller, but to the API server. Then it
-  adds a policy that opens the repository server and one that opens the
-  webhook, and checks the errors. The end-to-end test
-  adds an ApplicationSet with a Git generator for the platform repository,
-  a project from the parameters and a pull request generator with a token
-  and `insecure: true`, and checks the errors. It turns on the SCM
-  generators without limits and checks the errors. The ApplicationSet
-  also has a template patch with the finalizer of Argo CD and a tenant
-  project in a branch, and a Git generator with a template with a tenant
-  project. It adds a plugin generator with a token from a key that is
-  not a plugin token and a `baseUrl` without TLS, and one without a
-  ConfigMap, and a cluster decision resource generator with the status
-  of Argo CD applications, and one with a ConfigMap name from a list, and
-  checks the errors and the warning. It gives read rights in the
-  namespace `default` to the group of the service accounts of the
-  namespace of Argo CD, and checks the error. It lets an
-  ApplicationSet take over a test application with the labels of Squared,
-  checks the errors, and checks that Kubernetes removes the application
-  with the ApplicationSet. It sets the policy `sync`, then turns on the
-  override and adds an ApplicationSet with the policy `sync`, and checks
-  the errors.
+  that it cannot connect to the repository server and its metrics, to
+  Redis and to the webhook of the ApplicationSet controller, but to the
+  API server. Then it adds a policy that opens the repository server, one
+  that opens the webhook, and one that lets all namespaces connect to the
+  metrics of the application controller, and checks the errors.
+
 - **Harbor configuration.** Only the Harbor system administrator can read
   the configuration through the API, and a robot account cannot get that
   right. The table `properties` of the Harbor database has all settings,

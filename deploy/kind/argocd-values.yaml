@@ -3,6 +3,12 @@
 configs:
   params:
     server.insecure: true
+    # The clients of the repository server send the credentials of the
+    # repositories. They check its certificate, which hack/kind-up.sh signs
+    # (argocd-repo-server-tls, see docs/security.md).
+    server.repo.server.strict.tls: true
+    controller.repo.server.strict.tls: true
+    applicationsetcontroller.repo.server.strict.tls: true
     # Squared needs no SCM provider and pull request generators. With them,
     # an ApplicationSet can send the token of a Secret in its namespace to
     # a server (see docs/security.md).

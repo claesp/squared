@@ -156,6 +156,10 @@ type SourceConfig struct {
 	// publish the API server outside the cluster with HTTP without TLS, for
 	// example a NodePort that only 127.0.0.1 can reach.
 	PlainHTTPServices []string `json:"plainHTTPServices,omitempty"`
+	// PlainHTTPIssuers is for argocd-applications: the issuers in
+	// oidc.config of argocd-cm that may use HTTP without TLS, for example a
+	// Keycloak that only 127.0.0.1 can reach.
+	PlainHTTPIssuers []string `json:"plainHTTPIssuers,omitempty"`
 	// ControllerBindRoles is for argocd-applications: the ClusterRoles that
 	// the application controller may bind, for example the ClusterRole of
 	// the worker (SQUARED_WORKER_CLUSTER_ROLE).
@@ -678,8 +682,21 @@ func (s *argoAppsSource) References(ctx context.Context) ([]Reference, []string,
 	if err != nil {
 		return nil, nil, err
 	}
+	var argoCM map[string]string
+	switch cm, err := s.kube.GetConfigMap(ctx, s.sc.Namespace, "argocd-cm"); {
+	case rest.HasStatus(err, http.StatusNotFound):
+	case err != nil:
+		return nil, nil, err
+	default:
+		argoCM = cm.Data
+	}
+	tlsProblems := checkArgoTLS(params, templates, argoCM, s.sc.PlainHTTPIssuers)
 
 	var msgs []string
+	if len(tlsProblems) > 0 {
+		msgs = append(msgs, fmt.Sprintf("the TLS settings of Argo CD are not safe: %s. The guard keeps the current protection",
+			strings.Join(tlsProblems, "; ")))
+	}
 	if len(ingressProblems) > 0 {
 		msgs = append(msgs, fmt.Sprintf("Argo CD is reachable from outside its namespace in a way that is not safe: %s. The guard keeps the current protection",
 			strings.Join(ingressProblems, "; ")))

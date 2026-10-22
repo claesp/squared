@@ -12,6 +12,7 @@
      "controllerBindRoles": ["squared-worker-pull-secrets"],
      "serverWebhook": "http://argocd-server.argocd.svc.cluster.local/api/webhook",
      "plainHTTPServices": ["argocd-server"],
+     "plainHTTPIssuers": ["http://keycloak.localhost:30180/realms/squared"],
      "repoPrefixes": ["http://forgejo.localhost:30300/squared/"], "clusterServers": ["https://kubernetes.default.svc"]},
     {"type": "argocd-repositories", "service": "Argo CD", "url": "http://argocd-server.argocd.svc.cluster.local",
      "passwordFile": "/etc/squared/secrets/argocd-token", "repoPrefixes": ["http://forgejo.localhost:30300/squared/"]},

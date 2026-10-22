@@ -855,6 +855,46 @@ controls that it uses. Read [architecture.md](architecture.md) first.
   Service of type ExternalName in the namespace `default` that points to
   Redis, and checks the errors.
 
+- **TLS inside Argo CD.** The API server, the application controller, the
+  ApplicationSet controller and the notifications controller send the
+  credentials of the repositories to the repository server with each
+  request. Dex gives the API server the identities of the users. By
+  default, these connections use TLS, but the clients accept each
+  certificate (`<component>.repo.server.strict.tls` and
+  `server.dex.server.strict.tls` are false), thus a pod in the network
+  path can read them. Without a certificate in the Secret
+  `argocd-repo-server-tls`, the repository server makes a new
+  self-signed certificate at each start, which the clients cannot check.
+  The development environment signs a certificate for the repository
+  server with its own CA (`hack/kind-up.sh`, in `.dev/`), and turns on the
+  strict check for the three clients. Argo CD 3.5 has no command line flag
+  for the strict check, only the parameter in `argocd-cmd-params-cm`.
+
+  The sign-in of Argo CD gets the tokens of the users from the identity
+  provider. `oidc.tls.insecure.skip.verify` in `argocd-cm` turns off the
+  check of its certificate, and an `http://` issuer in `oidc.config` has
+  no TLS. The development environment uses
+  `http://keycloak.localhost:30180`, which Kind publishes only on
+  127.0.0.1, thus the guard of the development environment permits this
+  issuer (`plainHTTPIssuers`).
+
+  The guard reads the parameters as for the application namespaces: the
+  keys in `argocd-cmd-params-cm`, and the flags and the environment
+  variables of the containers of the components that run.
+
+  | TLS setting | Result |
+  |---|---|
+  | A client of the repository server or of Dex without TLS (`plaintext`), or the repository server or Dex without TLS (`disable.tls`) | Error |
+  | A client of the repository server or of Dex without the strict check | Error |
+  | `server.tls.minversion` or `reposerver.tls.minversion` is 1.0 or 1.1 | Error |
+  | `oidc.tls.insecure.skip.verify` | Error |
+  | An `http://` issuer in `oidc.config`, except the issuers in `plainHTTPIssuers` | Error |
+
+  Limit: the guard does not check the TLS of Redis, which the Helm chart
+  does not offer, and of the commit server. The end-to-end test turns off
+  the strict check of the application controller and the check of the
+  identity provider, and checks the errors.
+
 - **Harbor configuration.** Only the Harbor system administrator can read
   the configuration through the API, and a robot account cannot get that
   right. The table `properties` of the Harbor database has all settings,

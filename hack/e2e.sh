@@ -1159,6 +1159,22 @@ YAML
   wait_for "the guard has no errors after the Ingress and the Service are removed" 60 guard_clean
   log "the guard checks how Argo CD is reachable from outside its namespace"
 
+  # The application controller without the check of the certificate of the
+  # repository server, and Argo CD without the check of the certificate of
+  # the identity provider. The ConfigMaps change, but the components read
+  # them only at their start, thus nothing changes in Argo CD.
+  k -n argocd patch configmap argocd-cmd-params-cm --type merge -p '{"data":{"controller.repo.server.strict.tls":"false"}}' >/dev/null
+  k -n argocd patch configmap argocd-cm --type merge -p '{"data":{"oidc.tls.insecure.skip.verify":"true"}}' >/dev/null
+  guard_reports_tls() {
+    guard_status | jq -e '[.errors[]? | select(test("argocd-application-controller does not check the TLS certificate of the repository server"))] | length > 0' >/dev/null &&
+      guard_status | jq -e '[.errors[]? | select(test("argocd-cm has oidc.tls.insecure.skip.verify"))] | length > 0' >/dev/null
+  }
+  wait_for "the guard reports the TLS settings without checks" 60 guard_reports_tls
+  k -n argocd patch configmap argocd-cmd-params-cm --type merge -p '{"data":{"controller.repo.server.strict.tls":"true"}}' >/dev/null
+  k -n argocd patch configmap argocd-cm --type json -p '[{"op":"remove","path":"/data/oidc.tls.insecure.skip.verify"}]' >/dev/null
+  wait_for "the guard has no errors after the TLS settings are back" 60 guard_clean
+  log "the guard checks the TLS settings of Argo CD"
+
   # Keycloak mappers that write the groups claim or the email claim. These
   # are in no token, thus they are harmless, but the guard must report
   # each mapper that does not come from the group membership or the email

@@ -35,7 +35,14 @@ in a production cluster.
    metrics, and no pod to the webhook of the ApplicationSet controller. Use
    [`deploy/kind/argocd-network-policies.yaml`](../deploy/kind/argocd-network-policies.yaml)
    as the template, and set `metricsNamespaces` of the guard. Publish only
-   the API server, with TLS at the Ingress.
+   the API server, with TLS at the Ingress. Give the repository server a
+   certificate (`argocd-repo-server-tls` with `tls.crt`, `tls.key` and
+   `ca.crt`), and turn on the strict check of its clients
+   (`server.repo.server.strict.tls`, `controller.repo.server.strict.tls`
+   and `applicationsetcontroller.repo.server.strict.tls`). See
+   `repo_server_certificate` in [`hack/kind-up.sh`](../hack/kind-up.sh).
+   Renew the certificate before it expires, else the clients cannot
+   connect.
 3. Add a repository credential template in Argo CD for the address of the
    organization, with the Argo CD account.
 4. Apply the root application. Use

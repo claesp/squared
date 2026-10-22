@@ -241,8 +241,8 @@ all `*.localhost` names.
    the accounts of Dex, of the notifications controller and of the commit
    server, a webhook secret that is not there, NetworkPolicies that open
    the repository server, the ApplicationSet webhook and the metrics, an
-   Ingress for the API server without TLS, an ExternalName to Redis, and
-   the
+   Ingress for the API server without TLS, an ExternalName to Redis, TLS
+   settings without checks, and the
    ApplicationSet policy `sync` give errors,
    and that Keycloak
    mappers that write `groups` on the client `argocd` and `email` from

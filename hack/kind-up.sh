@@ -44,6 +44,27 @@ configure_dns() {
   k -n kube-system rollout status deployment/coredns --timeout 2m >/dev/null
 }
 
+# repo_server_certificate makes the CA and the certificate of the Argo CD
+# repository server once in .dev/, and puts them into the Secret
+# argocd-repo-server-tls.
+repo_server_certificate() {
+  local ca="${DEV}/argocd-repo-server-ca" crt="${DEV}/argocd-repo-server"
+  if [[ ! -s "${crt}.crt" ]]; then
+    mkdir -p "$DEV"
+    openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:P-256 -nodes -days 3650 -subj "/CN=Squared development Argo CD CA" \
+      -keyout "${ca}.key" -out "${ca}.crt" 2>/dev/null
+    openssl req -newkey ec -pkeyopt ec_paramgen_curve:P-256 -nodes -subj "/CN=argocd-repo-server" \
+      -keyout "${crt}.key" -out "${crt}.csr" 2>/dev/null
+    openssl x509 -req -in "${crt}.csr" -CA "${ca}.crt" -CAkey "${ca}.key" -CAcreateserial -days 825 -out "${crt}.crt" \
+      -extfile <(printf 'subjectAltName=DNS:argocd-repo-server,DNS:argocd-repo-server.argocd,DNS:argocd-repo-server.argocd.svc,DNS:argocd-repo-server.argocd.svc.cluster.local\nextendedKeyUsage=serverAuth\n') 2>/dev/null
+    rm -f "${crt}.csr" "${ca}.srl"
+    chmod 600 "${ca}.key" "${crt}.key"
+  fi
+  k -n argocd create secret generic argocd-repo-server-tls --type kubernetes.io/tls \
+    --from-file=tls.crt="${crt}.crt" --from-file=tls.key="${crt}.key" --from-file=ca.crt="${ca}.crt" \
+    --dry-run=client -o yaml | k apply -f - >/dev/null
+}
+
 install_charts() {
   # The password of the Redis of Argo CD. The chart can make it with a
   # job, but the service account of that job can make Secrets in the
@@ -53,6 +74,12 @@ install_charts() {
   if ! k -n argocd get secret argocd-redis >/dev/null 2>&1; then
     k -n argocd create secret generic argocd-redis --from-literal="auth=$(secret argocd-redis-password)" >/dev/null
   fi
+  # The certificate of the repository server, signed by a CA of the
+  # development environment. With it, the clients of the repository server
+  # can check its certificate (strict TLS in deploy/kind/argocd-values.yaml).
+  # Without it, the repository server makes a new self-signed certificate
+  # at each start.
+  repo_server_certificate
   log "installing Argo CD $ARGOCD_CHART_VERSION"
   # The end-to-end test changes argocd-rbac-cm for a short time with
   # "kubectl patch". The values here win over such a change.
